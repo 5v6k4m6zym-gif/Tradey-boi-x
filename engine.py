@@ -527,14 +527,34 @@ def _guard_ok(ticker: str, window_seconds: int = 90) -> bool:
     except Exception:
         return True
 
+def _add_trading_days(start: datetime, n: int) -> datetime:
+    """Return the date that is exactly n trading days (Mon–Fri) after start."""
+    current = start
+    added = 0
+    while added < n:
+        current += timedelta(days=1)
+        if current.weekday() < 5:   # Monday=0 … Friday=4
+            added += 1
+    return current
+
+def _next_trading_day(from_date: datetime) -> datetime:
+    """Return the next trading day from from_date (same day if it's a weekday before market close)."""
+    candidate = from_date + timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate += timedelta(days=1)
+    return candidate
+
 def send_alert(ticker: str, result: dict, price: float) -> bool:
     if not DISCORD:
         return False
     if not _guard_ok(ticker):
         print(f"  ⏭ {ticker}: duplicate suppressed (sent within last 90s)")
         return False
+
+    now          = datetime.now()
+    buy_date     = _next_trading_day(now)
+    exit_date    = _add_trading_days(buy_date, PREDICTION_DAYS)
     target_price = price * (1 + TARGET_RETURN)
-    target_date  = (datetime.now() + timedelta(days=PREDICTION_DAYS * 1.4)).strftime("%d %b %Y")
 
     # Suggested entry based on RSI — how aggressively to chase the entry
     rsi = result.get("rsi", 50)
@@ -556,8 +576,9 @@ def send_alert(ticker: str, result: dict, price: float) -> bool:
         f"🎯 Confidence: **{grade} — {glabel}**  `{gbar}`",
         f"Score {result['score']}/14 | AI {result['prob']*100:.1f}%",
         f"🟢 Entry: {entry_note}",
-        f"💰 Target price: ${target_price:.2f} (+{TARGET_RETURN*100:.0f}%) by {target_date}",
-        f"⏱ Timeframe: {PREDICTION_DAYS} trading days from today",
+        f"📅 Buy date:  **{buy_date.strftime('%A %d %b %Y')}**",
+        f"🚪 Exit by:   **{exit_date.strftime('%A %d %b %Y')}**  ({PREDICTION_DAYS} trading days)",
+        f"💰 Target:    ${target_price:.2f} (+{TARGET_RETURN*100:.0f}%)",
     ]
 
     if ci:
