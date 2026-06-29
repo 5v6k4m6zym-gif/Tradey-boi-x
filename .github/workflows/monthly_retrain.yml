@@ -1,0 +1,73 @@
+name: Monthly Model Retrain & Report
+
+"on":
+  schedule:
+    - cron: "0 8 1 * *"
+  workflow_dispatch:
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install yfinance ta scikit-learn pandas requests pytz vaderSentiment xgboost
+      - name: Retrain model and send Discord report
+        env:
+          Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
+        run: |
+          python - <<'EOF'
+          import os, sys, requests
+          sys.path.insert(0, '.')
+          from engine import train_model, WATCHLIST, get_data, FEATURES, PREDICTION_DAYS, TARGET_RETURN
+          import pandas as pd
+          from datetime import datetime
+
+          DISCORD = os.getenv("Discordwebhook", "")
+          print("Retraining model on all tickers...")
+          model = train_model()
+
+          # Compute in-sample accuracy across all tickers
+          correct, total = 0, 0
+          for ticker in WATCHLIST:
+              try:
+                  df = get_data(ticker, "2y").copy()
+                  df["target"] = (df["Close"].shift(-PREDICTION_DAYS) / df["Close"] - 1 > TARGET_RETURN).astype(int)
+                  df = df.dropna()
+                  if len(df) < 30:
+                      continue
+                  preds = model.predict(df[FEATURES])
+                  correct += (preds == df["target"].values).sum()
+                  total   += len(df)
+              except Exception:
+                  pass
+
+          accuracy = correct / total * 100 if total > 0 else 0
+          msg = "\n".join([
+              "**TRADEY BOI X** | 🔄 Monthly Model Retrain",
+              f"📅 Date: {datetime.now().strftime('%d %b %Y')}",
+              f"🧠 Trained on: {len(WATCHLIST)} tickers × 2 years of data",
+              f"🎯 In-sample accuracy: {accuracy:.1f}%",
+              f"📊 Features: XGBoost + OBV + market regime + sector + VIX + weekly trend + financial sentiment",
+              "_Model is up to date and ready for the month ahead._",
+          ])
+          if DISCORD:
+              r = requests.post(DISCORD, json={"content": msg}, timeout=10)
+              print("Discord report sent:", r.status_code)
+          print(msg)
+          EOF
+      - name: Save signal log
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "Tradey Boi X"
+          git add signal_log.json cooldowns.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: monthly retrain log update [skip ci]"
+          git push
