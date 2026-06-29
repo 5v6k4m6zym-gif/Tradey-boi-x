@@ -26,7 +26,7 @@ WATCHLIST = [
 ]
 FEATURES        = ["rsi", "macd_diff", "bb_width", "atr", "ret_5", "ret_10", "ret_20", "vol_ratio", "breakout", "obv_ratio"]
 PREDICTION_DAYS = 10
-TARGET_RETURN   = 0.05
+TARGET_RETURN   = 0.03
 COOLDOWN_HOURS  = 8
 MAX_ALERTS      = 3
 DISCORD         = os.getenv("Discordwebhook", "") or os.getenv("discordwebhook", "")
