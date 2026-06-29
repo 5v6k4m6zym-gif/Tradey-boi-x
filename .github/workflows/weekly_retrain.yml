@@ -1,0 +1,118 @@
+name: Weekly Model Retrain & Performance Report
+
+"on":
+  schedule:
+    - cron: "0 8 * * 0"   # Every Sunday 8am UTC
+  workflow_dispatch:
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install yfinance ta scikit-learn pandas requests pytz vaderSentiment xgboost
+
+      - name: Resolve outcomes, update performance, retrain model
+        env:
+          Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
+        run: |
+          python - <<'EOF'
+          import os, sys, requests
+          sys.path.insert(0, '.')
+          from engine import (train_model, WATCHLIST, get_data, FEATURES,
+                              PREDICTION_DAYS, TARGET_RETURN,
+                              resolve_outcomes, performance_adjustments,
+                              accuracy_stats, _load_log)
+          from datetime import datetime
+          from collections import defaultdict
+
+          DISCORD = os.getenv("Discordwebhook", "")
+
+          # 1. Resolve any matured trade outcomes
+          print("Resolving outcomes...")
+          updated  = resolve_outcomes()
+          resolved = [e for e in updated if e["outcome"] is not None]
+          stats    = accuracy_stats(resolved)
+
+          # 2. Retrain with recency-weighted data
+          print("Retraining model...")
+          model = train_model()
+
+          # 3. Compute in-sample accuracy
+          correct, total = 0, 0
+          for ticker in WATCHLIST:
+              try:
+                  df = get_data(ticker, "2y").copy()
+                  df["target"] = (df["Close"].shift(-PREDICTION_DAYS) / df["Close"] - 1 > TARGET_RETURN).astype(int)
+                  df = df.dropna()
+                  if len(df) < 30:
+                      continue
+                  preds   = model.predict(df[FEATURES])
+                  correct += (preds == df["target"].values).sum()
+                  total   += len(df)
+              except Exception:
+                  pass
+          accuracy = correct / total * 100 if total > 0 else 0
+
+          # 4. Per-ticker win rates
+          adj = performance_adjustments()
+          bucket = defaultdict(list)
+          for e in resolved:
+              bucket[e["ticker"]].append(e)
+
+          ticker_lines = []
+          for ticker in sorted(WATCHLIST):
+              trades = bucket.get(ticker, [])
+              if not trades:
+                  ticker_lines.append(f"  {ticker}: no resolved trades yet")
+                  continue
+              recent = trades[-20:]
+              wins   = sum(1 for t in recent if t["outcome"] == "WIN")
+              wr     = wins / len(recent) * 100
+              a      = adj.get(ticker, 0)
+              bar    = "🟢" if wr >= 60 else ("🟡" if wr >= 40 else "🔴")
+              ticker_lines.append(f"  {bar} {ticker}: {wr:.0f}% ({wins}/{len(recent)}) | score adj {a:+d}")
+
+          # 5. Send Discord report
+          wr_str  = f"{stats['win_rate']*100:.1f}%" if stats.get("win_rate") is not None else "N/A"
+          avg_str = f"{stats['avg_return']*100:+.1f}%" if stats.get("avg_return") is not None else "N/A"
+          lines = [
+              "**TRADEY BOI X** | 🔄 Weekly Retrain & Learning Update",
+              f"📅 {datetime.now().strftime('%A %d %b %Y')}",
+              "",
+              "**📊 Live Trade Performance**",
+              f"Total resolved: {stats['total']} | Wins: {stats['wins']} | Losses: {stats['losses']}",
+              f"Overall win rate: **{wr_str}** | Avg return: **{avg_str}**",
+              "",
+              "**🎯 Per-Ticker Win Rates (last 20 signals)**",
+          ] + ticker_lines + [
+              "",
+              "**🧠 Model Update**",
+              f"In-sample accuracy: {accuracy:.1f}%",
+              "Retrained with recency weights — last 30 days count 4×, last 90 days count 2×",
+              "_Tickers with strong track records get a score boost next week. Poor performers get penalised._",
+          ]
+          if DISCORD:
+              r = requests.post(DISCORD, json={"content": "\n".join(lines)}, timeout=10)
+              print("Discord report sent:", r.status_code)
+          print("\n".join(lines))
+          EOF
+
+      - name: Commit updated signal log
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "Tradey Boi X"
+          git add signal_log.json cooldowns.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: weekly retrain + outcome resolution [skip ci]"
+          git push
