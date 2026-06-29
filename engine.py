@@ -78,16 +78,20 @@ def train_model() -> Pipeline:
     if not frames:
         frames = [get_data("AAPL", "2y")]
     combined = pd.concat(frames, ignore_index=True)
+    neg = int((combined["target"] == 0).sum())
+    pos = int((combined["target"] == 1).sum())
+    spw = round(neg / pos, 2) if pos > 0 else 1.0   # balance minority class
     pipe = Pipeline([
         ("sc",  StandardScaler()),
         ("xgb", XGBClassifier(
             n_estimators=400, max_depth=6, learning_rate=0.05,
             subsample=0.8, colsample_bytree=0.8,
+            scale_pos_weight=spw,
             eval_metric="logloss", random_state=42, verbosity=0,
         )),
     ])
     pipe.fit(combined[FEATURES], combined["target"])
-    print(f"  Model trained on {len(combined):,} rows across {len(frames)} tickers")
+    print(f"  Model trained on {len(combined):,} rows ({pos} buy / {neg} no-buy) | scale_pos_weight={spw}")
     return pipe
 
 # ─── MARKET REGIME, VIX, SECTOR, WEEKLY, EARNINGS ───────────────────────────
