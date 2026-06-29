@@ -1,0 +1,27 @@
+name: Tradey Boi X Pre-Market
+
+"on":
+  schedule:
+    # 23:00 UTC Mon-Fri = ~9:00am AEST (ASX pre-market)
+    - cron: "0 23 * * 0-4"
+    # 12:30 UTC Mon-Fri = ~8:30am ET (US pre-market)
+    - cron: "30 12 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  premarket:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install yfinance ta scikit-learn pandas requests pytz vaderSentiment xgboost
+      - name: Run pre-market scan
+        env:
+          Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
+        run: cd tradey-boi-x && python premarket.py

@@ -457,14 +457,15 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     gap_adj,     gap_why     = gap_signal(df)
     sq_adj,      sq_why      = squeeze_breakout_signal(df)
     fund_adj,    fund_why    = fundamental_signal(ticker)
+    vwap_adj,    vwap_why    = vwap_signal(ticker)
     for reason in (short_why, insider_why, opts_why, comm_why, vel_why,
-                   sr_why, mtf_why, rs_why, fg_why, rot_why, gap_why, sq_why, fund_why):
+                   sr_why, mtf_why, rs_why, fg_why, rot_why, gap_why, sq_why, fund_why, vwap_why):
         if reason:
             why.append(reason)
 
     score = (base_score + adj + news_adj + short_adj + insider_adj + opts_adj
              + comm_adj + vel_adj + sr_adj + mtf_adj + rs_adj + fg_adj
-             + rot_adj + gap_adj + sq_adj + fund_adj)
+             + rot_adj + gap_adj + sq_adj + fund_adj + vwap_adj)
 
     # Grade thresholds — only the strongest qualify for an alert
     # ELITE:      score ≥ 11  (any AI prob — already filtered to ≥ 55% above)
@@ -782,6 +783,52 @@ def fundamental_signal(ticker: str) -> tuple:
               and fcf is not None and fcf > 0
               and (de is None or de < 100)):
             result = (+1, "Strong fundamentals (FCF positive, reasonable P/E, low debt)")
+        else:
+            result = (0, "")
+    except Exception:
+        result = (0, "")
+    return _signal_store(cache_key, result)
+
+
+# ─── VWAP SIGNAL ─────────────────────────────────────────────────────────────
+def vwap_signal(ticker: str) -> tuple:
+    """
+    VWAP (Volume-Weighted Average Price) is the single most-used institutional
+    reference. When price crosses above VWAP on strong volume, institutions are
+    repositioning long. Crossing below VWAP = distribution.
+
+    +2  price above VWAP AND last bar crossed above it on above-avg volume (fresh breakout)
+    +1  price above VWAP (bullish positioning — above institutional avg cost)
+     0  at or below VWAP
+    -1  price below VWAP (distribution — institutions selling above you)
+    """
+    cache_key = f"vwap_{ticker}"
+    cached = _signal_cached(cache_key, ttl=1800)   # 30-min cache — intraday changes matter
+    if cached is not None:
+        return cached
+    try:
+        df = yf.Ticker(ticker).history(period="1d", interval="1h")
+        if len(df) < 3:
+            return _signal_store(cache_key, (0, ""))
+        typical = (df["High"] + df["Low"] + df["Close"]) / 3
+        vwap    = (typical * df["Volume"]).cumsum() / df["Volume"].cumsum()
+        last_close = float(df["Close"].iloc[-1])
+        last_vwap  = float(vwap.iloc[-1])
+        prev_close = float(df["Close"].iloc[-2])
+        prev_vwap  = float(vwap.iloc[-2])
+        last_vol   = float(df["Volume"].iloc[-1])
+        avg_vol    = float(df["Volume"].mean())
+
+        crossed_above = prev_close < prev_vwap and last_close > last_vwap
+        above         = last_close > last_vwap
+        vol_surge     = last_vol > avg_vol * 1.2
+
+        if crossed_above and vol_surge:
+            result = (+2, f"VWAP cross-above on volume surge — institutional repositioning long (VWAP ${last_vwap:.2f})")
+        elif above:
+            result = (+1, f"Trading above VWAP ${last_vwap:.2f} — bullish intraday positioning")
+        elif not above:
+            result = (-1, f"Below VWAP ${last_vwap:.2f} — institutional average cost above current price")
         else:
             result = (0, "")
     except Exception:
@@ -1168,6 +1215,12 @@ def _simple_read(ticker: str, result: dict, price: float) -> str:
     # Fundamental
     if any("fundamentals" in w.lower() for w in why):
         parts.append("Fundamentals are solid — positive cash flow, reasonable valuation, and manageable debt.")
+
+    # VWAP
+    if any("vwap cross-above" in w.lower() for w in why):
+        parts.append("Price just crossed above VWAP on a volume surge — this is institutions repositioning long in real time. One of the strongest intraday confirmation signals.")
+    elif any("above vwap" in w.lower() for w in why):
+        parts.append("Price is trading above VWAP — it's above the institutional average cost for the day, which means buyers are in control.")
 
     # RSI context
     if rsi < 40:
