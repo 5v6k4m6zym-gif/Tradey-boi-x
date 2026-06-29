@@ -277,7 +277,7 @@ def send_alert(ticker: str, result: dict, price: float) -> bool:
         f"🎯 Confidence: **{grade} — {glabel}**  `{gbar}`",
         f"Score {result['score']}/14 | AI {result['prob']*100:.1f}%",
         f"⏱ Timeframe: {PREDICTION_DAYS} trading days (by ~{target_date})",
-        f"🎯 Target: +{TARGET_RETURN*100:.0f}% gain",
+        f"💰 Target: +{TARGET_RETURN*100:.0f}% gain",
     ]
 
     if ci:
