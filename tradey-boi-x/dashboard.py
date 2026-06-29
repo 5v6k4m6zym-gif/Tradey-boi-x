@@ -25,7 +25,7 @@ PREDICTION_DAYS  = 10          # trading days — must match model training targ
 TARGET_RETURN    = 0.05        # 5% gain = success
 COOLDOWN_HOURS   = 8
 MAX_ALERTS       = 3
-DISCORD          = os.getenv("discordwebhook", "")
+DISCORD          = os.getenv("Discordwebhook", "") or os.getenv("discordwebhook", "")
 LOG_FILE         = Path(__file__).parent / "signal_log.json"
 
 # ─── STEP 1 — DATA → FEATURES ────────────────────────────────────────────────
