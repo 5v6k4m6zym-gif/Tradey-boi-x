@@ -119,4 +119,14 @@ def main():
             time.sleep(wait)
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--once" in sys.argv:
+        # Single-run mode for GitHub Actions / cron jobs
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Single scan starting…")
+        if markets_open():
+            m = train_model()
+            run_scan(m)
+        else:
+            print("Markets closed — skipping scan.")
+    else:
+        main()
