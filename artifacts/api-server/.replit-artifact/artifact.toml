@@ -15,7 +15,7 @@ run = "cd tradey-boi-x && streamlit run dashboard.py"
 [services.production]
 
 [services.production.run]
-args = ["bash", "tradey-boi-x/start.sh"]
+args = ["python", "main.py"]
 
 [services.production.run.env]
 PORT = "5000"
