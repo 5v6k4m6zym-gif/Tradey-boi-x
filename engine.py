@@ -182,7 +182,8 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     return {"signal": signal, "label": label, "color": color,
             "alert": qualifies and cooldown_ok(ticker),
             "prob": prob, "score": score, "base_score": base_score,
-            "adj": adj, "news": news, "why": why, "filters": filters}
+            "adj": adj, "news": news, "why": why, "filters": filters,
+            "rsi": round(float(row["rsi"]), 1)}
 
 # ─── NEWS SENTIMENT ──────────────────────────────────────────────────────────
 def news_sentiment(ticker: str) -> dict:
@@ -266,7 +267,19 @@ def confidence_grade(prob: float, score: int) -> tuple:
 def send_alert(ticker: str, result: dict, price: float) -> bool:
     if not DISCORD:
         return False
-    target_date = (datetime.now() + timedelta(days=PREDICTION_DAYS * 1.4)).strftime("%d %b %Y")
+    target_price = price * (1 + TARGET_RETURN)
+    target_date  = (datetime.now() + timedelta(days=PREDICTION_DAYS * 1.4)).strftime("%d %b %Y")
+
+    # Suggested entry based on RSI — how aggressively to chase the entry
+    rsi = result.get("rsi", 50)
+    if rsi < 40:
+        entry_note = f"${price:.2f} (buy now — RSI oversold, ideal entry)"
+    elif rsi < 50:
+        entry_note = f"${price:.2f}–${price * 0.99:.2f} (now or on a small dip)"
+    elif rsi < 60:
+        entry_note = f"${price * 0.99:.2f}–${price * 0.985:.2f} (wait for 1–1.5% pullback)"
+    else:
+        entry_note = f"${price * 0.98:.2f} (RSI elevated — wait for 2% dip)"
 
     ci = confidence_interval(result["signal"])
     grade, glabel, gbar = confidence_grade(result["prob"], result["score"])
@@ -276,8 +289,9 @@ def send_alert(ticker: str, result: dict, price: float) -> bool:
         f"**{ticker}** @ ${price:.2f}",
         f"🎯 Confidence: **{grade} — {glabel}**  `{gbar}`",
         f"Score {result['score']}/14 | AI {result['prob']*100:.1f}%",
-        f"⏱ Timeframe: {PREDICTION_DAYS} trading days (by ~{target_date})",
-        f"💰 Target: +{TARGET_RETURN*100:.0f}% gain",
+        f"🟢 Entry: {entry_note}",
+        f"💰 Target price: ${target_price:.2f} (+{TARGET_RETURN*100:.0f}%) by {target_date}",
+        f"⏱ Timeframe: {PREDICTION_DAYS} trading days from today",
     ]
 
     if ci:
