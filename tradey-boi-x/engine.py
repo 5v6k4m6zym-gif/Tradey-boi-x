@@ -170,10 +170,14 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
 
     score = base_score + adj + news_adj
 
-    if   score >= 11: signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
-    elif score >= 8:  signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
-    elif score >= 5:  signal, label, color, qualifies = "WATCH",      "👀 WATCH",      "#e6a817", False
-    else:             signal, label, color, qualifies = "IGNORE",     "⛔ IGNORE",     "#cc3300", False
+    # Grade thresholds — only the strongest qualify for an alert
+    # ELITE:      score ≥ 11  (any AI prob — already filtered to ≥ 55% above)
+    # STRONG BUY: score ≥ 9  AND AI prob ≥ 70%  (genuinely high conviction only)
+    # WATCH:      everything else that passed filters — shown on dashboard, never alerted
+    if   score >= 11:                        signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
+    elif score >= 9 and prob >= 0.70:        signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
+    elif score >= 5:                         signal, label, color, qualifies = "WATCH",      "👀 WATCH",      "#e6a817", False
+    else:                                    signal, label, color, qualifies = "IGNORE",     "⛔ IGNORE",     "#cc3300", False
 
     return {"signal": signal, "label": label, "color": color,
             "alert": qualifies and cooldown_ok(ticker),
