@@ -1288,8 +1288,12 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         entry_note  = "RSI elevated — wait for a 2% dip"
 
     # ── Schedule-aware buy instruction ───────────────────────────────────────
-    # Intraday signals (VWAP cross, gap-up) expire at close — never defer these.
-    # Swing signals (RSI, trend, fundamentals) are valid at tomorrow's open.
+    # Priority order:
+    #   1. Opening window (first 30 min of session) → "buy at market open NOW"
+    #   2. Intraday signal + market closed          → warn, skip
+    #   3. Swing signal + market closed             → defer to next open with validity band
+    #   4. Mid-session open                         → RSI-based logic (already set above)
+
     _intraday_kw = ("vwap cross-above", "gap-up on institutional", "gap-up detected", "intraday")
     _swing_kw    = ("ema", "uptrend", "rsi", "support", "resistance", "macd", "breakout",
                     "obv", "relative strength", "sector", "fundamental", "squeeze",
@@ -1301,26 +1305,36 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
 
     _aest        = _pytz.timezone("Australia/Sydney")
     _now_aest    = datetime.now(_aest)
-    _h           = _now_aest.hour
-    _wd          = _now_aest.weekday()          # 0=Mon … 6=Sun
-    _work_hours  = 7 <= _h < 16 and _wd < 5    # 7am–4pm AEST Mon–Fri
-    _asx_open    = _is_asx and 10 <= _h < 16 and _wd < 5
+    _h, _m       = _now_aest.hour, _now_aest.minute
+    _wd          = _now_aest.weekday()   # 0=Mon … 6=Sun
+
+    # Opening windows (first 30 min of session — highest quality entry)
+    _asx_opening = _is_asx  and _wd < 5 and (_h == 10 and _m < 30)
+    _us_opening  = not _is_asx and _wd < 5 and ((_h == 23 and _m >= 30) or (_h == 0 and _m < 0))
+    _opening_now = _asx_opening or _us_opening
+
+    # Full session open (outside opening window)
+    _asx_open    = _is_asx      and 10 <= _h < 16 and _wd < 5
     _us_open     = (not _is_asx) and (_h >= 23 or _h < 6) and _wd < 5
     _mkt_open    = _asx_open or _us_open
 
-    if _is_intraday and not _mkt_open:
-        # Can't defer — warn the user rather than pretend it's actionable
-        entry_note += " — ⚠️ intraday signal (VWAP/gap). Market is closed; skip unless it recurs at open."
+    if _opening_now:
+        # ★ Best case — alert fires right at the open
+        _open_label = "ASX open" if _is_asx else "US market open"
+        entry_price = f"${price:.3f}"
+        entry_note  = (f"🔔 {_open_label} — buy NOW at market price. "
+                       f"Opening-window entries have the tightest spreads and best fills.")
+    elif _is_intraday and not _mkt_open:
+        # Intraday signal but market is closed — cannot defer
+        entry_note += (" — ⚠️ intraday signal (VWAP/gap). "
+                       "Market is closed; skip this one unless the same signal fires at next open.")
     elif not _mkt_open and _is_swing:
-        # Swing setup — genuinely valid at next open
-        if _is_asx:
-            _open_str = "10:00am AEST tomorrow"
-        else:
-            _open_str = "11:30pm AEST tonight"
-        _max_valid = price * 1.025    # don't chase if it gaps >2.5%
+        # Swing setup — thesis still valid at next open
+        _open_str  = "10:00am AEST tomorrow" if _is_asx else "11:30pm AEST tonight"
+        _max_valid = price * 1.025   # don't chase a gap >2.5%
         entry_price = f"${price:.3f}–${_max_valid:.3f}"
-        entry_note  = (f"buy at open ({_open_str}) — swing setup, entry still valid. "
-                       f"If price opens above ${_max_valid:.3f}, wait for a pullback.")
+        entry_note  = (f"📋 Place order before open ({_open_str}) — swing setup, "
+                       f"entry valid at open. If it gaps above ${_max_valid:.3f}, skip and wait for a pullback.")
 
     # Good/bad header label
     verdict = "✅ GOOD BUY" if result["signal"] == "STRONG BUY" else "🏆 ELITE BUY — HIGH CONVICTION"
