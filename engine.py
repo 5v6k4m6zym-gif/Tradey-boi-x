@@ -14,6 +14,9 @@ import yfinance as yf
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+_vader = SentimentIntensityAnalyzer()
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 WATCHLIST = [
@@ -157,7 +160,15 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
 
     # Apply learned adjustment from past signal outcomes
     adj   = performance_adjustments().get(ticker, 0)
-    score = base_score + adj
+
+    # Apply news sentiment adjustment
+    news  = news_sentiment(ticker)
+    news_adj = news["score_adj"]
+    if news["label"] == "NEGATIVE":
+        filters.append((f"News sentiment not strongly negative ({news['compound']:.2f})", False))
+        return {**GATED, "filters": filters, "news": news}
+
+    score = base_score + adj + news_adj
 
     if   score >= 11: signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
     elif score >= 8:  signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
@@ -167,7 +178,42 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     return {"signal": signal, "label": label, "color": color,
             "alert": qualifies and cooldown_ok(ticker),
             "prob": prob, "score": score, "base_score": base_score,
-            "adj": adj, "why": why, "filters": filters}
+            "adj": adj, "news": news, "why": why, "filters": filters}
+
+# ─── NEWS SENTIMENT ──────────────────────────────────────────────────────────
+def news_sentiment(ticker: str) -> dict:
+    """
+    Fetches recent headlines via yfinance and scores them with VADER.
+    Returns:
+      compound   – avg VADER compound score (-1 to +1)
+      label      – 'POSITIVE' / 'NEGATIVE' / 'NEUTRAL'
+      score_adj  – +1 (strong positive), -1 (strong negative), 0 (neutral)
+      headlines  – list of scored headline strings (for alert display)
+      count      – number of headlines analysed
+    Falls back gracefully if no news is available.
+    """
+    try:
+        articles = yf.Ticker(ticker).news or []
+        headlines = []
+        for a in articles[:10]:
+            title = (a.get("content") or {}).get("title") or a.get("title") or ""
+            if title:
+                headlines.append(title)
+        if not headlines:
+            return {"compound": 0.0, "label": "NEUTRAL", "score_adj": 0,
+                    "headlines": [], "count": 0}
+        scores = [_vader.polarity_scores(h)["compound"] for h in headlines]
+        avg = sum(scores) / len(scores)
+        if   avg >  0.20: label, adj = "POSITIVE", +1
+        elif avg < -0.20: label, adj = "NEGATIVE", -1
+        else:             label, adj = "NEUTRAL",   0
+        top = sorted(zip(scores, headlines), reverse=True)
+        top_headlines = [h for _, h in top[:2]]
+        return {"compound": round(avg, 3), "label": label, "score_adj": adj,
+                "headlines": top_headlines, "count": len(headlines)}
+    except Exception:
+        return {"compound": 0.0, "label": "NEUTRAL", "score_adj": 0,
+                "headlines": [], "count": 0}
 
 # ─── CONFIDENCE INTERVAL — historical return range for similar setups ─────────
 def confidence_interval(tier: str) -> dict | None:
@@ -220,6 +266,11 @@ def send_alert(ticker: str, result: dict, price: float) -> bool:
     if result.get("adj", 0) != 0:
         direction = "boosted" if result["adj"] > 0 else "penalised"
         lines.append(f"🧠 AI-{direction} ticker (base score {result.get('base_score', result['score'])}, adj {result['adj']:+d})")
+
+    news = result.get("news", {})
+    if news and news.get("count", 0) > 0:
+        emoji = "📰🟢" if news["label"] == "POSITIVE" else "📰⚪"
+        lines.append(f"{emoji} News ({news['count']} headlines, sentiment {news['compound']:+.2f}): {news['headlines'][0][:80]}" if news["headlines"] else f"{emoji} News sentiment: {news['label']}")
 
     lines += [
         "Why: " + ", ".join(result["why"]),
