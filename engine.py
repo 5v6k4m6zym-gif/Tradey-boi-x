@@ -100,6 +100,17 @@ _regime_cache: dict = {}
 # Sector ETF map for US tickers — ASX already covered by ^AXJO in market_regime_ok
 SECTOR_ETF = {"AAPL": "XLK", "NVDA": "XLK", "MSFT": "XLK", "TSLA": "XLY"}
 
+# Underlying commodity for each ticker — drives the real price action
+COMMODITY_MAP = {
+    "BHP.AX": ("VALE",  "iron ore"),
+    "FMG.AX": ("VALE",  "iron ore"),
+    "RIO.AX": ("VALE",  "iron ore"),
+    "NST.AX": ("GLD",   "gold"),
+    "CXO.AX": ("LIT",   "lithium"),
+    "LTR.AX": ("LIT",   "lithium"),
+    "PDN.AX": ("URA",   "uranium"),
+}
+
 def _cached_ema_ok(cache_key: str, yf_ticker: str, span: int = 50) -> bool:
     """Generic helper: True when latest close > EMA(span). Cached 1 hour."""
     now = datetime.now().timestamp()
@@ -283,15 +294,17 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
         filters.append((f"News sentiment not strongly negative ({news['compound']:.2f})", False))
         return {**GATED, "prob": prob, "filters": filters, "news": news}
 
-    # Short interest, insider buying, options flow
+    # Short interest, insider buying, options flow, commodity, news velocity
     short_adj,   short_why   = short_interest_signal(ticker)
     insider_adj, insider_why = insider_signal(ticker)
     opts_adj,    opts_why    = options_flow_signal(ticker)
-    for reason in (short_why, insider_why, opts_why):
+    comm_adj,    comm_why    = commodity_signal(ticker)
+    vel_adj,     vel_why     = news_velocity(ticker)
+    for reason in (short_why, insider_why, opts_why, comm_why, vel_why):
         if reason:
             why.append(reason)
 
-    score = base_score + adj + news_adj + short_adj + insider_adj + opts_adj
+    score = base_score + adj + news_adj + short_adj + insider_adj + opts_adj + comm_adj + vel_adj
 
     # Grade thresholds — only the strongest qualify for an alert
     # ELITE:      score ≥ 11  (any AI prob — already filtered to ≥ 55% above)
@@ -307,6 +320,84 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
             "prob": prob, "score": score, "base_score": base_score,
             "adj": adj, "news": news, "why": why, "filters": filters,
             "rsi": round(float(row["rsi"]), 1)}
+
+# ─── COMMODITY PRICE TRACKING ────────────────────────────────────────────────
+def commodity_signal(ticker: str) -> tuple:
+    """
+    For commodity-driven ASX miners: check if the underlying commodity
+    is in uptrend AND recently surging.
+
+    Score breakdown:
+      +2  commodity up >3% over 5 days (strong surge)
+      +1  commodity above its 20-day EMA (uptrend)
+       0  neutral
+      -1  commodity down >3% over 5 days (headwind)
+    """
+    mapping = COMMODITY_MAP.get(ticker)
+    if not mapping:
+        return (0, "")
+    etf, name = mapping
+    cache_key = f"commodity_{etf}"
+    cached = _signal_cached(cache_key, ttl=3600)
+    if cached is not None:
+        return cached
+    try:
+        df    = yf.Ticker(etf).history(period="3mo")
+        if df.empty or len(df) < 22:
+            return _signal_store(cache_key, (0, ""))
+        close  = df["Close"]
+        ema20  = close.ewm(span=20, adjust=False).mean()
+        ret5   = (close.iloc[-1] / close.iloc[-6] - 1) if len(close) >= 6 else 0
+
+        if ret5 >= 0.03:
+            result = (+2, f"{name.title()} surging +{ret5*100:.1f}% (5d)")
+        elif close.iloc[-1] > ema20.iloc[-1]:
+            result = (+1, f"{name.title()} in uptrend")
+        elif ret5 <= -0.03:
+            result = (-1, f"{name.title()} falling {ret5*100:.1f}% (5d) — headwind")
+        else:
+            result = (0, "")
+    except Exception:
+        result = (0, "")
+    return _signal_store(cache_key, result)
+
+
+# ─── NEWS VELOCITY ────────────────────────────────────────────────────────────
+def news_velocity(ticker: str) -> tuple:
+    """
+    Detect a news volume spike — a sign that a catalyst event is underway.
+    Compares articles published in the last 48h vs the prior 5 days.
+
+    Score breakdown:
+      +2  strong spike: ≥4 articles in 48h AND more than double the prior rate
+      +1  mild spike:   ≥2 articles in 48h AND more than prior rate
+       0  no spike
+    """
+    cache_key = f"velocity_{ticker}"
+    cached = _signal_cached(cache_key, ttl=1800)   # 30-min cache
+    if cached is not None:
+        return cached
+    try:
+        articles = yf.Ticker(ticker).news or []
+        now_ts   = datetime.now().timestamp()
+        h48      = 48 * 3600
+        d7       = 7  * 24 * 3600
+
+        recent = sum(1 for a in articles
+                     if now_ts - a.get("providerPublishTime", 0) < h48)
+        older  = sum(1 for a in articles
+                     if h48 <= now_ts - a.get("providerPublishTime", 0) < d7)
+
+        if recent >= 4 and recent > older * 1.5:
+            result = (+2, f"News velocity spike ({recent} articles in 48h — catalyst likely)")
+        elif recent >= 2 and recent > older:
+            result = (+1, f"Elevated news activity ({recent} articles in 48h)")
+        else:
+            result = (0, "")
+    except Exception:
+        result = (0, "")
+    return _signal_store(cache_key, result)
+
 
 # ─── SHORT INTEREST, INSIDER BUYING, OPTIONS FLOW ───────────────────────────
 _signal_cache: dict = {}   # shared 4-hour cache for slower yfinance calls
