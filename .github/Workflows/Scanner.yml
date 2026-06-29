@@ -1,0 +1,34 @@
+name: Tradey Boi X Scanner
+
+on:
+  schedule:
+    # Runs every hour, Mon–Fri (UTC)
+    # US market:  14:30–21:00 UTC  (09:30–16:00 ET)
+    # ASX market: 00:00–06:00 UTC  (10:00–16:00 AEST)
+    - cron: "0 * * * 1-5"
+  workflow_dispatch:   # allows manual trigger from GitHub UI
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install yfinance ta scikit-learn pandas requests pytz
+
+      - name: Run scanner (single scan)
+        env:
+          Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
+        run: |
+          cd tradey-boi-x
+          python scanner.py --once
