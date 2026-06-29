@@ -34,6 +34,7 @@ DISCORD         = os.getenv("Discordwebhook", "") or os.getenv("discordwebhook",
 BASE_DIR        = Path(__file__).parent
 LOG_FILE        = BASE_DIR / "signal_log.json"
 COOLDOWN_FILE   = BASE_DIR / "cooldowns.json"
+SEND_GUARD_FILE = BASE_DIR / ".last_sent.json"   # prevents double-sends within 90s
 
 # ─── STEP 1 — DATA → FEATURES ────────────────────────────────────────────────
 def get_data(ticker: str, period: str) -> pd.DataFrame:
@@ -264,8 +265,24 @@ def confidence_grade(prob: float, score: int) -> tuple:
     return grade, label, f"{bar} {filled}/10"
 
 # ─── STEP 4 — DISCORD ALERT ──────────────────────────────────────────────────
+def _guard_ok(ticker: str, window_seconds: int = 90) -> bool:
+    """Returns False if we already sent an alert for this ticker within the window."""
+    try:
+        data = json.loads(SEND_GUARD_FILE.read_text()) if SEND_GUARD_FILE.exists() else {}
+        last = data.get(ticker, 0)
+        if (datetime.now().timestamp() - last) < window_seconds:
+            return False
+        data[ticker] = datetime.now().timestamp()
+        SEND_GUARD_FILE.write_text(json.dumps(data))
+        return True
+    except Exception:
+        return True
+
 def send_alert(ticker: str, result: dict, price: float) -> bool:
     if not DISCORD:
+        return False
+    if not _guard_ok(ticker):
+        print(f"  ⏭ {ticker}: duplicate suppressed (sent within last 90s)")
         return False
     target_price = price * (1 + TARGET_RETURN)
     target_date  = (datetime.now() + timedelta(days=PREDICTION_DAYS * 1.4)).strftime("%d %b %Y")
