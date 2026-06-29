@@ -20,9 +20,16 @@ _vader = SentimentIntensityAnalyzer()
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 WATCHLIST = [
-    "AAPL", "TSLA", "NVDA", "MSFT",
-    "BHP.AX", "CBA.AX", "FMG.AX", "RIO.AX",
-    "NST.AX", "CXO.AX", "LTR.AX", "PDN.AX",
+    # US — tech
+    "AAPL", "MSFT", "NVDA", "AMD", "META", "AMZN",
+    # US — other sectors
+    "TSLA", "XOM", "JPM",
+    # ASX — big miners (iron ore)
+    "BHP.AX", "FMG.AX", "RIO.AX", "S32.AX",
+    # ASX — specialty miners
+    "NST.AX", "CXO.AX", "LTR.AX", "MIN.AX", "PDN.AX",
+    # ASX — other
+    "CBA.AX", "WDS.AX", "CSL.AX",
 ]
 FEATURES        = ["rsi", "macd_diff", "bb_width", "atr", "ret_5", "ret_10", "ret_20", "vol_ratio", "breakout", "obv_ratio"]
 PREDICTION_DAYS = 10
@@ -120,18 +127,35 @@ def train_model() -> Pipeline:
 _regime_cache: dict = {}
 
 # Sector ETF map for US tickers — ASX already covered by ^AXJO in market_regime_ok
-SECTOR_ETF = {"AAPL": "XLK", "NVDA": "XLK", "MSFT": "XLK", "TSLA": "XLY"}
+SECTOR_ETF = {
+    "AAPL": "XLK", "NVDA": "XLK", "MSFT": "XLK", "AMD": "XLK", "META": "XLK",
+    "AMZN": "XLY", "TSLA": "XLY",
+    "XOM":  "XLE",
+    "JPM":  "XLF",
+}
 
 # Underlying commodity for each ticker — drives the real price action
 COMMODITY_MAP = {
-    "BHP.AX": ("VALE",  "iron ore"),
-    "FMG.AX": ("VALE",  "iron ore"),
-    "RIO.AX": ("VALE",  "iron ore"),
-    "NST.AX": ("GLD",   "gold"),
-    "CXO.AX": ("LIT",   "lithium"),
-    "LTR.AX": ("LIT",   "lithium"),
-    "PDN.AX": ("URA",   "uranium"),
+    "BHP.AX": ("VALE", "iron ore"),
+    "FMG.AX": ("VALE", "iron ore"),
+    "RIO.AX": ("VALE", "iron ore"),
+    "S32.AX": ("VALE", "iron ore"),
+    "NST.AX": ("GLD",  "gold"),
+    "CXO.AX": ("LIT",  "lithium"),
+    "LTR.AX": ("LIT",  "lithium"),
+    "MIN.AX": ("LIT",  "lithium"),
+    "PDN.AX": ("URA",  "uranium"),
+    "WDS.AX": ("USO",  "oil/LNG"),
+    "XOM":    ("USO",  "oil"),
 }
+
+# Correlated groups — only ONE ticker per group alerts per scan
+CORRELATION_GROUPS = [
+    frozenset({"BHP.AX", "FMG.AX", "RIO.AX", "S32.AX"}),          # iron ore
+    frozenset({"CXO.AX", "LTR.AX", "MIN.AX"}),                     # lithium
+    frozenset({"AAPL", "MSFT", "NVDA", "AMD", "META", "AMZN"}),    # US mega-cap tech
+    frozenset({"XOM", "WDS.AX"}),                                   # energy/oil
+]
 
 def _cached_ema_ok(cache_key: str, yf_ticker: str, span: int = 50) -> bool:
     """Generic helper: True when latest close > EMA(span). Cached 1 hour."""
@@ -381,11 +405,13 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     opts_adj,    opts_why    = options_flow_signal(ticker)
     comm_adj,    comm_why    = commodity_signal(ticker)
     vel_adj,     vel_why     = news_velocity(ticker)
-    for reason in (short_why, insider_why, opts_why, comm_why, vel_why):
+    sr_adj,      sr_why      = support_resistance_signal(df)
+    mtf_adj,     mtf_why     = multitimeframe_signal(ticker)
+    for reason in (short_why, insider_why, opts_why, comm_why, vel_why, sr_why, mtf_why):
         if reason:
             why.append(reason)
 
-    score = base_score + adj + news_adj + short_adj + insider_adj + opts_adj + comm_adj + vel_adj
+    score = base_score + adj + news_adj + short_adj + insider_adj + opts_adj + comm_adj + vel_adj + sr_adj + mtf_adj
 
     # Grade thresholds — only the strongest qualify for an alert
     # ELITE:      score ≥ 11  (any AI prob — already filtered to ≥ 55% above)
@@ -475,6 +501,67 @@ def news_velocity(ticker: str) -> tuple:
             result = (+1, f"Elevated news activity ({recent} articles in 48h)")
         else:
             result = (0, "")
+    except Exception:
+        result = (0, "")
+    return _signal_store(cache_key, result)
+
+
+# ─── SUPPORT / RESISTANCE ─────────────────────────────────────────────────────
+def support_resistance_signal(df: "pd.DataFrame") -> tuple:
+    """
+    Detect key support/resistance price interactions on the daily chart.
+
+    Score breakdown:
+      +2  Breaking through the 20-day resistance high (momentum at key level)
+      +1  Bouncing from the 20-day support low (buyers stepping in)
+      +1  Bouncing from the 50-day support low (structural support)
+       0  No notable interaction
+    """
+    try:
+        close   = df["Close"]
+        current = float(close.iloc[-1])
+        high_20 = float(close.rolling(20).max().iloc[-2])   # prior bar avoids look-ahead
+        low_20  = float(close.rolling(20).min().iloc[-2])
+        low_50  = float(close.rolling(50).min().iloc[-2])
+
+        if current >= high_20 * 0.99:
+            return (+2, "Breaking 20-day resistance — momentum at key level")
+        elif low_20 <= current <= low_20 * 1.04:
+            return (+1, "Bouncing from 20-day support level")
+        elif low_50 <= current <= low_50 * 1.04:
+            return (+1, "Bouncing from 50-day support level")
+    except Exception:
+        pass
+    return (0, "")
+
+
+# ─── MULTI-TIMEFRAME CONFIRMATION ─────────────────────────────────────────────
+def multitimeframe_signal(ticker: str) -> tuple:
+    """
+    Check whether the 1-hour chart agrees with the daily buy signal.
+    Adds conviction when multiple timeframes point the same direction.
+
+    Score breakdown:
+      +1  1h EMA20 > EMA50 AND 1h MACD positive (intraday trend fully aligned)
+       0  mixed or unavailable
+    """
+    cache_key = f"mtf_{ticker}"
+    cached = _signal_cached(cache_key, ttl=3600)
+    if cached is not None:
+        return cached
+    try:
+        df_1h = yf.Ticker(ticker).history(period="5d", interval="1h")
+        if df_1h.empty or len(df_1h) < 26:
+            result = (0, "")
+        else:
+            close     = df_1h["Close"]
+            ema20     = close.ewm(span=20, adjust=False).mean()
+            ema50     = close.ewm(span=50, adjust=False).mean()
+            macd_line = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
+            if ema20.iloc[-1] > ema50.iloc[-1] and macd_line.iloc[-1] > 0:
+                result = (+1, "Intraday trend aligned (1h EMA + MACD bullish)")
+            else:
+                result = (0, "")
     except Exception:
         result = (0, "")
     return _signal_store(cache_key, result)
@@ -756,11 +843,19 @@ def _trade_params(ticker: str, result: dict, price: float, df: "pd.DataFrame") -
     if tier == "ELITE":  reasons.append("ELITE signal")
     if breakout:         reasons.append("52-week breakout")
 
+    # ATR-based stop-loss — wider for high-vol stocks
+    atr_raw  = float(df.iloc[-1]["atr"])
+    sl_mult  = 2.0 if atr_pct >= 3.0 else (1.5 if atr_pct >= 1.5 else 1.2)
+    stop_loss     = round(max(price - sl_mult * atr_raw, price * 0.85), 4)  # hard floor -15%
+    stop_loss_pct = round((stop_loss - price) / price * 100, 1)
+
     return {
-        "target_pct":   final_target,
-        "exit_days":    final_days,
-        "target_price": round(price * (1 + final_target), 4),
-        "rationale":    ", ".join(reasons),
+        "target_pct":    final_target,
+        "exit_days":     final_days,
+        "target_price":  round(price * (1 + final_target), 4),
+        "stop_loss":     stop_loss,
+        "stop_loss_pct": stop_loss_pct,
+        "rationale":     ", ".join(reasons),
     }
 
 def _add_trading_days(start: datetime, n: int) -> datetime:
@@ -817,6 +912,16 @@ def _simple_read(ticker: str, result: dict, price: float) -> str:
     # News velocity
     if any("velocity" in w.lower() or "catalyst" in w.lower() for w in why):
         parts.append("News volume has spiked in the last 48 hours, suggesting a catalyst may be underway.")
+
+    # Support / resistance
+    if any("resistance" in w.lower() for w in why):
+        parts.append("Price is breaking through a key resistance level — a textbook momentum signal.")
+    elif any("support" in w.lower() for w in why):
+        parts.append("Price is bouncing off a key support level, suggesting buyers are defending that zone.")
+
+    # Multi-timeframe
+    if any("intraday" in w.lower() for w in why):
+        parts.append("The 1-hour chart is also bullish — daily and intraday trends are pointing the same direction.")
 
     # RSI context
     if rsi < 40:
@@ -917,9 +1022,10 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         _simple_read(ticker, result, price),
         "",
         f"**📅 Trade Plan**",
-        f"🟢  Buy:    **{buy_date.strftime('%A %d %b %Y')}**  @  {entry_price}  _({entry_note})_",
-        f"🚪  Exit:   **{exit_date.strftime('%A %d %b %Y')}**  ({exit_days} trading days)",
-        f"💰  Target: **${target_price:.3f}**  (+{target_pct*100:.0f}%)  _— {params['rationale']}_",
+        f"🟢  Buy:       **{buy_date.strftime('%A %d %b %Y')}**  @  {entry_price}  _({entry_note})_",
+        f"🚪  Exit:      **{exit_date.strftime('%A %d %b %Y')}**  ({exit_days} trading days)",
+        f"💰  Target:    **${target_price:.3f}**  (+{target_pct*100:.0f}%)  _— {params['rationale']}_",
+        f"🛑  Stop-loss: **${params['stop_loss']:.3f}**  ({params['stop_loss_pct']:.1f}%)  _exit if price falls here_",
     ]
 
     if hist_line:  lines += ["", hist_line]
