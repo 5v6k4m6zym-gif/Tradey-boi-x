@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 import ta
 import yfinance as yf
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -31,7 +32,12 @@ WATCHLIST = [
     # ASX — other
     "CBA.AX", "WDS.AX", "CSL.AX",
 ]
-FEATURES        = ["rsi", "macd_diff", "bb_width", "atr", "ret_5", "ret_10", "ret_20", "vol_ratio", "breakout", "obv_ratio"]
+FEATURES        = [
+    "rsi", "macd_diff", "bb_width", "atr",
+    "ret_5", "ret_10", "ret_20", "ret_63",
+    "vol_ratio", "breakout", "obv_ratio",
+    "adx", "mfi", "bb_squeeze", "gap_up",
+]
 PREDICTION_DAYS = 10
 TARGET_RETURN   = 0.03
 COOLDOWN_HOURS  = 8
@@ -69,10 +75,34 @@ def get_data(ticker: str, period: str) -> pd.DataFrame:
     obv               = ta.volume.OnBalanceVolumeIndicator(close, vol).on_balance_volume()
     obv_chg           = obv.diff(5)
     df["obv_ratio"]   = obv_chg / (obv.rolling(20).std() + 1e-10)
+    df["adx"]         = ta.trend.ADXIndicator(high, low, close, window=14).adx()
+    df["mfi"]         = ta.volume.MFIIndicator(high, low, close, vol, window=14).money_flow_index()
+    df["ret_63"]      = close.pct_change(63)
+    df["bb_squeeze"]  = (df["bb_width"] < df["bb_width"].rolling(126).quantile(0.20)).astype(int)
+    df["gap_up"]      = ((df["Open"] / close.shift(1) - 1) > 0.02).astype(int)
     return df.dropna()
 
 # ─── STEP 2 — AI MODEL ───────────────────────────────────────────────────────
-def train_model() -> Pipeline:
+class EnsembleModel:
+    """
+    Wraps XGBoost + RandomForest. Both models are trained independently;
+    predict_proba returns a weighted average (60/40).
+    Only fires when both models agree the trade has merit.
+    """
+    def __init__(self, xgb_pipe: Pipeline, rf_pipe: Pipeline):
+        self.xgb = xgb_pipe
+        self.rf  = rf_pipe
+
+    def predict_proba(self, X):
+        xgb_p = self.xgb.predict_proba(X)
+        rf_p  = self.rf.predict_proba(X)
+        return 0.60 * xgb_p + 0.40 * rf_p
+
+    def predict(self, X):
+        return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
+
+
+def train_model() -> "EnsembleModel":
     """
     Train XGBoost on ALL watchlist tickers with recency-weighted samples.
     Recent data counts more than old data:
@@ -108,7 +138,10 @@ def train_model() -> Pipeline:
     neg = int((combined["target"] == 0).sum())
     pos = int((combined["target"] == 1).sum())
     spw = round(neg / pos, 2) if pos > 0 else 1.0
-    pipe = Pipeline([
+    X, y = combined[FEATURES], combined["target"]
+
+    # XGBoost — recency-weighted
+    xgb_pipe = Pipeline([
         ("sc",  StandardScaler()),
         ("xgb", XGBClassifier(
             n_estimators=400, max_depth=6, learning_rate=0.05,
@@ -117,11 +150,22 @@ def train_model() -> Pipeline:
             eval_metric="logloss", random_state=42, verbosity=0,
         )),
     ])
-    pipe.fit(combined[FEATURES], combined["target"], xgb__sample_weight=weights.values)
+    xgb_pipe.fit(X, y, xgb__sample_weight=weights.values)
+
+    # RandomForest — balanced class weights, independent from XGBoost
+    rf_pipe = Pipeline([
+        ("sc", StandardScaler()),
+        ("rf", RandomForestClassifier(
+            n_estimators=300, max_depth=8, min_samples_leaf=10,
+            class_weight="balanced", random_state=42, n_jobs=-1,
+        )),
+    ])
+    rf_pipe.fit(X, y)
+
     recent = int((ages <= 30).sum())
-    print(f"  Model trained on {len(combined):,} rows ({pos} buy / {neg} no-buy) | "
-          f"scale_pos_weight={spw} | recency-weighted ({recent} rows ×4)")
-    return pipe
+    print(f"  Ensemble trained: {len(combined):,} rows ({pos} buy / {neg} no-buy) | "
+          f"XGBoost + RandomForest | recency-weighted ({recent} rows ×4)")
+    return EnsembleModel(xgb_pipe, rf_pipe)
 
 # ─── MARKET REGIME, VIX, SECTOR, WEEKLY, EARNINGS ───────────────────────────
 _regime_cache: dict = {}
@@ -399,7 +443,7 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
         filters.append((f"News sentiment not strongly negative ({news['compound']:.2f})", False))
         return {**GATED, "prob": prob, "filters": filters, "news": news}
 
-    # Short interest, insider buying, options flow, commodity, news velocity
+    # All signal adjusters
     short_adj,   short_why   = short_interest_signal(ticker)
     insider_adj, insider_why = insider_signal(ticker)
     opts_adj,    opts_why    = options_flow_signal(ticker)
@@ -407,11 +451,20 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     vel_adj,     vel_why     = news_velocity(ticker)
     sr_adj,      sr_why      = support_resistance_signal(df)
     mtf_adj,     mtf_why     = multitimeframe_signal(ticker)
-    for reason in (short_why, insider_why, opts_why, comm_why, vel_why, sr_why, mtf_why):
+    rs_adj,      rs_why      = relative_strength_signal(ticker, df)
+    fg_adj,      fg_why      = fear_greed_signal()
+    rot_adj,     rot_why     = sector_rotation_signal(ticker)
+    gap_adj,     gap_why     = gap_signal(df)
+    sq_adj,      sq_why      = squeeze_breakout_signal(df)
+    fund_adj,    fund_why    = fundamental_signal(ticker)
+    for reason in (short_why, insider_why, opts_why, comm_why, vel_why,
+                   sr_why, mtf_why, rs_why, fg_why, rot_why, gap_why, sq_why, fund_why):
         if reason:
             why.append(reason)
 
-    score = base_score + adj + news_adj + short_adj + insider_adj + opts_adj + comm_adj + vel_adj + sr_adj + mtf_adj
+    score = (base_score + adj + news_adj + short_adj + insider_adj + opts_adj
+             + comm_adj + vel_adj + sr_adj + mtf_adj + rs_adj + fg_adj
+             + rot_adj + gap_adj + sq_adj + fund_adj)
 
     # Grade thresholds — only the strongest qualify for an alert
     # ELITE:      score ≥ 11  (any AI prob — already filtered to ≥ 55% above)
@@ -562,6 +615,175 @@ def multitimeframe_signal(ticker: str) -> tuple:
                 result = (+1, "Intraday trend aligned (1h EMA + MACD bullish)")
             else:
                 result = (0, "")
+    except Exception:
+        result = (0, "")
+    return _signal_store(cache_key, result)
+
+
+# ─── RELATIVE STRENGTH vs BENCHMARK ─────────────────────────────────────────
+def relative_strength_signal(ticker: str, df: "pd.DataFrame") -> tuple:
+    """
+    Compare ticker's 12-week return vs its benchmark (SPY or ^AXJO).
+    Stocks outperforming their benchmark attract institutional buying.
+
+    +2  top 10% — significantly outperforming (RS leader)
+    +1  outperforming benchmark by any margin
+     0  in-line or underperforming
+    """
+    cache_key = f"rs_{ticker}"
+    cached = _signal_cached(cache_key, ttl=3600)
+    if cached is not None:
+        return cached
+    try:
+        bench = "^AXJO" if ticker.endswith(".AX") else "SPY"
+        b_df  = yf.Ticker(bench).history(period="4mo")
+        if len(df) < 63 or len(b_df) < 63:
+            return _signal_store(cache_key, (0, ""))
+        ticker_ret = float(df["Close"].iloc[-1] / df["Close"].iloc[-63] - 1)
+        bench_ret  = float(b_df["Close"].iloc[-1] / b_df["Close"].iloc[-63] - 1)
+        spread = ticker_ret - bench_ret
+        if spread >= 0.10:
+            result = (+2, f"RS leader — outperforming benchmark by {spread*100:.1f}% (12wk)")
+        elif spread > 0:
+            result = (+1, f"Outperforming benchmark by {spread*100:.1f}% (12wk)")
+        else:
+            result = (0, "")
+    except Exception:
+        result = (0, "")
+    return _signal_store(cache_key, result)
+
+
+# ─── FEAR & GREED COMPOSITE ───────────────────────────────────────────────────
+def fear_greed_signal() -> tuple:
+    """
+    Composite market sentiment: VIX level + SPY 20-day momentum.
+    Provides an extra boost in genuinely risk-on conditions.
+
+    +1  VIX < 18 AND SPY has positive 20-day momentum (greed — good conditions)
+     0  neutral conditions
+    -1  VIX 25–30 (caution — approaching the fear threshold)
+    """
+    cache_key = "fear_greed"
+    cached = _signal_cached(cache_key, ttl=3600)
+    if cached is not None:
+        return cached
+    try:
+        vix    = float(yf.Ticker("^VIX").history(period="5d")["Close"].iloc[-1])
+        spy_df = yf.Ticker("SPY").history(period="2mo")
+        spy_mom = float(spy_df["Close"].iloc[-1] / spy_df["Close"].iloc[-20] - 1) if len(spy_df) >= 20 else 0
+        if vix < 18 and spy_mom > 0:
+            result = (+1, f"Risk-on environment (VIX {vix:.1f}, SPY +{spy_mom*100:.1f}% 20d)")
+        elif vix >= 25:
+            result = (-1, f"Elevated fear (VIX {vix:.1f}) — caution")
+        else:
+            result = (0, "")
+    except Exception:
+        result = (0, "")
+    return _signal_store(cache_key, result)
+
+
+# ─── SECTOR ROTATION ──────────────────────────────────────────────────────────
+def sector_rotation_signal(ticker: str) -> tuple:
+    """
+    Detect if this ticker's sector is currently leading the market.
+    A stock in a leading sector has institutional tailwinds.
+
+    +1  sector ETF outperforming SPY by >3% over 4 weeks
+     0  sector neutral or lagging
+    """
+    etf = SECTOR_ETF.get(ticker)
+    if not etf:
+        return (0, "")
+    cache_key = f"rotation_{etf}"
+    cached = _signal_cached(cache_key, ttl=3600)
+    if cached is not None:
+        return cached
+    try:
+        etf_df = yf.Ticker(etf).history(period="2mo")
+        spy_df = yf.Ticker("SPY").history(period="2mo")
+        if len(etf_df) < 20 or len(spy_df) < 20:
+            return _signal_store(cache_key, (0, ""))
+        etf_ret = float(etf_df["Close"].iloc[-1] / etf_df["Close"].iloc[-20] - 1)
+        spy_ret = float(spy_df["Close"].iloc[-1] / spy_df["Close"].iloc[-20] - 1)
+        if etf_ret - spy_ret >= 0.03:
+            result = (+1, f"Sector leading market by {(etf_ret-spy_ret)*100:.1f}% (4wk rotation)")
+        else:
+            result = (0, "")
+    except Exception:
+        result = (0, "")
+    return _signal_store(cache_key, result)
+
+
+# ─── GAP-UP + BB SQUEEZE BREAKOUT + FUNDAMENTAL ───────────────────────────────
+def gap_signal(df: "pd.DataFrame") -> tuple:
+    """
+    Detect a gap-up on volume — institutions buying aggressively overnight.
+    One of the highest-probability short-term momentum signals.
+
+    +2  gap up >2% AND volume surge >1.5× (institutional gap — very strong)
+    +1  gap up >2% on normal volume
+     0  no gap
+    """
+    try:
+        row = df.iloc[-1]
+        if row.get("gap_up", 0) == 1:
+            if row["vol_ratio"] > 1.5:
+                return (+2, "Gap-up on institutional volume — strong overnight buying")
+            return (+1, "Gap-up detected — above prior day's close by >2%")
+    except Exception:
+        pass
+    return (0, "")
+
+
+def squeeze_breakout_signal(df: "pd.DataFrame") -> tuple:
+    """
+    Detect a breakout from a Bollinger Band squeeze.
+    A breakout after low-volatility consolidation is far more powerful
+    than a random breakout from a noisy range.
+
+    +2  currently breaking out AND was in a squeeze in the last 5 days
+     0  otherwise
+    """
+    try:
+        row = df.iloc[-1]
+        recent_squeeze = df["bb_squeeze"].iloc[-6:-1].any()
+        if bool(row["breakout"]) and recent_squeeze:
+            return (+2, "Breakout from volatility squeeze — compressed spring releasing")
+    except Exception:
+        pass
+    return (0, "")
+
+
+def fundamental_signal(ticker: str) -> tuple:
+    """
+    Basic fundamental quality check using yfinance info.
+    Blocks signals on fundamentally broken companies; boosts quality ones.
+
+    +1  strong: positive free cash flow AND P/E 5–25 AND low debt
+    -1  weak: negative earnings OR debt/equity > 3
+     0  data unavailable or neutral
+    """
+    cache_key = f"fundamental_{ticker}"
+    cached = _signal_cached(cache_key, ttl=86400)   # 24h cache — fundamentals don't change hourly
+    if cached is not None:
+        return cached
+    try:
+        info = yf.Ticker(ticker).info
+        pe       = info.get("trailingPE", None)
+        de       = info.get("debtToEquity", None)
+        fcf      = info.get("freeCashflow", None)
+        eps      = info.get("trailingEps", None)
+
+        if eps is not None and eps < 0:
+            result = (-1, "Negative earnings — fundamental caution")
+        elif de is not None and de > 300:   # yfinance expresses as %, so 300 = 3.0
+            result = (-1, "High debt load — fundamental caution")
+        elif (pe is not None and 5 < pe < 25
+              and fcf is not None and fcf > 0
+              and (de is None or de < 100)):
+            result = (+1, "Strong fundamentals (FCF positive, reasonable P/E, low debt)")
+        else:
+            result = (0, "")
     except Exception:
         result = (0, "")
     return _signal_store(cache_key, result)
@@ -923,6 +1145,30 @@ def _simple_read(ticker: str, result: dict, price: float) -> str:
     if any("intraday" in w.lower() for w in why):
         parts.append("The 1-hour chart is also bullish — daily and intraday trends are pointing the same direction.")
 
+    # Relative strength
+    if any("rs leader" in w.lower() for w in why):
+        parts.append("This stock is a relative strength leader — outperforming the market significantly over the last 3 months. Institutions are actively accumulating.")
+    elif any("outperforming benchmark" in w.lower() for w in why):
+        parts.append("The stock is outperforming the broader market over the last 3 months — a sign of underlying institutional demand.")
+
+    # Gap-up
+    if any("gap-up" in w.lower() for w in why):
+        parts.append("A gap-up on high volume overnight signals institutions were buying aggressively before the open.")
+
+    # Squeeze breakout
+    if any("squeeze" in w.lower() for w in why):
+        parts.append("This breakout follows a period of tight consolidation — like a compressed spring releasing. These are among the highest-quality breakout setups.")
+
+    # Fear & Greed / sector rotation
+    if any("risk-on" in w.lower() for w in why):
+        parts.append("Macro conditions are risk-on — low fear, positive market momentum. A good environment for momentum trades.")
+    if any("sector leading" in w.lower() or "rotation" in w.lower() for w in why):
+        parts.append("The sector is currently leading the broader market, providing an institutional tailwind.")
+
+    # Fundamental
+    if any("fundamentals" in w.lower() for w in why):
+        parts.append("Fundamentals are solid — positive cash flow, reasonable valuation, and manageable debt.")
+
     # RSI context
     if rsi < 40:
         parts.append(f"RSI at {rsi:.0f} is oversold — this is an ideal low-risk entry point.")
@@ -1026,6 +1272,7 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         f"🚪  Exit:      **{exit_date.strftime('%A %d %b %Y')}**  ({exit_days} trading days)",
         f"💰  Target:    **${target_price:.3f}**  (+{target_pct*100:.0f}%)  _— {params['rationale']}_",
         f"🛑  Stop-loss: **${params['stop_loss']:.3f}**  ({params['stop_loss_pct']:.1f}%)  _exit if price falls here_",
+        f"⚖️  Risk/Reward: **{abs(target_pct/params['stop_loss_pct']):.1f}:1**  _({target_pct*100:.0f}% gain vs {abs(params['stop_loss_pct']):.1f}% risk)_",
     ]
 
     if hist_line:  lines += ["", hist_line]
