@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "YY5_yrLlI1Jni11iohmqA"
+uri = "file://tradey-boi-x-github.zip"
+type = "unspecified"
+title = "Tradey Boi X — GitHub Files"
