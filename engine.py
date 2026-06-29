@@ -255,10 +255,10 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
         ("RSI not overbought (< 72)",          row["rsi"] < 72),
         ("RSI not oversold (> 25)",            row["rsi"] > 25),
         ("Liquidity (vol ratio ≥ 0.5)",        row["vol_ratio"] >= 0.5),
-        ("AI probability ≥ 55%",              prob >= 0.55),
+        ("AI probability ≥ 40%",              prob >= 0.40),
     ]
     if not all(ok for _, ok in filters):
-        return {**GATED, "filters": filters}
+        return {**GATED, "prob": prob, "filters": filters}
 
     rules = [
         (3, "AI prob ≥ 80%",             prob >= 0.80),
