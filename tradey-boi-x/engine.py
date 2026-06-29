@@ -169,22 +169,65 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
             "prob": prob, "score": score, "base_score": base_score,
             "adj": adj, "why": why, "filters": filters}
 
+# ─── CONFIDENCE INTERVAL — historical return range for similar setups ─────────
+def confidence_interval(tier: str) -> dict | None:
+    """
+    Returns best/worst/median return from resolved signals of the same tier.
+    Requires ≥3 resolved signals for that tier to be meaningful.
+    """
+    entries  = _load_log()
+    resolved = [e for e in entries if e["outcome"] is not None and e["tier"] == tier]
+    if len(resolved) < 3:
+        all_resolved = [e for e in entries if e["outcome"] is not None]
+        if len(all_resolved) < 3:
+            return None
+        resolved = all_resolved
+    returns = sorted(e["actual_pct"] for e in resolved)
+    n = len(returns)
+    median = returns[n // 2]
+    p25    = returns[max(0, n // 4)]
+    p75    = returns[min(n - 1, 3 * n // 4)]
+    return {
+        "best":   returns[-1],
+        "worst":  returns[0],
+        "median": median,
+        "p25":    p25,
+        "p75":    p75,
+        "n":      n,
+    }
+
 # ─── STEP 4 — DISCORD ALERT ──────────────────────────────────────────────────
 def send_alert(ticker: str, result: dict, price: float) -> bool:
     if not DISCORD:
         return False
     target_date = (datetime.now() + timedelta(days=PREDICTION_DAYS * 1.4)).strftime("%d %b %Y")
-    msg = "\n".join([
+
+    ci = confidence_interval(result["signal"])
+
+    lines = [
         f"**TRADEY BOI X** | {result['label']}",
         f"**{ticker}** @ ${price:.2f}",
         f"Score {result['score']}/14 | AI {result['prob']*100:.1f}%",
         f"⏱ Timeframe: {PREDICTION_DAYS} trading days (by ~{target_date})",
         f"🎯 Target: +{TARGET_RETURN*100:.0f}% gain",
+    ]
+
+    if ci:
+        lines.append(
+            f"📈 Historical range ({ci['n']} similar): "
+            f"worst {ci['worst']*100:+.1f}% / typical {ci['p25']*100:+.1f}% to {ci['p75']*100:+.1f}% / best {ci['best']*100:+.1f}%"
+        )
+    if result.get("adj", 0) != 0:
+        direction = "boosted" if result["adj"] > 0 else "penalised"
+        lines.append(f"🧠 AI-{direction} ticker (base score {result.get('base_score', result['score'])}, adj {result['adj']:+d})")
+
+    lines += [
         "Why: " + ", ".join(result["why"]),
         f"_{datetime.now().strftime('%Y-%m-%d %H:%M')}_",
-    ])
+    ]
+
     try:
-        r = requests.post(DISCORD, json={"content": msg}, timeout=5)
+        r = requests.post(DISCORD, json={"content": "\n".join(lines)}, timeout=5)
         return r.status_code in (200, 204)
     except Exception:
         return False
