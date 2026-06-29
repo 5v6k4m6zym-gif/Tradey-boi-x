@@ -527,6 +527,53 @@ def _guard_ok(ticker: str, window_seconds: int = 90) -> bool:
     except Exception:
         return True
 
+def _trade_params(ticker: str, result: dict, price: float, df: "pd.DataFrame") -> dict:
+    """
+    Dynamically compute target return % and holding period.
+
+    Volatility  →  base target / window
+    ─────────────────────────────────────────────
+    High  ≥3% ATR   →  8%  /  7 trading days   (small miners, TSLA)
+    Mid  1.5–3% ATR  →  5%  / 10 trading days   (AAPL, BHP, NVDA)
+    Low   <1.5% ATR  →  3%  / 15 trading days   (CBA, MSFT)
+
+    Multipliers applied on top:
+      ELITE signal   → target ×1.25, window ×0.80
+      Breakout       → target ×1.15, window ×0.85
+    Hard caps: target 5–20%, window 5–20 trading days.
+    """
+    row     = df.iloc[-1]
+    atr_pct = float(row["atr"]) / price * 100
+    tier    = result.get("signal", "WATCH")
+    breakout = bool(row.get("breakout", 0))
+
+    if atr_pct >= 3.0:
+        base_target, base_days, vol_label = 0.08,  7, "high-volatility"
+    elif atr_pct >= 1.5:
+        base_target, base_days, vol_label = 0.05, 10, "mid-volatility"
+    else:
+        base_target, base_days, vol_label = 0.03, 15, "low-volatility"
+
+    t_mult, d_mult = 1.0, 1.0
+    if tier == "ELITE":
+        t_mult *= 1.25; d_mult *= 0.80
+    if breakout:
+        t_mult *= 1.15; d_mult *= 0.85
+
+    final_target = round(min(base_target * t_mult, 0.20), 4)
+    final_days   = max(5, min(20, int(round(base_days * d_mult))))
+
+    reasons = [vol_label, f"ATR {atr_pct:.1f}%"]
+    if tier == "ELITE":  reasons.append("ELITE signal")
+    if breakout:         reasons.append("52-week breakout")
+
+    return {
+        "target_pct":   final_target,
+        "exit_days":    final_days,
+        "target_price": round(price * (1 + final_target), 4),
+        "rationale":    ", ".join(reasons),
+    }
+
 def _add_trading_days(start: datetime, n: int) -> datetime:
     """Return the date that is exactly n trading days (Mon–Fri) after start."""
     current = start
@@ -544,17 +591,25 @@ def _next_trading_day(from_date: datetime) -> datetime:
         candidate += timedelta(days=1)
     return candidate
 
-def send_alert(ticker: str, result: dict, price: float) -> bool:
+def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
     if not DISCORD:
         return False
     if not _guard_ok(ticker):
         print(f"  ⏭ {ticker}: duplicate suppressed (sent within last 90s)")
         return False
 
-    now          = datetime.now()
-    buy_date     = _next_trading_day(now)
-    exit_date    = _add_trading_days(buy_date, PREDICTION_DAYS)
-    target_price = price * (1 + TARGET_RETURN)
+    # Dynamic target & window — fetch df if not passed
+    if df is None:
+        import yfinance as _yf
+        df = _yf.Ticker(ticker).history(period="6mo")
+    params       = _trade_params(ticker, result, price, df)
+    target_price = params["target_price"]
+    target_pct   = params["target_pct"]
+    exit_days    = params["exit_days"]
+
+    now       = datetime.now()
+    buy_date  = _next_trading_day(now)
+    exit_date = _add_trading_days(buy_date, exit_days)
 
     # Suggested entry based on RSI — how aggressively to chase the entry
     rsi = result.get("rsi", 50)
@@ -577,8 +632,8 @@ def send_alert(ticker: str, result: dict, price: float) -> bool:
         f"Score {result['score']}/14 | AI {result['prob']*100:.1f}%",
         f"🟢 Entry: {entry_note}",
         f"📅 Buy date:  **{buy_date.strftime('%A %d %b %Y')}**",
-        f"🚪 Exit by:   **{exit_date.strftime('%A %d %b %Y')}**  ({PREDICTION_DAYS} trading days)",
-        f"💰 Target:    ${target_price:.2f} (+{TARGET_RETURN*100:.0f}%)",
+        f"🚪 Exit by:   **{exit_date.strftime('%A %d %b %Y')}**  ({exit_days} trading days)",
+        f"💰 Target:    ${target_price:.2f} (+{target_pct*100:.0f}%)  _({params['rationale']})_",
     ]
 
     if ci:
