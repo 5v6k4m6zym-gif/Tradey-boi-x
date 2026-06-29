@@ -915,34 +915,166 @@ def insider_signal(ticker: str) -> tuple:
 
 def options_flow_signal(ticker: str) -> tuple:
     """
-    Put/Call ratio from nearest options expiry.
-    PCR < 0.7 = more calls than puts = bullish sentiment.
-    ASX stocks skipped (no options data on yfinance).
-    Returns (score_adj, reason_string).
+    Real options chain analysis — 5 independent metrics scored and combined.
+
+    1. Put/Call Volume Ratio  — what institutions are TRADING today (most timely)
+    2. Put/Call OI Ratio      — where money is POSITIONED (medium-term sentiment)
+    3. Unusual Call Activity  — call volume >> OI = new entry, not hedging
+    4. Max Pain               — price below max pain = market makers push higher into expiry
+    5. IV Skew                — call IV < put IV = market not pricing downside = bullish
+
+    Covers 1–2 nearest expiries for confirmation.
+    ASX tickers skipped — no options chain data on yfinance.
+    Score: -2 to +2
     """
     if ticker.endswith(".AX"):
         return (0, "")
-    cached = _signal_cached(f"opts_{ticker}")
+    cache_key = f"opts_{ticker}"
+    cached    = _signal_cached(cache_key, ttl=3600)
     if cached is not None:
         return cached
     try:
         t     = yf.Ticker(ticker)
         dates = t.options
         if not dates:
-            return _signal_store(f"opts_{ticker}", (0, ""))
-        chain = t.option_chain(dates[0])
-        call_oi = float(chain.calls["openInterest"].fillna(0).sum())
-        put_oi  = float(chain.puts["openInterest"].fillna(0).sum())
-        if call_oi == 0:
-            return _signal_store(f"opts_{ticker}", (0, ""))
-        pcr = put_oi / call_oi
-        if   pcr < 0.60: result = (+2, f"Bullish options flow — PCR {pcr:.2f}")
-        elif pcr < 0.80: result = (+1, f"Mildly bullish options — PCR {pcr:.2f}")
-        elif pcr > 1.50: result = (-1, f"Bearish options flow — PCR {pcr:.2f}")
-        else:            result = (0, "")
+            return _signal_store(cache_key, (0, ""))
+
+        # Current price for ATM calculations
+        try:
+            price = float(t.fast_info["lastPrice"])
+        except Exception:
+            price = float(t.history(period="1d")["Close"].iloc[-1])
+        if price <= 0:
+            return _signal_store(cache_key, (0, ""))
+
+        # Analyse nearest 2 expiries (more robust than single expiry)
+        expiries = dates[:min(2, len(dates))]
+        total_cv = 0.0; total_pv  = 0.0
+        total_co = 0.0; total_po  = 0.0
+        unusual_count = 0
+        max_pain_prices: list[float] = []
+        call_ivs: list[float] = []
+        put_ivs:  list[float] = []
+
+        for exp in expiries:
+            chain = t.option_chain(exp)
+            calls = chain.calls.copy()
+            puts  = chain.puts.copy()
+
+            # ── 1 & 2: Volume + OI totals ─────────────────────────────────────
+            cv = float(calls["volume"].fillna(0).sum())
+            pv = float(puts["volume"].fillna(0).sum())
+            co = float(calls["openInterest"].fillna(0).sum())
+            po = float(puts["openInterest"].fillna(0).sum())
+            total_cv += cv; total_pv += pv
+            total_co += co; total_po += po
+
+            # ── 3: Unusual call activity — volume far exceeds OI ──────────────
+            # Volume > OI means contracts are being OPENED today (new positioning)
+            atm_calls = calls[(calls["strike"] >= price * 0.95) &
+                              (calls["strike"] <= price * 1.05)]
+            if not atm_calls.empty:
+                atm_cv = float(atm_calls["volume"].fillna(0).sum())
+                atm_co = float(atm_calls["openInterest"].fillna(0).sum())
+                if atm_co > 0 and atm_cv / atm_co > 1.5:
+                    unusual_count += 1
+
+            # ── 4: Max pain — price where total option holder value is minimised
+            # Options writers (often market makers) benefit from pinning here
+            try:
+                strikes = sorted(set(
+                    calls["strike"].dropna().tolist() +
+                    puts["strike"].dropna().tolist()
+                ))
+                min_val = None; mp_strike = None
+                for s in strikes:
+                    call_val = float(
+                        ((s - calls["strike"]).clip(lower=0) *
+                         calls["openInterest"].fillna(0)).sum()
+                    )
+                    put_val = float(
+                        ((puts["strike"] - s).clip(lower=0) *
+                         puts["openInterest"].fillna(0)).sum()
+                    )
+                    total = call_val + put_val
+                    if min_val is None or total < min_val:
+                        min_val = total; mp_strike = s
+                if mp_strike:
+                    max_pain_prices.append(mp_strike)
+            except Exception:
+                pass
+
+            # ── 5: IV skew — ATM call IV vs ATM put IV ────────────────────────
+            try:
+                atm_band = (calls["strike"] >= price * 0.97) & (calls["strike"] <= price * 1.03)
+                atm_puts  = (puts["strike"]  >= price * 0.97) & (puts["strike"]  <= price * 1.03)
+                c_iv = calls.loc[atm_band,  "impliedVolatility"].dropna()
+                p_iv = puts.loc[atm_puts,   "impliedVolatility"].dropna()
+                if not c_iv.empty: call_ivs.append(float(c_iv.mean()))
+                if not p_iv.empty: put_ivs.append(float(p_iv.mean()))
+            except Exception:
+                pass
+
+        # ── Scoring ────────────────────────────────────────────────────────────
+        score   = 0
+        reasons = []
+
+        # 1. Volume P/C ratio
+        if total_cv > 0:
+            pcr_vol = total_pv / total_cv
+            if pcr_vol < 0.55:
+                score += 2
+                reasons.append(f"Strong bullish options flow — P/C volume {pcr_vol:.2f} (heavy call buying)")
+            elif pcr_vol < 0.75:
+                score += 1
+                reasons.append(f"Bullish options flow — P/C volume {pcr_vol:.2f}")
+            elif pcr_vol > 1.50:
+                score -= 1
+                reasons.append(f"Bearish options flow — P/C volume {pcr_vol:.2f} (heavy put buying)")
+
+        # 2. OI positioning
+        if total_co > 0:
+            pcr_oi = total_po / total_co
+            if pcr_oi < 0.60:
+                score += 1
+                reasons.append(f"Bullish OI positioning — P/C OI {pcr_oi:.2f}")
+            elif pcr_oi > 1.60:
+                score -= 1
+                reasons.append(f"Bearish OI positioning — P/C OI {pcr_oi:.2f}")
+
+        # 3. Unusual call activity
+        if unusual_count > 0:
+            score += 1
+            reasons.append("Unusual call activity near ATM — volume exceeds OI (new institutional positioning)")
+
+        # 4. Max pain
+        if max_pain_prices:
+            avg_mp = sum(max_pain_prices) / len(max_pain_prices)
+            if price < avg_mp * 0.97:
+                score += 1
+                reasons.append(
+                    f"Price ${price:.2f} below max pain ${avg_mp:.2f} — "
+                    f"options structure favours a move higher into expiry"
+                )
+
+        # 5. IV skew
+        if call_ivs and put_ivs:
+            avg_c_iv = sum(call_ivs) / len(call_ivs)
+            avg_p_iv = sum(put_ivs)  / len(put_ivs)
+            if avg_c_iv < avg_p_iv * 0.85:
+                score += 1
+                reasons.append(
+                    f"Bullish IV skew — call IV {avg_c_iv*100:.0f}% vs put IV {avg_p_iv*100:.0f}% "
+                    f"(market not pricing downside risk)"
+                )
+
+        score  = max(-2, min(score, 2))
+        reason = " | ".join(reasons[:2]) if reasons else ""
+        result = (score, reason) if score != 0 else (0, "")
+
     except Exception:
         result = (0, "")
-    return _signal_store(f"opts_{ticker}", result)
+    return _signal_store(cache_key, result)
 
 # ─── NEWS SENTIMENT (VADER + Loughran-McDonald financial lexicon) ─────────────
 # Loughran-McDonald financial word lists — purpose-built for financial text
@@ -1175,9 +1307,17 @@ def _simple_read(ticker: str, result: dict, price: float) -> str:
     if any("insider" in w.lower() for w in why):
         parts.append("Company insiders have been net buyers in the last 90 days — management has skin in the game.")
 
-    # Options flow
-    if any("options" in w.lower() or "pcr" in w.lower() for w in why):
-        parts.append("The options market is skewed bullish — more calls than puts being bought.")
+    # Options flow — specific metric explanations
+    if any("unusual call activity" in w.lower() for w in why):
+        parts.append("Unusual call activity near the current price — volume is exceeding open interest, meaning institutions are opening brand new call positions today, not just rolling existing ones. This is one of the clearest signals of institutional conviction.")
+    elif any("strong bullish options" in w.lower() for w in why):
+        parts.append("The options market is showing strong bullish positioning — significantly more calls than puts being bought. Institutions use options before moving stock, so this is an early signal of where smart money is leaning.")
+    elif any("bullish options" in w.lower() or "bullish oi" in w.lower() for w in why):
+        parts.append("Options flow is leaning bullish — more call buying than put buying across the nearest expiries.")
+    if any("max pain" in w.lower() for w in why):
+        parts.append("Price is below the options max pain level — the strike where most options expire worthless. Market makers, who are often net short options, benefit from pushing the price higher into expiry. This creates structural upward pressure.")
+    if any("iv skew" in w.lower() for w in why):
+        parts.append("Call implied volatility is lower than put implied volatility — the options market is not pricing significant downside risk. When fear is absent from the options market, the path of least resistance is typically higher.")
 
     # News velocity
     if any("velocity" in w.lower() or "catalyst" in w.lower() for w in why):
