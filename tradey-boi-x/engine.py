@@ -682,6 +682,65 @@ def _next_trading_day(from_date: datetime) -> datetime:
         candidate += timedelta(days=1)
     return candidate
 
+def _simple_read(ticker: str, result: dict, price: float) -> str:
+    """
+    Generate a plain-English one-paragraph summary of why this signal fired.
+    Reads like a human analyst note, not a data dump.
+    """
+    why   = result.get("why", [])
+    tier  = result.get("signal", "STRONG BUY")
+    prob  = result.get("prob", 0)
+    rsi   = result.get("rsi", 50)
+
+    parts = []
+
+    # Commodity context
+    comm = next((w for w in why if any(k in w for k in
+                 ("Iron Ore", "Gold", "Lithium", "Uranium", "surging", "uptrend", "headwind"))), None)
+    if comm:
+        parts.append(f"The underlying commodity is showing strength — {comm.lower()}.")
+
+    # Breakout
+    if any("breakout" in w.lower() for w in why):
+        parts.append(f"{ticker} just broke its 52-week high, a classic momentum signal.")
+
+    # Volume
+    if any("volume" in w.lower() for w in why):
+        parts.append("Volume is surging well above normal, confirming real buying interest.")
+
+    # Insider
+    if any("insider" in w.lower() for w in why):
+        parts.append("Company insiders have been net buyers in the last 90 days — management has skin in the game.")
+
+    # Options flow
+    if any("options" in w.lower() or "pcr" in w.lower() for w in why):
+        parts.append("The options market is skewed bullish — more calls than puts being bought.")
+
+    # News velocity
+    if any("velocity" in w.lower() or "catalyst" in w.lower() for w in why):
+        parts.append("News volume has spiked in the last 48 hours, suggesting a catalyst may be underway.")
+
+    # RSI context
+    if rsi < 40:
+        parts.append(f"RSI at {rsi:.0f} is oversold — this is an ideal low-risk entry point.")
+    elif rsi < 55:
+        parts.append(f"RSI at {rsi:.0f} is neutral, leaving plenty of room to run.")
+
+    # AI summary
+    if prob >= 0.75:
+        parts.append(f"The AI model is {prob*100:.0f}% confident based on historical patterns — very high conviction.")
+    elif prob >= 0.55:
+        parts.append(f"The AI model is {prob*100:.0f}% confident — solid conviction.")
+
+    # Closing line
+    if tier == "ELITE":
+        parts.append("All 13 filters are green. This is the highest-quality signal the bot produces.")
+    else:
+        parts.append("All filters passed. This is a high-quality setup worth watching closely.")
+
+    return " ".join(parts) if parts else "All filters passed with strong technical and AI alignment."
+
+
 def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
     if not DISCORD:
         return False
@@ -701,49 +760,80 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
     now       = datetime.now()
     buy_date  = _next_trading_day(now)
     exit_date = _add_trading_days(buy_date, exit_days)
+    grade, glabel, gbar = confidence_grade(result["prob"], result["score"])
+    ci = confidence_interval(result["signal"])
 
-    # Suggested entry based on RSI — how aggressively to chase the entry
+    # Company name (best-effort)
+    try:
+        short_name = yf.Ticker(ticker).info.get("shortName", ticker)
+    except Exception:
+        short_name = ticker
+
+    # RSI entry suggestion
     rsi = result.get("rsi", 50)
     if rsi < 40:
-        entry_note = f"${price:.2f} (buy now — RSI oversold, ideal entry)"
+        entry_price = f"${price:.3f}"
+        entry_note  = "buy now — RSI oversold, ideal entry"
     elif rsi < 50:
-        entry_note = f"${price:.2f}–${price * 0.99:.2f} (now or on a small dip)"
+        entry_price = f"${price:.3f}"
+        entry_note  = "now or on a small dip"
     elif rsi < 60:
-        entry_note = f"${price * 0.99:.2f}–${price * 0.985:.2f} (wait for 1–1.5% pullback)"
+        entry_price = f"${price*0.99:.3f}–${price*0.985:.3f}"
+        entry_note  = "wait for a 1–1.5% pullback"
     else:
-        entry_note = f"${price * 0.98:.2f} (RSI elevated — wait for 2% dip)"
+        entry_price = f"${price*0.98:.3f}"
+        entry_note  = "RSI elevated — wait for a 2% dip"
 
-    ci = confidence_interval(result["signal"])
-    grade, glabel, gbar = confidence_grade(result["prob"], result["score"])
-
-    lines = [
-        f"**TRADEY BOI X** | {result['label']}",
-        f"**{ticker}** @ ${price:.2f}",
-        f"🎯 Confidence: **{grade} — {glabel}**  `{gbar}`",
-        f"Score {result['score']}/14 | AI {result['prob']*100:.1f}%",
-        f"🟢 Entry: {entry_note}",
-        f"📅 Buy date:  **{buy_date.strftime('%A %d %b %Y')}**",
-        f"🚪 Exit by:   **{exit_date.strftime('%A %d %b %Y')}**  ({exit_days} trading days)",
-        f"💰 Target:    ${target_price:.2f} (+{target_pct*100:.0f}%)  _({params['rationale']})_",
-    ]
-
-    if ci:
-        lines.append(
-            f"📈 Historical range ({ci['n']} similar): "
-            f"worst {ci['worst']*100:+.1f}% / typical {ci['p25']*100:+.1f}% to {ci['p75']*100:+.1f}% / best {ci['best']*100:+.1f}%"
-        )
-    if result.get("adj", 0) != 0:
-        direction = "boosted" if result["adj"] > 0 else "penalised"
-        lines.append(f"🧠 AI-{direction} ticker (base score {result.get('base_score', result['score'])}, adj {result['adj']:+d})")
+    # Good/bad header label
+    verdict = "✅ GOOD BUY" if result["signal"] == "STRONG BUY" else "🏆 ELITE BUY — HIGH CONVICTION"
+    divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     news = result.get("news", {})
+    news_line = ""
     if news and news.get("count", 0) > 0:
-        emoji = "📰🟢" if news["label"] == "POSITIVE" else "📰⚪"
-        lines.append(f"{emoji} News ({news['count']} headlines, sentiment {news['compound']:+.2f}): {news['headlines'][0][:80]}" if news["headlines"] else f"{emoji} News sentiment: {news['label']}")
+        emoji = "🟢" if news["label"] == "POSITIVE" else "⚪"
+        headline = news["headlines"][0][:75] if news.get("headlines") else ""
+        news_line = f"{emoji} {news['label']} (score {news['compound']:+.2f})" + (f" — _{headline}_" if headline else "")
+
+    adj = result.get("adj", 0)
+    track_line = ""
+    if adj != 0:
+        direction = "boosted ↑" if adj > 0 else "penalised ↓"
+        track_line = f"🧠 Past performance {direction} this ticker's score by {adj:+d}"
+
+    hist_line = ""
+    if ci:
+        hist_line = (f"📈 Historical ({ci['n']} similar signals): "
+                     f"worst {ci['worst']*100:+.1f}% · typical {ci['p25']*100:+.1f}% to "
+                     f"{ci['p75']*100:+.1f}% · best {ci['best']*100:+.1f}%")
+
+    lines = [
+        divider,
+        f"**TRADEY BOI X**  |  {verdict}",
+        divider,
+        f"📌  **{ticker}**  —  {short_name}",
+        f"💵  Price: **${price:.3f}**  |  Grade: **{grade} — {glabel}**  `{gbar}`",
+        f"📊  Score: **{result['score']}/14**  |  AI confidence: **{result['prob']*100:.1f}%**",
+        "",
+        f"**💬 What the bot sees:**",
+        _simple_read(ticker, result, price),
+        "",
+        f"**📅 Trade Plan**",
+        f"🟢  Buy:    **{buy_date.strftime('%A %d %b %Y')}**  @  {entry_price}  _({entry_note})_",
+        f"🚪  Exit:   **{exit_date.strftime('%A %d %b %Y')}**  ({exit_days} trading days)",
+        f"💰  Target: **${target_price:.3f}**  (+{target_pct*100:.0f}%)  _— {params['rationale']}_",
+    ]
+
+    if hist_line:  lines += ["", hist_line]
+    if track_line: lines += [track_line]
+    if news_line:  lines += ["", f"**📰 News**", news_line]
 
     lines += [
-        "Why: " + ", ".join(result["why"]),
-        f"_{datetime.now().strftime('%Y-%m-%d %H:%M')}_",
+        "",
+        f"**✅ Why it qualified:**",
+        "  " + "  •  ".join(result["why"]),
+        divider,
+        f"_{now.strftime('%Y-%m-%d %H:%M')}_",
     ]
 
     try:
