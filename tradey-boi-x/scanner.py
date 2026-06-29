@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import pytz
 
 from engine import (
-    WATCHLIST, MAX_ALERTS,
+    WATCHLIST, MAX_ALERTS, CORRELATION_GROUPS,
     get_data, train_model, decide, send_alert,
     log_signal, mark_alerted, update_ticker_performance,
 )
@@ -62,9 +62,18 @@ def seconds_until_next_open() -> int:
     return max(int(delta), 0)
 
 # ─── SCAN ────────────────────────────────────────────────────────────────────
+def _corr_group(ticker: str) -> int | None:
+    """Return the index of this ticker's correlation group, or None if ungrouped."""
+    for i, group in enumerate(CORRELATION_GROUPS):
+        if ticker in group:
+            return i
+    return None
+
+
 def run_scan(model) -> int:
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Scanning {len(WATCHLIST)} tickers…")
-    fired = 0
+    fired          = 0
+    alerted_groups: set = set()   # correlation guard — one alert per group per scan
 
     for ticker in WATCHLIST:
         try:
@@ -74,6 +83,12 @@ def run_scan(model) -> int:
             res = decide(ticker, df, model)
 
             if res["alert"] and fired < MAX_ALERTS:
+                # Correlation guard — skip if a correlated ticker already alerted this scan
+                group_id = _corr_group(ticker)
+                if group_id is not None and group_id in alerted_groups:
+                    print(f"  ⏭ {ticker}: correlation guard — similar ticker already alerted")
+                    continue
+
                 price = float(df.iloc[-1]["Close"])
                 sent  = send_alert(ticker, res, price, df)
                 if sent:
@@ -81,6 +96,8 @@ def run_scan(model) -> int:
                     log_signal(ticker, price, res["signal"],
                                score=res.get("score", 0),
                                prob=res.get("prob", 0.0))
+                    if group_id is not None:
+                        alerted_groups.add(group_id)
                     print(f"  ✅ Alert sent: {ticker} {res['label']} (score {res['score']}/14)")
                     fired += 1
             else:
