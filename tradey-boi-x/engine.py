@@ -66,39 +66,103 @@ def get_data(ticker: str, period: str) -> pd.DataFrame:
 
 # ─── STEP 2 — AI MODEL ───────────────────────────────────────────────────────
 def train_model() -> Pipeline:
-    df = get_data("AAPL", "2y").copy()
-    df["target"] = (df["Close"].shift(-PREDICTION_DAYS) / df["Close"] - 1 > TARGET_RETURN).astype(int)
-    df = df.dropna()
+    """Train XGBoost on ALL watchlist tickers (12× more data than single-ticker)."""
+    frames = []
+    for ticker in WATCHLIST:
+        try:
+            df = get_data(ticker, "2y").copy()
+            df["target"] = (df["Close"].shift(-PREDICTION_DAYS) / df["Close"] - 1 > TARGET_RETURN).astype(int)
+            frames.append(df.dropna())
+        except Exception:
+            pass
+    if not frames:
+        frames = [get_data("AAPL", "2y")]
+    combined = pd.concat(frames, ignore_index=True)
+    neg = int((combined["target"] == 0).sum())
+    pos = int((combined["target"] == 1).sum())
+    spw = round(neg / pos, 2) if pos > 0 else 1.0   # balance minority class
     pipe = Pipeline([
         ("sc",  StandardScaler()),
         ("xgb", XGBClassifier(
             n_estimators=400, max_depth=6, learning_rate=0.05,
             subsample=0.8, colsample_bytree=0.8,
+            scale_pos_weight=spw,
             eval_metric="logloss", random_state=42, verbosity=0,
         )),
     ])
-    pipe.fit(df[FEATURES], df["target"])
+    pipe.fit(combined[FEATURES], combined["target"])
+    print(f"  Model trained on {len(combined):,} rows ({pos} buy / {neg} no-buy) | scale_pos_weight={spw}")
     return pipe
 
-# ─── MARKET REGIME + EARNINGS SAFETY ────────────────────────────────────────
+# ─── MARKET REGIME, VIX, SECTOR, WEEKLY, EARNINGS ───────────────────────────
 _regime_cache: dict = {}
+
+# Sector ETF map for US tickers — ASX already covered by ^AXJO in market_regime_ok
+SECTOR_ETF = {"AAPL": "XLK", "NVDA": "XLK", "MSFT": "XLK", "TSLA": "XLY"}
+
+def _cached_ema_ok(cache_key: str, yf_ticker: str, span: int = 50) -> bool:
+    """Generic helper: True when latest close > EMA(span). Cached 1 hour."""
+    now = datetime.now().timestamp()
+    if cache_key in _regime_cache:
+        ts, result = _regime_cache[cache_key]
+        if now - ts < 3600:
+            return result
+    try:
+        df    = yf.Ticker(yf_ticker).history(period="3mo")
+        if df.empty or len(df) < span:
+            return True
+        close = df["Close"]
+        ema   = close.ewm(span=span, adjust=False).mean()
+        result = bool(close.iloc[-1] > ema.iloc[-1])
+        _regime_cache[cache_key] = (now, result)
+        return result
+    except Exception:
+        return True
 
 def market_regime_ok(ticker: str) -> bool:
     """True when the relevant broad index (SPY or ASX200) is above its 50-day EMA."""
     index = "^AXJO" if ticker.endswith(".AX") else "SPY"
-    now   = datetime.now().timestamp()
-    if index in _regime_cache:
-        ts, result = _regime_cache[index]
-        if now - ts < 3600:          # cache for 1 hour
+    return _cached_ema_ok(f"regime_{index}", index, span=50)
+
+def vix_safe() -> bool:
+    """True when market fear (VIX) is below 30. High VIX = unreliable signals."""
+    now = datetime.now().timestamp()
+    if "vix" in _regime_cache:
+        ts, result = _regime_cache["vix"]
+        if now - ts < 3600:
             return result
     try:
-        df    = yf.Ticker(index).history(period="3mo")
+        vix    = float(yf.Ticker("^VIX").history(period="5d")["Close"].iloc[-1])
+        result = vix < 30
+        _regime_cache["vix"] = (now, result)
+        return result
+    except Exception:
+        return True
+
+def sector_ok(ticker: str) -> bool:
+    """True when the stock's sector ETF is in uptrend (US tickers only)."""
+    etf = SECTOR_ETF.get(ticker)
+    if not etf:
+        return True   # ASX already covered by market_regime_ok
+    return _cached_ema_ok(f"sector_{etf}", etf, span=50)
+
+def weekly_trend_ok(ticker: str) -> bool:
+    """True when the weekly chart EMA20 > EMA50 — higher-timeframe confirmation."""
+    cache_key = f"weekly_{ticker}"
+    now = datetime.now().timestamp()
+    if cache_key in _regime_cache:
+        ts, result = _regime_cache[cache_key]
+        if now - ts < 3600:
+            return result
+    try:
+        df    = yf.Ticker(ticker).history(period="2y", interval="1wk")
         if df.empty or len(df) < 50:
-            return True              # fail open — don't block on bad data
+            return True
         close = df["Close"]
+        ema20 = close.ewm(span=20, adjust=False).mean()
         ema50 = close.ewm(span=50, adjust=False).mean()
-        result = bool(close.iloc[-1] > ema50.iloc[-1])
-        _regime_cache[index] = (now, result)
+        result = bool(ema20.iloc[-1] > ema50.iloc[-1])
+        _regime_cache[cache_key] = (now, result)
         return result
     except Exception:
         return True
@@ -116,7 +180,7 @@ def earnings_safe(ticker: str) -> bool:
         for d in (dates if isinstance(dates, list) else [dates]):
             d = d.date() if hasattr(d, "date") else d
             if -1 <= (d - today).days <= 5:
-                return False         # too close to earnings
+                return False
         return True
     except Exception:
         return True
@@ -179,7 +243,10 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     prob = float(model.predict_proba(pd.DataFrame([row[FEATURES]]))[0][1])
 
     filters = [
+        ("VIX fear index safe (< 30)",         vix_safe()),
         ("Broad market in uptrend",            market_regime_ok(ticker)),
+        ("Sector ETF in uptrend",             sector_ok(ticker)),
+        ("Weekly trend confirmed",            weekly_trend_ok(ticker)),
         ("No earnings within 5 days",          earnings_safe(ticker)),
         ("Uptrend: EMA20 > EMA50",            row["ema20"]  > row["ema50"]),
         ("Confirmed: EMA20 > EMA50 prior day", prev["ema20"] > prev["ema50"]),
@@ -188,10 +255,10 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
         ("RSI not overbought (< 72)",          row["rsi"] < 72),
         ("RSI not oversold (> 25)",            row["rsi"] > 25),
         ("Liquidity (vol ratio ≥ 0.5)",        row["vol_ratio"] >= 0.5),
-        ("AI probability ≥ 55%",              prob >= 0.55),
+        ("AI probability ≥ 40%",              prob >= 0.40),
     ]
     if not all(ok for _, ok in filters):
-        return {**GATED, "filters": filters}
+        return {**GATED, "prob": prob, "filters": filters}
 
     rules = [
         (3, "AI prob ≥ 80%",             prob >= 0.80),
@@ -233,20 +300,38 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
             "adj": adj, "news": news, "why": why, "filters": filters,
             "rsi": round(float(row["rsi"]), 1)}
 
-# ─── NEWS SENTIMENT ──────────────────────────────────────────────────────────
+# ─── NEWS SENTIMENT (VADER + Loughran-McDonald financial lexicon) ─────────────
+# Loughran-McDonald financial word lists — purpose-built for financial text
+_LM_POS = {
+    "beat", "beats", "exceed", "exceeded", "record", "surge", "surged", "raised",
+    "upgrade", "upgraded", "outperform", "outperformed", "growth", "profit", "profits",
+    "expansion", "breakthrough", "win", "award", "strong", "confident", "momentum",
+    "dividend", "buyback", "innovative", "accelerating", "recovery", "robust",
+    "impressive", "delivered", "guidance", "raised guidance", "upside", "positive",
+}
+_LM_NEG = {
+    "miss", "missed", "loss", "losses", "decline", "declined", "fail", "failed",
+    "weak", "concern", "concerns", "risk", "uncertain", "uncertainty", "cut",
+    "downgrade", "downgraded", "fraud", "lawsuit", "recall", "bankrupt", "bankruptcy",
+    "layoff", "layoffs", "warning", "crisis", "shortage", "violation", "investigation",
+    "probe", "default", "disappointing", "below", "lowered", "guidance cut", "miss",
+}
+
+def _lm_score(text: str) -> float:
+    """Loughran-McDonald financial lexicon score — returns -1 to +1."""
+    words = set(text.lower().split())
+    pos   = len(words & _LM_POS)
+    neg   = len(words & _LM_NEG)
+    total = pos + neg
+    return (pos - neg) / total if total > 0 else 0.0
+
 def news_sentiment(ticker: str) -> dict:
     """
-    Fetches recent headlines via yfinance and scores them with VADER.
-    Returns:
-      compound   – avg VADER compound score (-1 to +1)
-      label      – 'POSITIVE' / 'NEGATIVE' / 'NEUTRAL'
-      score_adj  – +1 (strong positive), -1 (strong negative), 0 (neutral)
-      headlines  – list of scored headline strings (for alert display)
-      count      – number of headlines analysed
-    Falls back gracefully if no news is available.
+    Hybrid sentiment: 60% VADER + 40% Loughran-McDonald financial lexicon.
+    LM is purpose-built for financial text and catches what VADER misses.
     """
     try:
-        articles = yf.Ticker(ticker).news or []
+        articles  = yf.Ticker(ticker).news or []
         headlines = []
         for a in articles[:10]:
             title = (a.get("content") or {}).get("title") or a.get("title") or ""
@@ -255,12 +340,14 @@ def news_sentiment(ticker: str) -> dict:
         if not headlines:
             return {"compound": 0.0, "label": "NEUTRAL", "score_adj": 0,
                     "headlines": [], "count": 0}
-        scores = [_vader.polarity_scores(h)["compound"] for h in headlines]
-        avg = sum(scores) / len(scores)
+        vader_scores = [_vader.polarity_scores(h)["compound"] for h in headlines]
+        lm_scores    = [_lm_score(h) for h in headlines]
+        hybrid       = [0.6 * v + 0.4 * l for v, l in zip(vader_scores, lm_scores)]
+        avg = sum(hybrid) / len(hybrid)
         if   avg >  0.20: label, adj = "POSITIVE", +1
         elif avg < -0.20: label, adj = "NEGATIVE", -1
         else:             label, adj = "NEUTRAL",   0
-        top = sorted(zip(scores, headlines), reverse=True)
+        top = sorted(zip(hybrid, headlines), reverse=True)
         top_headlines = [h for _, h in top[:2]]
         return {"compound": round(avg, 3), "label": label, "score_adj": adj,
                 "headlines": top_headlines, "count": len(headlines)}
