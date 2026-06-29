@@ -11,10 +11,10 @@ from pathlib import Path
 import pandas as pd
 import ta
 import yfinance as yf
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from xgboost import XGBClassifier
 
 _vader = SentimentIntensityAnalyzer()
 
@@ -24,7 +24,7 @@ WATCHLIST = [
     "BHP.AX", "CBA.AX", "FMG.AX", "RIO.AX",
     "NST.AX", "CXO.AX", "LTR.AX", "PDN.AX",
 ]
-FEATURES        = ["rsi", "macd_diff", "bb_width", "atr", "ret_5", "ret_10", "ret_20", "vol_ratio", "breakout"]
+FEATURES        = ["rsi", "macd_diff", "bb_width", "atr", "ret_5", "ret_10", "ret_20", "vol_ratio", "breakout", "obv_ratio"]
 PREDICTION_DAYS = 10
 TARGET_RETURN   = 0.05
 COOLDOWN_HOURS  = 8
@@ -59,6 +59,9 @@ def get_data(ticker: str, period: str) -> pd.DataFrame:
     df["ret_10"]      = close.pct_change(10)
     df["ret_20"]      = close.pct_change(20)
     df["breakout"]    = (close >= close.rolling(252).max() * 0.98).astype(int)
+    obv               = ta.volume.OnBalanceVolumeIndicator(close, vol).on_balance_volume()
+    obv_chg           = obv.diff(5)
+    df["obv_ratio"]   = obv_chg / (obv.rolling(20).std() + 1e-10)
     return df.dropna()
 
 # ─── STEP 2 — AI MODEL ───────────────────────────────────────────────────────
@@ -67,14 +70,56 @@ def train_model() -> Pipeline:
     df["target"] = (df["Close"].shift(-PREDICTION_DAYS) / df["Close"] - 1 > TARGET_RETURN).astype(int)
     df = df.dropna()
     pipe = Pipeline([
-        ("sc", StandardScaler()),
-        ("rf", RandomForestClassifier(
-            n_estimators=300, max_depth=8, min_samples_leaf=5,
-            class_weight="balanced", random_state=42,
+        ("sc",  StandardScaler()),
+        ("xgb", XGBClassifier(
+            n_estimators=400, max_depth=6, learning_rate=0.05,
+            subsample=0.8, colsample_bytree=0.8,
+            eval_metric="logloss", random_state=42, verbosity=0,
         )),
     ])
     pipe.fit(df[FEATURES], df["target"])
     return pipe
+
+# ─── MARKET REGIME + EARNINGS SAFETY ────────────────────────────────────────
+_regime_cache: dict = {}
+
+def market_regime_ok(ticker: str) -> bool:
+    """True when the relevant broad index (SPY or ASX200) is above its 50-day EMA."""
+    index = "^AXJO" if ticker.endswith(".AX") else "SPY"
+    now   = datetime.now().timestamp()
+    if index in _regime_cache:
+        ts, result = _regime_cache[index]
+        if now - ts < 3600:          # cache for 1 hour
+            return result
+    try:
+        df    = yf.Ticker(index).history(period="3mo")
+        if df.empty or len(df) < 50:
+            return True              # fail open — don't block on bad data
+        close = df["Close"]
+        ema50 = close.ewm(span=50, adjust=False).mean()
+        result = bool(close.iloc[-1] > ema50.iloc[-1])
+        _regime_cache[index] = (now, result)
+        return result
+    except Exception:
+        return True
+
+def earnings_safe(ticker: str) -> bool:
+    """True when no earnings announcement is within 5 calendar days."""
+    try:
+        cal   = yf.Ticker(ticker).calendar
+        if not cal:
+            return True
+        dates = cal.get("Earnings Date", [])
+        if not dates:
+            return True
+        today = datetime.now().date()
+        for d in (dates if isinstance(dates, list) else [dates]):
+            d = d.date() if hasattr(d, "date") else d
+            if -1 <= (d - today).days <= 5:
+                return False         # too close to earnings
+        return True
+    except Exception:
+        return True
 
 # ─── STEP 3 — FILTERS + SINGLE DECISION ──────────────────────────────────────
 def _load_cooldowns() -> dict:
@@ -134,6 +179,8 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     prob = float(model.predict_proba(pd.DataFrame([row[FEATURES]]))[0][1])
 
     filters = [
+        ("Broad market in uptrend",            market_regime_ok(ticker)),
+        ("No earnings within 5 days",          earnings_safe(ticker)),
         ("Uptrend: EMA20 > EMA50",            row["ema20"]  > row["ema50"]),
         ("Confirmed: EMA20 > EMA50 prior day", prev["ema20"] > prev["ema50"]),
         ("MACD bullish (diff > 0)",            row["macd_diff"]  > 0),
