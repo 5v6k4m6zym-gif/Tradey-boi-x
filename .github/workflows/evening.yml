@@ -1,0 +1,26 @@
+name: Tradey Boi X Evening Scan
+
+"on":
+  schedule:
+    # 07:00 UTC Mon-Fri = 5:00pm AEST / 7:00pm AEDT
+    # Runs after ASX close, before you sit down for dinner
+    - cron: "0 7 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  evening:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install yfinance ta scikit-learn pandas requests pytz vaderSentiment xgboost
+      - name: Run evening scan
+        env:
+          Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
+        run: cd tradey-boi-x && python evening_scan.py
