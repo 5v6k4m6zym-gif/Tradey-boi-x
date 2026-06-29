@@ -281,9 +281,17 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     news_adj = news["score_adj"]
     if news["label"] == "NEGATIVE":
         filters.append((f"News sentiment not strongly negative ({news['compound']:.2f})", False))
-        return {**GATED, "filters": filters, "news": news}
+        return {**GATED, "prob": prob, "filters": filters, "news": news}
 
-    score = base_score + adj + news_adj
+    # Short interest, insider buying, options flow
+    short_adj,   short_why   = short_interest_signal(ticker)
+    insider_adj, insider_why = insider_signal(ticker)
+    opts_adj,    opts_why    = options_flow_signal(ticker)
+    for reason in (short_why, insider_why, opts_why):
+        if reason:
+            why.append(reason)
+
+    score = base_score + adj + news_adj + short_adj + insider_adj + opts_adj
 
     # Grade thresholds — only the strongest qualify for an alert
     # ELITE:      score ≥ 11  (any AI prob — already filtered to ≥ 55% above)
@@ -299,6 +307,113 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
             "prob": prob, "score": score, "base_score": base_score,
             "adj": adj, "news": news, "why": why, "filters": filters,
             "rsi": round(float(row["rsi"]), 1)}
+
+# ─── SHORT INTEREST, INSIDER BUYING, OPTIONS FLOW ───────────────────────────
+_signal_cache: dict = {}   # shared 4-hour cache for slower yfinance calls
+
+def _signal_cached(key: str, ttl: int = 14400):
+    """Return cached value or None if stale/missing."""
+    if key in _signal_cache:
+        ts, val = _signal_cache[key]
+        if (datetime.now().timestamp() - ts) < ttl:
+            return val
+    return None
+
+def _signal_store(key: str, val):
+    _signal_cache[key] = (datetime.now().timestamp(), val)
+    return val
+
+def short_interest_signal(ticker: str) -> tuple:
+    """
+    High short interest on a breaking-out stock = squeeze potential.
+    Returns (score_adj, reason_string).
+    """
+    cached = _signal_cached(f"si_{ticker}")
+    if cached is not None:
+        return cached
+    try:
+        info = yf.Ticker(ticker).info
+        spof = float(info.get("shortPercentOfFloat") or 0)
+        if spof > 0.25:
+            result = (+2, f"Short squeeze candidate ({spof*100:.0f}% short float)")
+        elif spof > 0.15:
+            result = (+1, f"Elevated short interest ({spof*100:.0f}%)")
+        else:
+            result = (0, "")
+    except Exception:
+        result = (0, "")
+    return _signal_store(f"si_{ticker}", result)
+
+def insider_signal(ticker: str) -> tuple:
+    """
+    Net insider buying in last 90 days = management conviction.
+    Returns (score_adj, reason_string).
+    """
+    cached = _signal_cached(f"insider_{ticker}")
+    if cached is not None:
+        return cached
+    try:
+        df = yf.Ticker(ticker).insider_transactions
+        if df is None or df.empty:
+            return _signal_store(f"insider_{ticker}", (0, ""))
+        # Normalise column names
+        df.columns = [c.lower() for c in df.columns]
+        # Date filter — last 90 days
+        date_col = next((c for c in df.columns if "date" in c), None)
+        if date_col:
+            df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+            cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=90)
+            df = df[df[date_col] >= cutoff]
+        if df.empty:
+            return _signal_store(f"insider_{ticker}", (0, ""))
+        # Transaction type column
+        trans_col = next((c for c in df.columns if "transact" in c or "type" in c), None)
+        if not trans_col:
+            return _signal_store(f"insider_{ticker}", (0, ""))
+        buys  = df[df[trans_col].astype(str).str.contains("Buy|Purchase|Acquire", case=False, na=False)]
+        sells = df[df[trans_col].astype(str).str.contains("Sell|Sale|Disposition", case=False, na=False)]
+        if len(buys) >= 2 and len(buys) > len(sells):
+            result = (+2, f"Insider buying ({len(buys)} purchases in 90 days)")
+        elif len(buys) >= 1 and len(buys) >= len(sells):
+            result = (+1, "Insider net buying (90 days)")
+        elif len(sells) > len(buys) * 2:
+            result = (-1, f"Insider selling ({len(sells)} sales in 90 days)")
+        else:
+            result = (0, "")
+    except Exception:
+        result = (0, "")
+    return _signal_store(f"insider_{ticker}", result)
+
+def options_flow_signal(ticker: str) -> tuple:
+    """
+    Put/Call ratio from nearest options expiry.
+    PCR < 0.7 = more calls than puts = bullish sentiment.
+    ASX stocks skipped (no options data on yfinance).
+    Returns (score_adj, reason_string).
+    """
+    if ticker.endswith(".AX"):
+        return (0, "")
+    cached = _signal_cached(f"opts_{ticker}")
+    if cached is not None:
+        return cached
+    try:
+        t     = yf.Ticker(ticker)
+        dates = t.options
+        if not dates:
+            return _signal_store(f"opts_{ticker}", (0, ""))
+        chain = t.option_chain(dates[0])
+        call_oi = float(chain.calls["openInterest"].fillna(0).sum())
+        put_oi  = float(chain.puts["openInterest"].fillna(0).sum())
+        if call_oi == 0:
+            return _signal_store(f"opts_{ticker}", (0, ""))
+        pcr = put_oi / call_oi
+        if   pcr < 0.60: result = (+2, f"Bullish options flow — PCR {pcr:.2f}")
+        elif pcr < 0.80: result = (+1, f"Mildly bullish options — PCR {pcr:.2f}")
+        elif pcr > 1.50: result = (-1, f"Bearish options flow — PCR {pcr:.2f}")
+        else:            result = (0, "")
+    except Exception:
+        result = (0, "")
+    return _signal_store(f"opts_{ticker}", result)
 
 # ─── NEWS SENTIMENT (VADER + Loughran-McDonald financial lexicon) ─────────────
 # Loughran-McDonald financial word lists — purpose-built for financial text
