@@ -606,13 +606,30 @@ def confidence_grade(prob: float, score: int) -> tuple:
 
 # ─── STEP 4 — DISCORD ALERT ──────────────────────────────────────────────────
 def _guard_ok(ticker: str, window_seconds: int = 90) -> bool:
-    """Returns False if we already sent an alert for this ticker within the window."""
+    """
+    Two-layer duplicate guard:
+      1. Per-ticker:  blocks same ticker within `window_seconds` (default 90s)
+      2. Global:      blocks ANY alert within 5 minutes of the last one sent
+    Prevents double-sends whether from the same ticker or rapid successive alerts.
+    """
     try:
+        now  = datetime.now().timestamp()
         data = json.loads(SEND_GUARD_FILE.read_text()) if SEND_GUARD_FILE.exists() else {}
-        last = data.get(ticker, 0)
-        if (datetime.now().timestamp() - last) < window_seconds:
+
+        # Layer 1 — per-ticker guard
+        last_ticker = data.get(ticker, 0)
+        if (now - last_ticker) < window_seconds:
+            print(f"  ⏭ {ticker}: per-ticker guard active ({int(window_seconds - (now - last_ticker))}s remaining)")
             return False
-        data[ticker] = datetime.now().timestamp()
+
+        # Layer 2 — global guard (5 minutes between any two alerts)
+        last_any = data.get("__last_any__", 0)
+        if (now - last_any) < 300:
+            print(f"  ⏭ {ticker}: global 5-min guard active ({int(300 - (now - last_any))}s remaining)")
+            return False
+
+        data[ticker]        = now
+        data["__last_any__"] = now
         SEND_GUARD_FILE.write_text(json.dumps(data))
         return True
     except Exception:
