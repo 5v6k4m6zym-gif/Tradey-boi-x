@@ -1307,18 +1307,6 @@ def _simple_read(ticker: str, result: dict, price: float) -> str:
     if any("insider" in w.lower() for w in why):
         parts.append("Company insiders have been net buyers in the last 90 days — management has skin in the game.")
 
-    # Options flow — specific metric explanations
-    if any("unusual call activity" in w.lower() for w in why):
-        parts.append("Unusual call activity near the current price — volume is exceeding open interest, meaning institutions are opening brand new call positions today, not just rolling existing ones. This is one of the clearest signals of institutional conviction.")
-    elif any("strong bullish options" in w.lower() for w in why):
-        parts.append("The options market is showing strong bullish positioning — significantly more calls than puts being bought. Institutions use options before moving stock, so this is an early signal of where smart money is leaning.")
-    elif any("bullish options" in w.lower() or "bullish oi" in w.lower() for w in why):
-        parts.append("Options flow is leaning bullish — more call buying than put buying across the nearest expiries.")
-    if any("max pain" in w.lower() for w in why):
-        parts.append("Price is below the options max pain level — the strike where most options expire worthless. Market makers, who are often net short options, benefit from pushing the price higher into expiry. This creates structural upward pressure.")
-    if any("iv skew" in w.lower() for w in why):
-        parts.append("Call implied volatility is lower than put implied volatility — the options market is not pricing significant downside risk. When fear is absent from the options market, the path of least resistance is typically higher.")
-
     # News velocity
     if any("velocity" in w.lower() or "catalyst" in w.lower() for w in why):
         parts.append("News volume has spiked in the last 48 hours, suggesting a catalyst may be underway.")
