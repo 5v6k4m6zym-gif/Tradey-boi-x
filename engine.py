@@ -94,9 +94,35 @@ def mark_alerted(ticker: str):
     cd[ticker] = datetime.now()
     _save_cooldowns(cd)
 
+# ─── ADAPTIVE LEARNING — score adjustments from past performance ─────────────
+def performance_adjustments() -> dict[str, int]:
+    """
+    Returns per-ticker score adjustments based on resolved signal outcomes.
+    Needs ≥3 resolved signals per ticker before adjusting.
+      win rate ≥ 65% → +1 (proven winner, lower bar)
+      win rate ≤ 35% → -2 (consistent loser, need stronger signal)
+    """
+    from collections import defaultdict
+    entries  = _load_log()
+    resolved = [e for e in entries if e["outcome"] is not None]
+    if not resolved:
+        return {}
+    bucket: dict[str, list[bool]] = defaultdict(list)
+    for e in resolved:
+        bucket[e["ticker"]].append(e["outcome"] == "WIN")
+    adj = {}
+    for ticker, results in bucket.items():
+        if len(results) < 3:
+            continue
+        wr = sum(results) / len(results)
+        if   wr >= 0.65: adj[ticker] = +1
+        elif wr <= 0.35: adj[ticker] = -2
+    return adj
+
 def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     GATED = {"signal": "GATED", "label": "🚫 GATED", "color": "#888",
-              "alert": False, "prob": 0.0, "score": 0, "why": [], "filters": []}
+              "alert": False, "prob": 0.0, "score": 0, "why": [], "filters": [],
+              "adj": 0}
     if len(df) < 60:
         return {**GATED, "filters": [("Enough data (≥60 rows)", False)]}
 
@@ -126,8 +152,12 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
         (1, "RSI safe (< 70)",           row["rsi"] < 70),
         (1, "EMA uptrend confirmed",     row["ema20"] > row["ema50"]),
     ]
-    score = sum(pts for pts, _, met in rules if met)
-    why   = [name for _, name, met in rules if met]
+    base_score = sum(pts for pts, _, met in rules if met)
+    why        = [name for _, name, met in rules if met]
+
+    # Apply learned adjustment from past signal outcomes
+    adj   = performance_adjustments().get(ticker, 0)
+    score = base_score + adj
 
     if   score >= 11: signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
     elif score >= 8:  signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
@@ -136,7 +166,8 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
 
     return {"signal": signal, "label": label, "color": color,
             "alert": qualifies and cooldown_ok(ticker),
-            "prob": prob, "score": score, "why": why, "filters": filters}
+            "prob": prob, "score": score, "base_score": base_score,
+            "adj": adj, "why": why, "filters": filters}
 
 # ─── STEP 4 — DISCORD ALERT ──────────────────────────────────────────────────
 def send_alert(ticker: str, result: dict, price: float) -> bool:
