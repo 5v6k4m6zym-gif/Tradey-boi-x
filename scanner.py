@@ -75,7 +75,7 @@ def run_scan(model) -> int:
 
             if res["alert"] and fired < MAX_ALERTS:
                 price = float(df.iloc[-1]["Close"])
-                sent  = send_alert(ticker, res, price)
+                sent  = send_alert(ticker, res, price, df)
                 if sent:
                     mark_alerted(ticker)
                     log_signal(ticker, price, res["signal"])
