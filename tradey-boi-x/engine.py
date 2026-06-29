@@ -1320,21 +1320,31 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
 
     if _opening_now:
         # ★ Best case — alert fires right at the open
-        _open_label = "ASX open" if _is_asx else "US market open"
-        entry_price = f"${price:.3f}"
-        entry_note  = (f"🔔 {_open_label} — buy NOW at market price. "
-                       f"Opening-window entries have the tightest spreads and best fills.")
+        _open_label  = "ASX open" if _is_asx else "US market open"
+        entry_price  = f"${price:.3f}"
+        entry_note   = "tightest spreads & best fills right now"
+        _entry_banner = (f"┌─────────────────────────────────┐\n"
+                         f"│  ⚡ BUY NOW  —  {_open_label.upper():<17}│\n"
+                         f"│  Market is open. Act immediately. │\n"
+                         f"└─────────────────────────────────┘")
     elif _is_intraday and not _mkt_open:
         # Intraday signal but market is closed — cannot defer
-        entry_note += (" — ⚠️ intraday signal (VWAP/gap). "
-                       "Market is closed; skip this one unless the same signal fires at next open.")
+        entry_note   += " — market closed; skip unless signal recurs at next open"
+        _entry_banner = ("⚠️  **INTRADAY SIGNAL — MARKET CLOSED**\n"
+                         "_This VWAP/gap setup expires at close. Skip it unless the same signal fires at next open._")
     elif not _mkt_open and _is_swing:
         # Swing setup — thesis still valid at next open
-        _open_str  = "10:00am AEST tomorrow" if _is_asx else "11:30pm AEST tonight"
-        _max_valid = price * 1.025   # don't chase a gap >2.5%
-        entry_price = f"${price:.3f}–${_max_valid:.3f}"
-        entry_note  = (f"📋 Place order before open ({_open_str}) — swing setup, "
-                       f"entry valid at open. If it gaps above ${_max_valid:.3f}, skip and wait for a pullback.")
+        _open_str    = "10:00am AEST tomorrow" if _is_asx else "11:30pm AEST tonight"
+        _max_valid   = price * 1.025
+        entry_price  = f"${price:.3f} – ${_max_valid:.3f}"
+        entry_note   = f"place limit order before {_open_str}. Gap above ${_max_valid:.3f}? Wait for pullback."
+        _entry_banner = (f"┌──────────────────────────────────────┐\n"
+                         f"│  📋 BUY AT OPEN  —  {_open_str.upper():<18}│\n"
+                         f"│  Set your order tonight before sleep.  │\n"
+                         f"└──────────────────────────────────────┘")
+    else:
+        # Mid-session, market open — buy now per RSI logic above
+        _entry_banner = ("⚡  **BUY NOW** — market is open, entry is live")
 
     # Good/bad header label
     verdict = "✅ GOOD BUY" if result["signal"] == "STRONG BUY" else "🏆 ELITE BUY — HIGH CONVICTION"
@@ -1363,6 +1373,8 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         divider,
         f"**TRADEY BOI X**  |  {verdict}",
         divider,
+        _entry_banner,
+        "",
         f"📌  **{ticker}**  —  {short_name}",
         f"💵  Price: **${price:.3f}**  |  Grade: **{grade} — {glabel}**  `{gbar}`",
         f"📊  Score: **{result['score']}/14**  |  AI confidence: **{result['prob']*100:.1f}%**",
