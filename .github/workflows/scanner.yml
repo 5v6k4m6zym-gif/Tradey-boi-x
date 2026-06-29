@@ -9,6 +9,8 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,3 +24,10 @@ jobs:
         env:
           Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
         run: python scanner.py --once
+      - name: Save signal log
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "Tradey Boi X"
+          git add signal_log.json cooldowns.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: update signal log [skip ci]"
+          git push
