@@ -242,6 +242,22 @@ def confidence_interval(tier: str) -> dict | None:
         "n":      n,
     }
 
+# ─── CONFIDENCE GRADE ────────────────────────────────────────────────────────
+def confidence_grade(prob: float, score: int) -> tuple:
+    """
+    Human-readable confidence grade combining AI probability and signal score.
+    Returns (grade, label, bar) — e.g. ("A+", "VERY HIGH", "██████████ 10/10")
+    """
+    combined = (prob * 0.6) + ((score / 14) * 0.4)
+    if   combined >= 0.80: grade, label = "A+", "VERY HIGH 🔥"
+    elif combined >= 0.65: grade, label = "A",  "HIGH ✨"
+    elif combined >= 0.50: grade, label = "B+", "GOOD 📈"
+    elif combined >= 0.35: grade, label = "B",  "MODERATE 📊"
+    else:                  grade, label = "C",  "LOW ⚠️"
+    filled = round(combined * 10)
+    bar = "█" * filled + "░" * (10 - filled)
+    return grade, label, f"{bar} {filled}/10"
+
 # ─── STEP 4 — DISCORD ALERT ──────────────────────────────────────────────────
 def send_alert(ticker: str, result: dict, price: float) -> bool:
     if not DISCORD:
@@ -249,10 +265,12 @@ def send_alert(ticker: str, result: dict, price: float) -> bool:
     target_date = (datetime.now() + timedelta(days=PREDICTION_DAYS * 1.4)).strftime("%d %b %Y")
 
     ci = confidence_interval(result["signal"])
+    grade, glabel, gbar = confidence_grade(result["prob"], result["score"])
 
     lines = [
         f"**TRADEY BOI X** | {result['label']}",
         f"**{ticker}** @ ${price:.2f}",
+        f"🎯 Confidence: **{grade} — {glabel}**  `{gbar}`",
         f"Score {result['score']}/14 | AI {result['prob']*100:.1f}%",
         f"⏱ Timeframe: {PREDICTION_DAYS} trading days (by ~{target_date})",
         f"🎯 Target: +{TARGET_RETURN*100:.0f}% gain",

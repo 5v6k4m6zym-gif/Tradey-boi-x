@@ -9,5 +9,16 @@
     "outcome": null,
     "exit_price": null,
     "actual_pct": null
+  },
+  {
+    "ticker": "CBA.AX",
+    "tier": "WATCH",
+    "entry_price": 163.61,
+    "signal_date": "2026-06-29",
+    "target_pct": 0.05,
+    "pred_days": 10,
+    "outcome": null,
+    "exit_price": null,
+    "actual_pct": null
   }
 ]
