@@ -66,21 +66,41 @@ def get_data(ticker: str, period: str) -> pd.DataFrame:
 
 # ─── STEP 2 — AI MODEL ───────────────────────────────────────────────────────
 def train_model() -> Pipeline:
-    """Train XGBoost on ALL watchlist tickers (12× more data than single-ticker)."""
+    """
+    Train XGBoost on ALL watchlist tickers with recency-weighted samples.
+    Recent data counts more than old data:
+      last  30 days → weight 4×
+      last  90 days → weight 2×
+      older         → weight 1×
+    """
     frames = []
     for ticker in WATCHLIST:
         try:
             df = get_data(ticker, "2y").copy()
             df["target"] = (df["Close"].shift(-PREDICTION_DAYS) / df["Close"] - 1 > TARGET_RETURN).astype(int)
+            df["_row_date"] = df.index   # keep the date for recency weighting
             frames.append(df.dropna())
         except Exception:
             pass
     if not frames:
-        frames = [get_data("AAPL", "2y")]
+        df0 = get_data("AAPL", "2y").copy()
+        df0["target"]    = (df0["Close"].shift(-PREDICTION_DAYS) / df0["Close"] - 1 > TARGET_RETURN).astype(int)
+        df0["_row_date"] = df0.index
+        frames = [df0.dropna()]
     combined = pd.concat(frames, ignore_index=True)
+
+    # Recency weights — more weight on recent market conditions
+    try:
+        now  = pd.Timestamp.now(tz="UTC")
+        dates = pd.to_datetime(combined["_row_date"], utc=True)
+        ages  = (now - dates).dt.days.fillna(365)
+    except Exception:
+        ages = pd.Series([365] * len(combined))
+    weights = ages.apply(lambda d: 4.0 if d <= 30 else (2.0 if d <= 90 else 1.0))
+
     neg = int((combined["target"] == 0).sum())
     pos = int((combined["target"] == 1).sum())
-    spw = round(neg / pos, 2) if pos > 0 else 1.0   # balance minority class
+    spw = round(neg / pos, 2) if pos > 0 else 1.0
     pipe = Pipeline([
         ("sc",  StandardScaler()),
         ("xgb", XGBClassifier(
@@ -90,8 +110,10 @@ def train_model() -> Pipeline:
             eval_metric="logloss", random_state=42, verbosity=0,
         )),
     ])
-    pipe.fit(combined[FEATURES], combined["target"])
-    print(f"  Model trained on {len(combined):,} rows ({pos} buy / {neg} no-buy) | scale_pos_weight={spw}")
+    pipe.fit(combined[FEATURES], combined["target"], xgb__sample_weight=weights.values)
+    recent = int((ages <= 30).sum())
+    print(f"  Model trained on {len(combined):,} rows ({pos} buy / {neg} no-buy) | "
+          f"scale_pos_weight={spw} | recency-weighted ({recent} rows ×4)")
     return pipe
 
 # ─── MARKET REGIME, VIX, SECTOR, WEEKLY, EARNINGS ───────────────────────────
@@ -221,10 +243,16 @@ def mark_alerted(ticker: str):
 # ─── ADAPTIVE LEARNING — score adjustments from past performance ─────────────
 def performance_adjustments() -> dict[str, int]:
     """
-    Returns per-ticker score adjustments based on resolved signal outcomes.
-    Needs ≥3 resolved signals per ticker before adjusting.
-      win rate ≥ 65% → +1 (proven winner, lower bar)
-      win rate ≤ 35% → -2 (consistent loser, need stronger signal)
+    Returns per-ticker score adjustments learned from resolved signal outcomes.
+    Uses the most recent 20 resolved signals per ticker (rolling window).
+    Needs ≥3 resolved signals before adjusting.
+
+    Win rate  →  adj
+    ≥ 75%     →  +2  (hot streak — lower bar to re-enter)
+    ≥ 60%     →  +1  (proven winner)
+    40–60%    →   0  (neutral — no adjustment)
+    ≤ 40%     →  -1  (underperforming — needs stronger signal)
+    ≤ 25%     →  -2  (consistent loser — penalise heavily)
     """
     from collections import defaultdict
     entries  = _load_log()
@@ -236,12 +264,65 @@ def performance_adjustments() -> dict[str, int]:
         bucket[e["ticker"]].append(e["outcome"] == "WIN")
     adj = {}
     for ticker, results in bucket.items():
-        if len(results) < 3:
+        recent = results[-20:]          # rolling 20-signal window
+        if len(recent) < 3:
             continue
-        wr = sum(results) / len(results)
-        if   wr >= 0.65: adj[ticker] = +1
-        elif wr <= 0.35: adj[ticker] = -2
+        wr = sum(recent) / len(recent)
+        if   wr >= 0.75: adj[ticker] = +2
+        elif wr >= 0.60: adj[ticker] = +1
+        elif wr <= 0.25: adj[ticker] = -2
+        elif wr <= 0.40: adj[ticker] = -1
+        else:            adj[ticker] =  0
     return adj
+
+
+def update_ticker_performance() -> dict:
+    """
+    Called after every scan:
+      1. Resolve any matured trade outcomes (checks actual exit price vs target)
+      2. Recompute per-ticker win rates from the rolling signal log
+      3. Send a Discord summary if any new outcomes were resolved
+
+    Returns dict of resolved outcomes from this run (may be empty).
+    """
+    entries_before = sum(1 for e in _load_log() if e["outcome"] is not None)
+    updated        = resolve_outcomes()
+    entries_after  = sum(1 for e in updated if e["outcome"] is not None)
+    new_count      = entries_after - entries_before
+
+    if new_count == 0:
+        return {}
+
+    # Build per-ticker summary of newly resolved outcomes
+    adj   = performance_adjustments()
+    resolved = [e for e in updated if e["outcome"] is not None]
+    from collections import defaultdict
+    bucket: dict[str, list] = defaultdict(list)
+    for e in resolved:
+        bucket[e["ticker"]].append(e)
+
+    lines = [
+        "**TRADEY BOI X** | 📊 Outcome Update",
+        f"_{new_count} trade(s) resolved — model adjustments updated_",
+        "",
+    ]
+    for ticker, trades in sorted(bucket.items()):
+        recent = trades[-20:]
+        wins   = sum(1 for t in recent if t["outcome"] == "WIN")
+        wr     = wins / len(recent) * 100
+        last   = trades[-1]
+        change = f"{last['actual_pct']*100:+.1f}%" if last.get("actual_pct") is not None else "?"
+        a      = adj.get(ticker, 0)
+        adj_str = f"adj {a:+d}" if a != 0 else "adj 0 (neutral)"
+        lines.append(f"**{ticker}** — Win rate {wr:.0f}% ({wins}/{len(recent)}) | Last: {change} | {adj_str}")
+
+    if DISCORD:
+        try:
+            requests.post(DISCORD, json={"content": "\n".join(lines)}, timeout=5)
+        except Exception:
+            pass
+
+    return {e["ticker"]: e["outcome"] for e in updated if e["outcome"] is not None}
 
 def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     GATED = {"signal": "GATED", "label": "🚫 GATED", "color": "#888",
@@ -860,11 +941,14 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         return False
 
 # ─── SIGNAL LOG + OUTCOME TRACKING ───────────────────────────────────────────
-def log_signal(ticker: str, price: float, tier: str):
+def log_signal(ticker: str, price: float, tier: str,
+               score: int = 0, prob: float = 0.0):
     entries = _load_log()
     entries.append({
         "ticker":      ticker,
         "tier":        tier,
+        "score":       score,
+        "prob":        round(prob, 4),
         "entry_price": round(price, 4),
         "signal_date": datetime.now().strftime("%Y-%m-%d"),
         "target_pct":  TARGET_RETURN,
