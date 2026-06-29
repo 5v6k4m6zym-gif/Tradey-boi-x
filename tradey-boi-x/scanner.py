@@ -11,7 +11,7 @@ import pytz
 from engine import (
     WATCHLIST, MAX_ALERTS,
     get_data, train_model, decide, send_alert,
-    log_signal, mark_alerted, resolve_outcomes,
+    log_signal, mark_alerted, update_ticker_performance,
 )
 
 SCAN_INTERVAL_SECONDS = 3600   # scan every hour while markets are open
@@ -78,7 +78,9 @@ def run_scan(model) -> int:
                 sent  = send_alert(ticker, res, price, df)
                 if sent:
                     mark_alerted(ticker)
-                    log_signal(ticker, price, res["signal"])
+                    log_signal(ticker, price, res["signal"],
+                               score=res.get("score", 0),
+                               prob=res.get("prob", 0.0))
                     print(f"  ✅ Alert sent: {ticker} {res['label']} (score {res['score']}/14)")
                     fired += 1
             else:
@@ -88,7 +90,7 @@ def run_scan(model) -> int:
         except Exception as e:
             print(f"  ⚠️  {ticker}: {e}")
 
-    resolve_outcomes()
+    update_ticker_performance()
     print(f"Scan done. {fired} alert(s) sent.")
     return fired
 
