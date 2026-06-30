@@ -408,7 +408,7 @@ def train_model() -> "EnsembleModel":
         y_oos   = combined_sorted["target"].iloc[cutoff:]
         if len(y_oos) > 50 and int(y_oos.sum()) >= 5:
             from sklearn.metrics import precision_score as _prec
-            oos_pred = (model.predict_proba(X_oos)[:, 1] >= 0.38).astype(int)
+            oos_pred = (model.predict_proba(X_oos)[:, 1] >= 0.40).astype(int)
             prec     = _prec(y_oos, oos_pred, zero_division=0)
             baseline = float(y_oos.mean())
             flag     = "✅ beating baseline" if prec >= baseline * 1.15 else "⚠️  near baseline"
@@ -1417,7 +1417,7 @@ def confidence_grade(prob: float, score: int) -> tuple:
     elif combined >= 0.50: grade, label = "B+", "GOOD 📈"
     elif combined >= 0.35: grade, label = "B",  "MODERATE 📊"
     else:                  grade, label = "C",  "LOW ⚠️"
-    filled = round(combined * 10)
+    filled = min(10, round(combined * 10))
     bar = "█" * filled + "░" * (10 - filled)
     return grade, label, f"{bar} {filled}/10"
 
@@ -2129,7 +2129,7 @@ def _get_intraday_surge(ticker: str) -> tuple[float, float]:
         return 0.0, 0.0
 
 
-def _large_move_check(ticker: str, df: "pd.DataFrame") -> dict | None:
+def _large_move_check(ticker: str, df: "pd.DataFrame", model=None) -> dict | None:
     """
     Reactive: fires when a large move is definitively underway RIGHT NOW.
 
@@ -2214,7 +2214,7 @@ def _large_move_check(ticker: str, df: "pd.DataFrame") -> dict | None:
         if rsi < 65:
             score += 1; evidence.append(f"RSI {rsi:.0f} — not overbought, move has room")
 
-        # AI model gate — top-tier signals only (≥ 35%)
+        # AI model gate — top-tier signals only (≥ 38%)
         ai_prob = 0.0
         if model is not None:
             try:
@@ -2263,7 +2263,7 @@ def big_mover_check(ticker: str, df: "pd.DataFrame", model=None) -> dict | None:
     Pass the trained EnsembleModel so the SETUP tier can use AI probability
     to reject false positives before they reach the Discord alert.
     """
-    return _large_move_check(ticker, df) or _breakout_setup_check(ticker, df, model=model)
+    return _large_move_check(ticker, df, model=model) or _breakout_setup_check(ticker, df, model=model)
 
 
 # ── Discord alerts ────────────────────────────────────────────────────────────

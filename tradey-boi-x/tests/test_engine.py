@@ -1397,5 +1397,135 @@ class TestUpdateTickerPerformanceWinRate(unittest.TestCase):
         self.assertEqual(wr2, 0.0)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 17. ACTIVE TIER — _large_move_check model parameter
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestLargeMoveCheckModelParameter(unittest.TestCase):
+    """
+    REGRESSION: _large_move_check() referenced `model` inside its body but
+    the parameter was absent from the function signature:
+
+        def _large_move_check(ticker: str, df: "pd.DataFrame") -> dict | None:
+
+    Python raised NameError at `if model is not None:`, caught by the outer
+    `except Exception: return None`. Result: _large_move_check() ALWAYS returned
+    None silently, making big_mover_check() fall through to SETUP only.
+    The ACTIVE tier (large confirmed movers) was completely inoperative.
+
+    Fix: added `model=None` to the signature and updated big_mover_check() to
+    pass `model=model` to _large_move_check().
+    """
+
+    def _make_df(self, n: int = 30) -> pd.DataFrame:
+        """Minimal DataFrame — enough rows but values that won't pass ACTIVE gates."""
+        data = {c: [1.0] * n for c in engine.FEATURES}
+        data.update({
+            "Close": [100.0] * n, "Open": [97.0] * n,
+            "High": [102.0] * n,  "Low": [96.0] * n,
+            "Volume": [1_000_000.0] * n,
+            "bb_upper": [105.0] * n, "bb_lower": [95.0] * n,
+            "bb_squeeze": [0] * n,
+            "ema20": [98.0] * n,  "ema50": [95.0] * n,
+        })
+        return pd.DataFrame(data)
+
+    def test_function_accepts_model_parameter(self):
+        """_large_move_check must accept a model keyword argument."""
+        import inspect
+        sig = inspect.signature(engine._large_move_check)
+        self.assertIn("model", sig.parameters,
+            "model parameter must be in _large_move_check signature")
+
+    def test_regression_without_model_always_returned_none(self):
+        """
+        REGRESSION MARKER — old code had no model parameter.
+        Calling it without model in scope raised NameError → silently returned None.
+        Verify the old behaviour is reproducible by calling with model=None explicitly.
+        When model=None the function must return None (needs model to proceed).
+        """
+        df = self._make_df()
+        result = engine._large_move_check("BHP.AX", df, model=None)
+        self.assertIsNone(result,
+            "With model=None, _large_move_check must return None (AI required)")
+
+    def test_no_name_error_when_model_provided(self):
+        """
+        When a model object is provided, the function must not raise NameError.
+        It may still return None (gates not met), but must not crash.
+        """
+        mock_model = MagicMock()
+        mock_model.predict_proba.return_value = [[0.2, 0.5]]
+        df = self._make_df()
+        try:
+            result = engine._large_move_check("BHP.AX", df, model=mock_model)
+            # Result is None (gates not passed) but no NameError was raised
+        except NameError as e:
+            self.fail(f"NameError raised — model still not in scope: {e}")
+
+    def test_big_mover_check_passes_model_to_large_move_check(self):
+        """big_mover_check must pass model to _large_move_check (not just to SETUP)."""
+        import inspect
+        src = inspect.getsource(engine.big_mover_check)
+        self.assertIn("_large_move_check(ticker, df, model=model)", src,
+            "big_mover_check must pass model to _large_move_check")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 18. CONFIDENCE GRADE — bar never exceeds 10 characters
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestConfidenceGradeBarClamp(unittest.TestCase):
+    """
+    REGRESSION: confidence_grade() used:
+
+        filled = round(combined * 10)
+        bar = "█" * filled + "░" * (10 - filled)
+
+    When `combined > 1.0` (possible when score > 14 with any positive prob),
+    `filled` exceeded 10 and the bar string grew to 11–13+ characters,
+    corrupting the Discord alert and dashboard display.
+
+    Fix: `filled = min(10, round(combined * 10))` — clamps at 10.
+    """
+
+    def _bar_len(self, prob: float, score: int) -> int:
+        """Return the character length of the bar portion."""
+        _, _, bar_str = confidence_grade(prob, score)
+        return len(bar_str.split(" ")[0])
+
+    def test_bar_10_chars_at_normal_scores(self):
+        """Score ≤ 14 — bar must be exactly 10 characters."""
+        for score in [0, 5, 9, 11, 14]:
+            self.assertEqual(self._bar_len(0.75, score), 10,
+                f"bar must be 10 chars at score={score}")
+
+    def test_bar_10_chars_at_high_scores(self):
+        """Score > 14 — bar must still be exactly 10 characters (clamped)."""
+        for score in [15, 18, 20, 25, 40]:
+            self.assertEqual(self._bar_len(0.90, score), 10,
+                f"bar must be clamped to 10 chars at score={score}")
+
+    def test_regression_old_code_overflowed(self):
+        """
+        REGRESSION MARKER — old code produced bars > 10 chars at high scores.
+        Verify new code is strictly bounded.
+        """
+        # score=25, prob=0.9: combined = 0.54 + 0.714 = 1.254 → old: filled=13
+        _, _, bar_str = confidence_grade(0.90, 25)
+        bar_part = bar_str.split(" ")[0]
+        self.assertEqual(len(bar_part), 10,
+            f"bar must be exactly 10 chars, got {len(bar_part)}: '{bar_part}'")
+
+    def test_bar_content_correct_at_normal_range(self):
+        """Bar content must reflect filled/empty balance correctly."""
+        _, _, bar_str = confidence_grade(0.50, 7)
+        bar_part = bar_str.split(" ")[0]
+        filled_count = bar_part.count("█")
+        empty_count  = bar_part.count("░")
+        self.assertEqual(filled_count + empty_count, 10)
+        self.assertGreater(filled_count, 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
