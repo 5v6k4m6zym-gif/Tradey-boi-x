@@ -125,14 +125,21 @@ def run_scan(model) -> int:
                 # to reject false positives before sending a Discord alert.
                 mover = big_mover_check(ticker, df, model=model)
                 if mover:
-                    sent = send_mover_alert(ticker, mover, df=df)
                     tier = mover["tier"]
                     if tier == "ACTIVE":
+                        # Confirmed breakout in progress → Discord alert
+                        sent = send_mover_alert(ticker, mover, df=df)
                         detail = f"+{mover['daily_ret']*100:.1f}% | {mover['vol_r']:.1f}× vol"
+                        flag = "alert sent ✅" if sent else "cooldown active"
+                        print(f"  [ACTIVE] {ticker}: {detail} — {flag}")
                     else:
+                        # Setup detected — log for model learning, no Discord alert
+                        watch = mover.get("watch_level", mover["price"])
+                        log_signal(ticker, watch, "SETUP",
+                                   score=mover.get("score", 0),
+                                   prob=mover.get("ai_prob", 0.0))
                         detail = f"ai={mover.get('ai_prob',0)*100:.0f}% | adx={mover['adx']:.0f} | obv={mover['obv_r']:.1f}"
-                    flag = "alert sent ✅" if sent else "cooldown active"
-                    print(f"  [{tier}] {ticker}: {detail} — {flag}")
+                        print(f"  [SETUP] {ticker}: {detail} — logged (no alert)")
 
         except Exception as e:
             print(f"  ⚠️  {ticker}: {e}")
