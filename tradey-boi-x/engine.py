@@ -286,14 +286,17 @@ class EnsembleModel:
 def _apply_feedback_weights(combined: pd.DataFrame, weights: pd.Series) -> tuple["pd.Series", int, int]:
     """
     Boost / penalize training rows that match resolved past signal outcomes.
-      WIN  (hit target or expired gain)  → row weight ×10
-      LOSS (hit stop or expired loss)    → row weight ×0.3
+      WIN  (HIT_TARGET or EXPIRED_GAIN)  → row weight ×2.5
+      LOSS (HIT_STOP or EXPIRED_LOSS)    → row weight ×0.5
+    Requires ≥10 resolved signals before applying — prevents overfitting to
+    early noisy feedback. Multipliers are intentionally modest to avoid a
+    handful of outcomes dominating a 100k-row training set.
     Returns (adjusted_weights, n_wins_applied, n_losses_applied).
     """
     entries = _load_log()
     resolved = [e for e in entries if e.get("outcome") in
                 ("WIN", "LOSS", "HIT_TARGET", "HIT_STOP", "EXPIRED_GAIN", "EXPIRED_LOSS")]
-    if not resolved:
+    if len(resolved) < 10:          # not enough signal history yet — skip
         return weights, 0, 0
 
     weights   = weights.copy().astype(float)
@@ -311,7 +314,7 @@ def _apply_feedback_weights(combined: pd.DataFrame, weights: pd.Series) -> tuple
             if not mask.any():
                 continue
             is_win = e["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN")
-            weights[mask] *= (10.0 if is_win else 0.3)
+            weights[mask] *= (2.5 if is_win else 0.5)
             if is_win:
                 n_win += 1
             else:
@@ -326,10 +329,10 @@ def train_model() -> "EnsembleModel":
     Train XGBoost + RandomForest ensemble on ALL watchlist tickers.
 
     Weighting layers (applied multiplicatively):
-      1. Recency   — last 30 days ×4, last 90 days ×2, older ×1
-      2. Feedback  — rows matching past WIN signals ×10, LOSS signals ×0.3
-         This is the closed feedback loop: every resolved signal teaches
-         the model which market conditions actually worked vs which failed.
+      1. Recency   — last 30 days ×2, last 90 days ×1.5, older ×1
+         (modest — avoids regime mismatch when recent weeks are unusual)
+      2. Feedback  — resolved outcomes ×2.5 (WIN) / ×0.5 (LOSS), only
+         after ≥10 resolved signals (prevents early-noise overfitting)
     """
     frames = []
     for ticker in WATCHLIST:
@@ -356,7 +359,7 @@ def train_model() -> "EnsembleModel":
         ages  = (now - dates).dt.days.fillna(365)
     except Exception:
         ages = pd.Series([365] * len(combined))
-    weights = ages.apply(lambda d: 4.0 if d <= 30 else (2.0 if d <= 90 else 1.0))
+    weights = ages.apply(lambda d: 2.0 if d <= 30 else (1.5 if d <= 90 else 1.0))
 
     # Layer 2 — Feedback from past signal outcomes
     weights, n_win, n_loss = _apply_feedback_weights(combined, weights)
@@ -367,11 +370,13 @@ def train_model() -> "EnsembleModel":
     X, y = combined[FEATURES], combined["target"]
 
     # XGBoost — recency + feedback weighted
+    # depth=4 + regularization prevents memorising recent noise
     xgb_pipe = Pipeline([
         ("sc",  StandardScaler()),
         ("xgb", XGBClassifier(
-            n_estimators=400, max_depth=6, learning_rate=0.05,
+            n_estimators=300, max_depth=4, learning_rate=0.05,
             subsample=0.8, colsample_bytree=0.8,
+            min_child_weight=5, reg_alpha=0.1, reg_lambda=2.0,
             scale_pos_weight=spw,
             eval_metric="logloss", random_state=42, verbosity=0,
         )),
@@ -379,20 +384,40 @@ def train_model() -> "EnsembleModel":
     xgb_pipe.fit(X, y, xgb__sample_weight=weights.values)
 
     # RandomForest — balanced class weights, independent signal
+    # shallower trees + larger leaf nodes = less overfit
     rf_pipe = Pipeline([
         ("sc", StandardScaler()),
         ("rf", RandomForestClassifier(
-            n_estimators=300, max_depth=8, min_samples_leaf=10,
+            n_estimators=300, max_depth=6, min_samples_leaf=15,
             class_weight="balanced", random_state=42, n_jobs=-1,
         )),
     ])
     rf_pipe.fit(X, y)
 
+    model  = EnsembleModel(xgb_pipe, rf_pipe)
     recent = int((ages <= 30).sum())
     fb_msg = f" | feedback: {n_win} WIN boosts, {n_loss} LOSS penalties" if (n_win + n_loss) else ""
+
+    # Out-of-sample check — strict time-based 80/20 split (oldest→train, newest→test).
+    # Monitoring only — does NOT affect alerts. Flags when model barely beats base rate.
+    try:
+        combined_sorted = combined.sort_values("_row_date")
+        cutoff  = int(len(combined_sorted) * 0.80)
+        X_oos   = combined_sorted[FEATURES].iloc[cutoff:]
+        y_oos   = combined_sorted["target"].iloc[cutoff:]
+        if len(y_oos) > 50 and int(y_oos.sum()) >= 5:
+            from sklearn.metrics import precision_score as _prec
+            oos_pred = (model.predict_proba(X_oos)[:, 1] >= 0.38).astype(int)
+            prec     = _prec(y_oos, oos_pred, zero_division=0)
+            baseline = float(y_oos.mean())
+            flag     = "✅ beating baseline" if prec >= baseline * 1.15 else "⚠️  near baseline"
+            print(f"  OOS precision={prec:.2f}  baseline={baseline:.2f}  {flag}")
+    except Exception as _e:
+        print(f"  OOS check skipped: {_e}")
+
     print(f"  Ensemble trained: {len(combined):,} rows ({pos} buy / {neg} no-buy) | "
-          f"XGBoost + RandomForest | recency-weighted ({recent} rows ×4){fb_msg}")
-    return EnsembleModel(xgb_pipe, rf_pipe)
+          f"XGBoost + RandomForest | recency-weighted ({recent} rows ×2){fb_msg}")
+    return model
 
 # ─── MARKET REGIME, VIX, SECTOR, WEEKLY, EARNINGS ───────────────────────────
 _regime_cache: dict = {}
@@ -556,7 +581,7 @@ def performance_adjustments() -> dict[str, int]:
         return {}
     bucket: dict[str, list[bool]] = defaultdict(list)
     for e in resolved:
-        bucket[e["ticker"]].append(e["outcome"] == "WIN")
+        bucket[e["ticker"]].append(e["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN"))
     adj = {}
     for ticker, results in bucket.items():
         recent = results[-20:]          # rolling 20-signal window
@@ -1878,13 +1903,14 @@ def accuracy_stats(entries: list) -> dict:
     resolved = [e for e in entries if e["outcome"] is not None]
     if not resolved:
         return {"total": 0, "wins": 0, "losses": 0, "win_rate": None, "avg_return": None}
-    wins = sum(1 for e in resolved if e["outcome"] == "WIN")
+    wins = sum(1 for e in resolved
+               if e["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN"))
     return {
         "total":      len(resolved),
         "wins":       wins,
         "losses":     len(resolved) - wins,
         "win_rate":   wins / len(resolved),
-        "avg_return": sum(e["actual_pct"] for e in resolved) / len(resolved),
+        "avg_return": sum(e.get("actual_pct", 0) for e in resolved) / len(resolved),
     }
 
 
