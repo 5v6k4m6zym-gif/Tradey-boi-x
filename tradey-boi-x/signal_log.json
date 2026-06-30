@@ -1,0 +1,17 @@
+[
+  {
+    "ticker": "NHF.AX",
+    "tier": "ELITE",
+    "score": 12,
+    "prob": 0.4146,
+    "entry_price": 7.06,
+    "stop_price": null,
+    "target_price": null,
+    "signal_date": "2026-06-30",
+    "target_pct": 0.03,
+    "pred_days": 10,
+    "outcome": null,
+    "exit_price": null,
+    "actual_pct": null
+  }
+]
