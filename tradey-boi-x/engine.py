@@ -724,7 +724,7 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
              + rot_adj + gap_adj + sq_adj + fund_adj + vwap_adj)
 
     # Grade thresholds — only the strongest qualify for an alert
-    # ELITE:      score ≥ 11  (any AI prob — already filtered to ≥ 55% above)
+    # ELITE:      score ≥ 11  (any AI prob — already filtered to ≥ 40% above)
     # STRONG BUY: score ≥ 9  AND AI prob ≥ 70%  (genuinely high conviction only)
     # WATCH:      everything else that passed filters — shown on dashboard, never alerted
     if   score >= 11:                        signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
@@ -1975,20 +1975,20 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame",
 
     ALL must pass:
       1. Bollinger squeeze active (bb_width in bottom 20% of 6-month range)
-      2. OBV ratio > 1.8  — above-average volume flowing IN quietly (accumulation)
-      3. ADX ≥ 20  — trend energy is building (not random drift)
+      2. OBV ratio ≥ 2.0  — above-average volume flowing IN quietly (accumulation)
+      3. ADX ≥ 23  — trend energy is building (not random drift)
       4. ADX rising  — momentum accelerating over last 3 days
       5. RSI 32–62  — stock not extended; room to run in either direction
       6. Price above BB midline  — directional bias is upward
       7. Vol ratio 0.8–2.5×  — interest building but not exploded yet
       8. VIX safe + no earnings within 5 days
-      9. AI model probability ≥ 20%  — model must not actively disagree
+      9. AI model probability ≥ 38%  — top-tier threshold; daily baseline is 17–31%
      10. Cooldown: 48 h
 
     The AI model (XGBoost + RandomForest ensemble) is used to:
-      • Hard-reject setups where AI prob < 20%  (model says this is a false positive)
-      • Score higher setups where AI prob ≥ 30%  (model constructively agrees)
-      • Score highest where AI prob ≥ 45%        (strong multi-signal agreement)
+      • Hard-reject setups where AI prob < 38%  (model says this is a false positive)
+      • Score higher setups where AI prob ≥ 42%  (model constructively agrees)
+      • Score highest where AI prob ≥ 50%        (strong multi-signal agreement)
     This is what separates genuine pre-breakout setups from random squeezes.
     """
     if len(df) < 30:
@@ -2074,7 +2074,7 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame",
         elif pct_to_high < 0.06:
             score += 1; evidence.append(f"Near 52-week high ({pct_to_high*100:.1f}% away)")
 
-        # AI model scoring — all reach here with ai_prob ≥ 0.35
+        # AI model scoring — all reach here with ai_prob ≥ 0.38
         if ai_prob >= 0.50:
             score += 3
             evidence.append(f"🤖 AI model {ai_prob*100:.0f}% — top-tier conviction")
@@ -2139,8 +2139,8 @@ def _large_move_check(ticker: str, df: "pd.DataFrame", model=None) -> dict | Non
     Reactive: fires when a large move is definitively underway RIGHT NOW.
 
     ALL daily gates must pass:
-      1. vol_ratio ≥ 3.5×   — heavy institutional participation (not noise)
-      2. daily_return ≥ 3.5% — a real directional move (not a 2% drift)
+      1. vol_ratio ≥ 4.0×   — heavy institutional participation (not noise)
+      2. daily_return ≥ 4.0% — a real directional move (not a 2% drift)
       3. ATR expansion ≥ 1.8× — volatility genuinely expanded (move has energy)
       4. RSI 38–76           — not overbought, stock not dead
       5. VIX safe + no earnings
