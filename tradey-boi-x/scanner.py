@@ -107,12 +107,18 @@ def run_scan(model) -> int:
 
                 # ── Big Mover check — runs on every non-alerted ticker ────────
                 # Catches large moves in progress even when standard gates fail.
-                mover = big_mover_check(ticker, df)
+                # Passes the trained model so the SETUP tier can use AI probability
+                # to reject false positives before sending a Discord alert.
+                mover = big_mover_check(ticker, df, model=model)
                 if mover:
-                    price = float(df.iloc[-1]["Close"])
-                    sent  = send_mover_alert(ticker, mover)
-                    flag  = "🚀 LARGE MOVE alert sent" if sent else "🚀 LARGE MOVE detected (cooldown active)"
-                    print(f"  {flag}: {ticker} +{mover['daily_return']*100:.1f}% | {mover['vol_ratio']:.1f}× vol | {mover['strength']}")
+                    sent = send_mover_alert(ticker, mover)
+                    tier = mover["tier"]
+                    if tier == "ACTIVE":
+                        detail = f"+{mover['daily_ret']*100:.1f}% | {mover['vol_r']:.1f}× vol"
+                    else:
+                        detail = f"ai={mover.get('ai_prob',0)*100:.0f}% | adx={mover['adx']:.0f} | obv={mover['obv_r']:.1f}"
+                    flag = "alert sent ✅" if sent else "cooldown active"
+                    print(f"  [{tier}] {ticker}: {detail} — {flag}")
 
         except Exception as e:
             print(f"  ⚠️  {ticker}: {e}")
