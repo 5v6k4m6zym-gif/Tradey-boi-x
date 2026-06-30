@@ -2150,7 +2150,7 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
 
         lines = [
             divider,
-            f"🔥  **{ticker}**  +{mover['daily_ret']*100:.1f}%  ${price:.2f}"
+            f"🔥 BREAKOUT CONFIRMED  |  **{ticker}**  +{mover['daily_ret']*100:.1f}%  ${price:.2f}"
             f"  |  Vol: {mover['vol_r']:.1f}×  ·  ATR: {mover['atr_exp']:.1f}×  ·  RSI: {int(rsi)}",
             divider,
             timing_line,
@@ -2179,8 +2179,8 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
 
         lines = [
             divider,
-            f"⚡  **{ticker}**  ${mover['price']:.2f}"
-            f"  |  Squeeze  ·  OBV: {obv_r:.1f}×  ·  ADX: {adx:.0f}↑  ·  Confidence: {ai_pct:.0f}%",
+            f"⚡ BREAKOUT SETUP  |  **{ticker}**  ${mover['price']:.2f}"
+            f"  |  OBV: {obv_r:.1f}×  ·  ADX: {adx:.0f}↑  ·  Confidence: {ai_pct:.0f}%",
             divider,
             f"👁  Watch  **${watch:.2f}**  →  entry {brk_date}  ·  {entry_window}",
             f"_Large move expected within 1–3 sessions if watch level breaks with volume_",
