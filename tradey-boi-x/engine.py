@@ -1654,7 +1654,8 @@ def _mover_cd_mark(key: str):
 
 # ── Tier 1: BREAKOUT SETUP ────────────────────────────────────────────────────
 
-def _breakout_setup_check(ticker: str, df: "pd.DataFrame") -> dict | None:
+def _breakout_setup_check(ticker: str, df: "pd.DataFrame",
+                          model=None) -> dict | None:
     """
     Predictive: fires when a stock is coiling for a large move but hasn't broken yet.
 
@@ -1667,7 +1668,14 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame") -> dict | None:
       6. Price above BB midline  — directional bias is upward
       7. Vol ratio 0.8–2.5×  — interest building but not exploded yet
       8. VIX safe + no earnings within 5 days
-      9. Cooldown: 48 h
+      9. AI model probability ≥ 20%  — model must not actively disagree
+     10. Cooldown: 48 h
+
+    The AI model (XGBoost + RandomForest ensemble) is used to:
+      • Hard-reject setups where AI prob < 20%  (model says this is a false positive)
+      • Score higher setups where AI prob ≥ 30%  (model constructively agrees)
+      • Score highest where AI prob ≥ 45%        (strong multi-signal agreement)
+    This is what separates genuine pre-breakout setups from random squeezes.
     """
     if len(df) < 30:
         return None
@@ -1692,6 +1700,17 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame") -> dict | None:
         if not (0.8 <= vol_r <= 2.5):  return None   # volume already exploded or too flat
         if not vix_safe():             return None
         if not earnings_safe(ticker):  return None
+
+        # AI model gate — hard reject if model actively disagrees
+        ai_prob = 0.0
+        if model is not None:
+            try:
+                ai_prob = float(model.predict_proba(
+                    pd.DataFrame([row[FEATURES]]))[0][1])
+                if ai_prob < 0.20:
+                    return None   # model says this setup is likely a false positive
+            except Exception:
+                pass
 
         cd_key = f"SETUP__{ticker}"
         if not _mover_cd_ok(cd_key, 48):
@@ -1735,8 +1754,21 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame") -> dict | None:
         elif pct_to_high < 0.06:
             score += 1; evidence.append(f"Near 52-week high ({pct_to_high*100:.1f}% away)")
 
-        # Minimum quality bar — must score ≥ 7 to fire
-        if score < 7:
+        # AI model scoring — distinguishes real breakouts from random squeezes
+        # ai_prob is already computed above (and hard-rejected if < 0.20)
+        if ai_prob >= 0.45:
+            score += 3
+            evidence.append(f"🤖 AI model {ai_prob*100:.0f}% confident — strong agreement across XGBoost + RandomForest")
+        elif ai_prob >= 0.30:
+            score += 2
+            evidence.append(f"🤖 AI model {ai_prob*100:.0f}% confident — constructive agreement with setup")
+        elif ai_prob >= 0.20:
+            score += 1
+            evidence.append(f"🤖 AI model {ai_prob*100:.0f}% — neutral (not disagreeing)")
+        # < 0.20 already hard-rejected above
+
+        # Minimum quality bar — must score ≥ 8 to fire (raised from 7 now AI adds up to 3 pts)
+        if score < 8:
             return None
 
         # Watch level: BB upper + small buffer
@@ -1747,6 +1779,7 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame") -> dict | None:
             "ticker":      ticker,
             "price":       price,
             "score":       score,
+            "ai_prob":     ai_prob,
             "evidence":    evidence,
             "watch_level": watch_level,
             "adx":         adx,
@@ -1896,12 +1929,15 @@ def _large_move_check(ticker: str, df: "pd.DataFrame") -> dict | None:
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def big_mover_check(ticker: str, df: "pd.DataFrame") -> dict | None:
+def big_mover_check(ticker: str, df: "pd.DataFrame", model=None) -> dict | None:
     """
     Run both tiers in priority order. Returns the first result that qualifies,
     or None if neither fires. ACTIVE takes priority over SETUP.
+
+    Pass the trained EnsembleModel so the SETUP tier can use AI probability
+    to reject false positives before they reach the Discord alert.
     """
-    return _large_move_check(ticker, df) or _breakout_setup_check(ticker, df)
+    return _large_move_check(ticker, df) or _breakout_setup_check(ticker, df, model=model)
 
 
 # ── Discord alerts ────────────────────────────────────────────────────────────
