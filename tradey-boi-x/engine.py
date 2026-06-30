@@ -1609,182 +1609,359 @@ def accuracy_stats(entries: list) -> dict:
     }
 
 
-# ─── BIG MOVER DETECTOR ───────────────────────────────────────────────────────
-# A separate, looser signal path that runs on every ticker that failed the
-# standard gates. Designed to catch stocks making LARGE MOVES RIGHT NOW —
-# volume explosions, ATR expansion, and strong intraday momentum.
+# ─── BIG MOVER DETECTOR — TWO-TIER SYSTEM ────────────────────────────────────
 #
-# This is NOT a trend-confirmation signal. It fires when something unusual
-# is happening regardless of MACD/EMA alignment.
+# Completely isolated from the original scanner/decide() pipeline.
+# Two tiers, each with a strict quality bar and its own cooldown:
+#
+#  TIER 1 — ⚡ BREAKOUT SETUP  (predictive, fires 1–3 days before the move)
+#    Looks for the classic "compressed spring" pattern:
+#    Bollinger squeeze + OBV accumulation + ADX building.
+#    Cooldown: 48 h per ticker — one reminder max, then silence until resolved.
+#
+#  TIER 2 — 🔥 LARGE MOVE CONFIRMED  (reactive, fires as the move happens)
+#    Requires ALL THREE to be extreme simultaneously:
+#    vol ≥ 3.5×  AND  price move ≥ 3.5%  AND  ATR expansion ≥ 1.8×.
+#    Intraday (1 h) data used to confirm the move is still accelerating.
+#    Cooldown: 12 h per ticker.
+#
+# Anti-spam rules built in:
+#  • Separate cooldown file from the main scanner
+#  • Each tier uses a namespaced key:  "SETUP__AAPL" / "ACTIVE__AAPL"
+#  • Minimum score thresholds are conservative
+#  • Both tiers share vix_safe() and earnings_safe() hard gates
 # ─────────────────────────────────────────────────────────────────────────────
 
 _MOVER_GUARD_FILE = Path(__file__).parent / "mover_cooldowns.json"
-_MOVER_COOLDOWN_HOURS = 6   # don't re-alert same ticker within 6 hours
 
 
-def _mover_guard_ok(ticker: str) -> bool:
-    """Return True if this ticker hasn't fired a mover alert in the last 6 hours."""
+def _mover_cd_ok(key: str, hours: float) -> bool:
     try:
         data = json.loads(_MOVER_GUARD_FILE.read_text()) if _MOVER_GUARD_FILE.exists() else {}
-        last = data.get(ticker, 0)
-        return (time.time() - last) > (_MOVER_COOLDOWN_HOURS * 3600)
+        return (time.time() - data.get(key, 0)) > hours * 3600
     except Exception:
         return True
 
 
-def _mover_guard_mark(ticker: str):
+def _mover_cd_mark(key: str):
     try:
         data = json.loads(_MOVER_GUARD_FILE.read_text()) if _MOVER_GUARD_FILE.exists() else {}
-        data[ticker] = time.time()
+        data[key] = time.time()
         _MOVER_GUARD_FILE.write_text(json.dumps(data))
     except Exception:
         pass
 
 
-def big_mover_check(ticker: str, df: "pd.DataFrame") -> dict | None:
-    """
-    Scan for a large move in progress. Returns a result dict if the ticker
-    qualifies, or None if it doesn't.
+# ── Tier 1: BREAKOUT SETUP ────────────────────────────────────────────────────
 
-    Criteria (ALL must pass):
-      • Volume   ≥ 2.5× 20-day average  — unusual institutional activity
-      • Today's move ≥ 2.0% intraday     — clear directional push
-      • ATR expansion ≥ 1.4× 20-day avg  — volatility picking up (big move underway)
-      • RSI between 35–80                — room to run, stock not dead
-      • VIX safe (< 30)                  — market not in panic
-      • No earnings within 3 days        — avoid earnings noise
-
-    Returns a dict with move stats used to build the Discord alert.
+def _breakout_setup_check(ticker: str, df: "pd.DataFrame") -> dict | None:
     """
-    if len(df) < 25:
+    Predictive: fires when a stock is coiling for a large move but hasn't broken yet.
+
+    ALL must pass:
+      1. Bollinger squeeze active (bb_width in bottom 20% of 6-month range)
+      2. OBV ratio > 1.8  — above-average volume flowing IN quietly (accumulation)
+      3. ADX ≥ 20  — trend energy is building (not random drift)
+      4. ADX rising  — momentum accelerating over last 3 days
+      5. RSI 32–62  — stock not extended; room to run in either direction
+      6. Price above BB midline  — directional bias is upward
+      7. Vol ratio 0.8–2.5×  — interest building but not exploded yet
+      8. VIX safe + no earnings within 5 days
+      9. Cooldown: 48 h
+    """
+    if len(df) < 30:
         return None
-
     try:
-        row   = df.iloc[-1]
-        price = float(row["Close"])
-        open_ = float(row["Open"])
+        row    = df.iloc[-1]
+        price  = float(row["Close"])
+        rsi    = float(row["rsi"])
+        adx    = float(row["adx"])
+        adx_3d = float(df["adx"].iloc[-4]) if len(df) >= 4 else adx
+        vol_r  = float(row["vol_ratio"])
+        obv_r  = float(row["obv_ratio"])
+        sq     = bool(row["bb_squeeze"])
+        bb_mid = (float(row["bb_upper"]) + float(row["bb_lower"])) / 2
 
-        # Core metrics
-        vol_ratio    = float(row["vol_ratio"])
-        daily_return = (price - open_) / open_      # intraday move
-        atr_now      = float(row["atr"])
-        atr_avg      = float(df["atr"].rolling(20).mean().iloc[-1])
-        atr_expansion = atr_now / atr_avg if atr_avg > 0 else 1.0
-        rsi          = float(row["rsi"])
+        # Hard gates — ALL must pass
+        if not sq:                      return None   # squeeze not active
+        if obv_r  < 1.8:               return None   # not enough accumulation
+        if adx    < 20:                return None   # no trend energy
+        if adx    <= adx_3d:           return None   # ADX not rising
+        if not (32 <= rsi <= 62):      return None   # RSI out of range
+        if price  < bb_mid:            return None   # price below midline (bearish bias)
+        if not (0.8 <= vol_r <= 2.5):  return None   # volume already exploded or too flat
+        if not vix_safe():             return None
+        if not earnings_safe(ticker):  return None
 
-        # Hard gates
-        if vol_ratio    < 2.5:   return None
-        if daily_return < 0.02:  return None   # must be up ≥ 2% today
-        if atr_expansion < 1.4:  return None
-        if not (35 <= rsi <= 80): return None
-        if not vix_safe():        return None
-        if not earnings_safe(ticker): return None
-
-        # Strength rating
-        score = 0
-        reasons = []
-
-        if vol_ratio >= 4.0:
-            score += 3; reasons.append(f"🔥 Volume {vol_ratio:.1f}× average — extreme institutional activity")
-        elif vol_ratio >= 3.0:
-            score += 2; reasons.append(f"📊 Volume {vol_ratio:.1f}× average — strong institutional activity")
-        else:
-            score += 1; reasons.append(f"📊 Volume {vol_ratio:.1f}× average — above-normal activity")
-
-        if daily_return >= 0.05:
-            score += 3; reasons.append(f"🚀 Up {daily_return*100:.1f}% today — explosive move")
-        elif daily_return >= 0.03:
-            score += 2; reasons.append(f"📈 Up {daily_return*100:.1f}% today — strong intraday move")
-        else:
-            score += 1; reasons.append(f"📈 Up {daily_return*100:.1f}% today")
-
-        if atr_expansion >= 2.0:
-            score += 2; reasons.append(f"⚡ ATR {atr_expansion:.1f}× normal — exceptional volatility expansion")
-        else:
-            score += 1; reasons.append(f"⚡ ATR {atr_expansion:.1f}× normal range — volatility expanding")
-
-        # Bonus signals
-        if bool(row.get("breakout", 0)):
-            score += 2; reasons.append("💥 52-week high breakout — new highs on volume")
-        if rsi < 60:
-            score += 1; reasons.append(f"RSI {rsi:.0f} — room to continue higher")
-        if bool(row.get("bb_squeeze", 0)):
-            score += 1; reasons.append("🗜 Breaking out of volatility squeeze")
-
-        # Minimum quality bar
-        if score < 4:
+        cd_key = f"SETUP__{ticker}"
+        if not _mover_cd_ok(cd_key, 48):
             return None
 
-        # ATR-based stop loss
-        sl = round(max(price - 2.0 * atr_now, price * 0.90), 4)
-        sl_pct = round((sl - price) / price * 100, 1)
+        # Score — quantify quality of the setup
+        score  = 0
+        evidence = []
 
-        strength = "EXTREME" if score >= 8 else ("STRONG" if score >= 6 else "MODERATE")
+        # Squeeze depth
+        bb_pct = float(row["bb_width"]) / float(df["bb_width"].rolling(126).quantile(0.20).iloc[-1])
+        if bb_pct < 0.85:
+            score += 3; evidence.append(f"🗜 Very deep squeeze ({bb_pct:.2f}× floor) — spring fully compressed")
+        else:
+            score += 2; evidence.append("🗜 Volatility squeeze active — consolidation tight")
+
+        # Accumulation
+        if obv_r >= 3.0:
+            score += 3; evidence.append(f"📦 Strong accumulation (OBV ratio {obv_r:.1f}) — smart money loading")
+        elif obv_r >= 2.2:
+            score += 2; evidence.append(f"📦 Accumulation signal (OBV ratio {obv_r:.1f}) — volume flowing in quietly")
+        else:
+            score += 1; evidence.append(f"📦 Mild accumulation (OBV ratio {obv_r:.1f})")
+
+        # ADX momentum
+        adx_rise = adx - adx_3d
+        if adx >= 28 and adx_rise > 2:
+            score += 2; evidence.append(f"⚡ ADX {adx:.0f} rising strongly — trend energy accelerating")
+        else:
+            score += 1; evidence.append(f"⚡ ADX {adx:.0f} rising — trend building")
+
+        # RSI position
+        if 42 <= rsi <= 56:
+            score += 1; evidence.append(f"RSI {rsi:.0f} — neutral, perfectly coiled")
+
+        # 52-week breakout proximity
+        high_52w = float(df["Close"].rolling(252).max().iloc[-1])
+        pct_to_high = (high_52w - price) / price
+        if pct_to_high < 0.03:
+            score += 2; evidence.append(f"💥 Within {pct_to_high*100:.1f}% of 52-week high — breakout imminent")
+        elif pct_to_high < 0.06:
+            score += 1; evidence.append(f"Near 52-week high ({pct_to_high*100:.1f}% away)")
+
+        # Minimum quality bar — must score ≥ 7 to fire
+        if score < 7:
+            return None
+
+        # Watch level: BB upper + small buffer
+        watch_level = round(float(row["bb_upper"]) * 1.005, 4)
 
         return {
-            "ticker":        ticker,
-            "price":         price,
-            "daily_return":  daily_return,
-            "vol_ratio":     vol_ratio,
-            "atr_expansion": atr_expansion,
-            "rsi":           rsi,
-            "score":         score,
-            "strength":      strength,
-            "reasons":       reasons,
-            "stop_loss":     sl,
-            "stop_loss_pct": sl_pct,
+            "tier":        "SETUP",
+            "ticker":      ticker,
+            "price":       price,
+            "score":       score,
+            "evidence":    evidence,
+            "watch_level": watch_level,
+            "adx":         adx,
+            "rsi":         rsi,
+            "obv_r":       obv_r,
+            "_cd_key":     cd_key,
         }
-
     except Exception:
         return None
 
 
+# ── Tier 2: LARGE MOVE CONFIRMED ─────────────────────────────────────────────
+
+def _get_intraday_surge(ticker: str) -> tuple[float, float]:
+    """
+    Fetch 5d/1h data. Return (intraday_vol_ratio, intraday_pct_move)
+    for the current hour vs the hourly average.
+    Both are 0.0 on error.
+    """
+    try:
+        df1h = yf.Ticker(ticker).history(period="5d", interval="1h")
+        if len(df1h) < 10:
+            return 0.0, 0.0
+        hourly_avg_vol = float(df1h["Volume"].iloc[:-1].mean())
+        if hourly_avg_vol == 0:
+            return 0.0, 0.0
+        curr_vol  = float(df1h["Volume"].iloc[-1])
+        curr_open = float(df1h["Open"].iloc[-1])
+        curr_close = float(df1h["Close"].iloc[-1])
+        intra_vol_ratio = curr_vol / hourly_avg_vol
+        intra_move      = (curr_close - curr_open) / curr_open if curr_open > 0 else 0.0
+        return intra_vol_ratio, intra_move
+    except Exception:
+        return 0.0, 0.0
+
+
+def _large_move_check(ticker: str, df: "pd.DataFrame") -> dict | None:
+    """
+    Reactive: fires when a large move is definitively underway RIGHT NOW.
+
+    ALL daily gates must pass:
+      1. vol_ratio ≥ 3.5×   — heavy institutional participation (not noise)
+      2. daily_return ≥ 3.5% — a real directional move (not a 2% drift)
+      3. ATR expansion ≥ 1.8× — volatility genuinely expanded (move has energy)
+      4. RSI 38–76           — not overbought, stock not dead
+      5. VIX safe + no earnings
+
+    PLUS intraday confirmation (1 h data):
+      • Current hour vol ≥ 2.5× hourly average  OR  already confirmed by daily vol
+      • Current hour move ≥ 1.0% (still going, not fading)
+
+    Cooldown: 12 h per ticker.
+    """
+    if len(df) < 25:
+        return None
+    try:
+        row      = df.iloc[-1]
+        price    = float(row["Close"])
+        open_    = float(row["Open"])
+        vol_r    = float(row["vol_ratio"])
+        daily_ret = (price - open_) / open_
+        atr_now  = float(row["atr"])
+        atr_avg  = float(df["atr"].rolling(20).mean().iloc[-1])
+        atr_exp  = atr_now / atr_avg if atr_avg > 0 else 1.0
+        rsi      = float(row["rsi"])
+
+        # Hard gates — ALL must pass
+        if vol_r     < 3.5:             return None
+        if daily_ret < 0.035:           return None
+        if atr_exp   < 1.8:             return None
+        if not (38 <= rsi <= 76):       return None
+        if not vix_safe():              return None
+        if not earnings_safe(ticker):   return None
+
+        cd_key = f"ACTIVE__{ticker}"
+        if not _mover_cd_ok(cd_key, 12):
+            return None
+
+        # Intraday confirmation — is the move still happening THIS HOUR?
+        intra_vol_r, intra_move = _get_intraday_surge(ticker)
+        intraday_confirmed = (intra_vol_r >= 2.5 and intra_move >= 0.01)
+
+        # If intraday data shows the move is FADING, don't alert
+        if intra_vol_r > 0 and intra_move < 0:
+            return None   # current hour is red — move may be reversing
+
+        # Score
+        score    = 0
+        evidence = []
+
+        if vol_r >= 6.0:
+            score += 4; evidence.append(f"🔥 Volume {vol_r:.1f}× average — extreme institutional buying")
+        elif vol_r >= 4.5:
+            score += 3; evidence.append(f"🔥 Volume {vol_r:.1f}× average — heavy institutional activity")
+        else:
+            score += 2; evidence.append(f"📊 Volume {vol_r:.1f}× average — strong institutional activity")
+
+        if daily_ret >= 0.07:
+            score += 4; evidence.append(f"🚀 Up {daily_ret*100:.1f}% today — explosive move")
+        elif daily_ret >= 0.05:
+            score += 3; evidence.append(f"🚀 Up {daily_ret*100:.1f}% today — strong directional move")
+        else:
+            score += 2; evidence.append(f"📈 Up {daily_ret*100:.1f}% today — confirmed move")
+
+        if atr_exp >= 2.5:
+            score += 2; evidence.append(f"⚡ ATR {atr_exp:.1f}× normal — exceptional volatility expansion")
+        else:
+            score += 1; evidence.append(f"⚡ ATR {atr_exp:.1f}× normal — volatility expanded")
+
+        if intraday_confirmed:
+            score += 2; evidence.append(f"✅ Intraday confirmed — current hour vol {intra_vol_r:.1f}× avg, still moving {intra_move*100:+.1f}%")
+        elif intra_vol_r > 0:
+            evidence.append(f"  Current hour: vol {intra_vol_r:.1f}× avg, move {intra_move*100:+.1f}%")
+
+        if bool(row.get("breakout", 0)):
+            score += 2; evidence.append("💥 52-week high breakout on volume — new territory")
+        if bool(row.get("bb_squeeze", 0)):
+            score += 1; evidence.append("🗜 Breaking out of volatility squeeze")
+        if rsi < 65:
+            score += 1; evidence.append(f"RSI {rsi:.0f} — not overbought, move has room")
+
+        # Minimum quality bar — must score ≥ 7
+        if score < 7:
+            return None
+
+        atr_raw  = float(df.iloc[-1]["atr"])
+        sl       = round(max(price - 2.0 * atr_raw, price * 0.90), 4)
+        sl_pct   = round((sl - price) / price * 100, 1)
+
+        return {
+            "tier":        "ACTIVE",
+            "ticker":      ticker,
+            "price":       price,
+            "daily_ret":   daily_ret,
+            "vol_r":       vol_r,
+            "atr_exp":     atr_exp,
+            "rsi":         rsi,
+            "score":       score,
+            "evidence":    evidence,
+            "stop_loss":   sl,
+            "sl_pct":      sl_pct,
+            "_cd_key":     cd_key,
+        }
+    except Exception:
+        return None
+
+
+# ── Public entry point ────────────────────────────────────────────────────────
+
+def big_mover_check(ticker: str, df: "pd.DataFrame") -> dict | None:
+    """
+    Run both tiers in priority order. Returns the first result that qualifies,
+    or None if neither fires. ACTIVE takes priority over SETUP.
+    """
+    return _large_move_check(ticker, df) or _breakout_setup_check(ticker, df)
+
+
+# ── Discord alerts ────────────────────────────────────────────────────────────
+
 def send_mover_alert(ticker: str, mover: dict) -> bool:
-    """Send a 🚀 LARGE MOVE Discord alert. Distinct format from standard BUY alerts."""
+    """Dispatch to the correct alert format based on tier."""
     if not DISCORD:
         return False
-    if not _mover_guard_ok(ticker):
-        return False
+    import pytz as _ptz
+    now_str = datetime.now(_ptz.timezone("Australia/Sydney")).strftime("%a %d %b %Y %I:%M %p AEST")
+    divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    import pytz as _pytz_m
-    _aest    = _pytz_m.timezone("Australia/Sydney")
-    now_aest = datetime.now(_aest)
-    now_str  = now_aest.strftime("%a %d %b %Y %I:%M %p AEST")
+    if mover["tier"] == "ACTIVE":
+        lines = [
+            divider,
+            "**TRADEY BOI X  |  🔥 LARGE MOVE CONFIRMED**",
+            divider,
+            f"**{ticker}**  —  ${mover['price']:.3f}",
+            f"Up **{mover['daily_ret']*100:.1f}%** today  |  Volume **{mover['vol_r']:.1f}×** avg  |  ATR **{mover['atr_exp']:.1f}×** normal",
+            "",
+        ]
+        for e in mover["evidence"]:
+            lines.append(f"  • {e}")
+        lines += [
+            "",
+            f"**🛑 Stop-loss:** ${mover['stop_loss']:.3f}  ({mover['sl_pct']:.1f}%)  _exit here if move reverses_",
+            "",
+            "⚡ _A confirmed large move is happening NOW. The move may continue or be near its peak._",
+            "_If not already in: wait for a 1–2% intraday pullback before entering._",
+            "_If already in: trail your stop — do not chase at the high._",
+            divider,
+            f"_{now_str}_",
+        ]
 
-    price    = mover["price"]
-    strength = mover["strength"]
-    divider  = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-    strength_emoji = {"EXTREME": "🔥", "STRONG": "🚀", "MODERATE": "📈"}.get(strength, "📈")
-
-    lines = [
-        divider,
-        f"**TRADEY BOI X  |  {strength_emoji} LARGE MOVE DETECTED**",
-        divider,
-        f"**{ticker}**  —  ${price:.3f}",
-        f"  Up **{mover['daily_return']*100:.1f}%** today  |  Volume **{mover['vol_ratio']:.1f}×** average  |  Strength: **{strength}**",
-        "",
-    ]
-
-    for r in mover["reasons"]:
-        lines.append(f"  • {r}")
-
-    lines += [
-        "",
-        f"**🛑 Stop-loss:** ${mover['stop_loss']:.3f}  ({mover['stop_loss_pct']:.1f}%)  _exit if the move reverses here_",
-        "",
-        "⚠️  _This is a MOMENTUM alert — a large move is happening NOW._",
-        "_It is NOT a confirmed trend signal. The move may already be extended._",
-        "_Best approach: wait for a small pullback / consolidation before entering._",
-        "",
-        divider,
-        f"_{now_str}_",
-    ]
+    else:  # SETUP
+        lines = [
+            divider,
+            "**TRADEY BOI X  |  ⚡ BREAKOUT SETUP FORMING**",
+            divider,
+            f"**{ticker}**  —  ${mover['price']:.3f}",
+            "_Volatility squeeze + accumulation detected — a large move may be 1–3 sessions away._",
+            "",
+        ]
+        for e in mover["evidence"]:
+            lines.append(f"  • {e}")
+        lines += [
+            "",
+            f"**👁 Watch level:** above **${mover['watch_level']:.3f}** on volume — breakout confirmation",
+            "",
+            "⚠️  _This is a SETUP alert — NOT a buy signal._",
+            "_No action needed yet. Watch for a volume surge above the watch level._",
+            "_If the setup resolves downward, ignore it._",
+            divider,
+            f"_{now_str}_",
+        ]
 
     try:
         r = requests.post(DISCORD, json={"content": "\n".join(lines)[:2000]}, timeout=5)
         if r.status_code in (200, 204):
-            _mover_guard_mark(ticker)
+            _mover_cd_mark(mover["_cd_key"])
             return True
         return False
     except Exception:
