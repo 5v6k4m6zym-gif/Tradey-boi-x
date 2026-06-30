@@ -1800,6 +1800,11 @@ def log_signal(ticker: str, price: float, tier: str,
                hold_days: int | None = None):
     """Log a signal. Include stop/target so resolve_outcomes can detect intraday hits."""
     entries = _load_log()
+    today = datetime.now().strftime("%Y-%m-%d")
+    if any(e["ticker"] == ticker and e.get("signal_date") == today
+           and e.get("tier") == tier and e.get("outcome") is None
+           for e in entries):
+        return
     entries.append({
         "ticker":       ticker,
         "tier":         tier,
@@ -2244,6 +2249,7 @@ def _large_move_check(ticker: str, df: "pd.DataFrame", model=None) -> dict | Non
             "atr_exp":     atr_exp,
             "rsi":         rsi,
             "score":       score,
+            "ai_prob":     ai_prob,
             "evidence":    evidence,
             "stop_loss":   sl,
             "sl_pct":      sl_pct,
