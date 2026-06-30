@@ -2119,53 +2119,42 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
             return f"Now until **6:00am AEST**  _(US closes at 6am AEST — act before then)_"
 
     if mover["tier"] == "ACTIVE":
-        price    = mover["price"]
-        rsi      = mover.get("rsi", 55)
-        plan     = _trade_plan(price, atr_raw, atr_pct, hold_days=6, tier="ACTIVE")
-
-        # RSI-based entry price suggestion
-        if rsi < 55:
-            entry_px = f"${price:.3f}  _(move still early — enter at market or any dip)_"
-        elif rsi < 65:
-            entry_px = f"${price*0.99:.3f}–${price*0.985:.3f}  _(wait for 1–1.5% pullback)_"
-        else:
-            entry_px = f"${price*0.98:.3f}  _(RSI elevated — wait for a 2% dip)_"
-
+        price     = mover["price"]
+        rsi       = mover.get("rsi", 55)
+        plan      = _trade_plan(price, atr_raw, atr_pct, hold_days=6, tier="ACTIVE")
         max_entry = round(price * 1.025, 4)
 
-        # Entry date & window
-        if _mkt_open:
-            entry_date = now_aest.strftime("%a %d %b %Y")
-            entry_window = _today_window_str()
+        # RSI-based entry hint (compact)
+        if rsi < 55:
+            entry_hint = f"${price:.2f}  _(enter now or any dip)_"
+        elif rsi < 65:
+            entry_hint = f"${price*0.99:.2f}–${price*0.985:.2f}  _(wait 1–1.5% pullback)_"
         else:
-            entry_date, entry_window = _next_session_str(now_aest)
+            entry_hint = f"${price*0.98:.2f}  _(wait 2% dip — RSI elevated)_"
+
+        if _mkt_open:
+            entry_date   = now_aest.strftime("%a %d %b")
+            entry_window = "10:00–10:30am AEST" if is_asx else "11:30pm–12:00am AEST"
+            timing_line  = f"⚡ **Market OPEN** — {entry_date}  ·  now until {'4pm' if is_asx else '6am'} AEST"
+        else:
+            entry_date, _win = _next_session_str(now_aest)
+            entry_window = "10:00–10:30am AEST" if is_asx else "11:30pm–12:00am AEST"
+            timing_line  = f"📋 **Market closed** — {entry_date}  ·  {entry_window}"
 
         lines = [
             divider,
-            "**TRADEY BOI X  |  🔥 LARGE MOVE CONFIRMED**",
+            f"🔥  **{ticker}**  +{mover['daily_ret']*100:.1f}%  ${price:.2f}"
+            f"  |  Vol {mover['vol_r']:.1f}×  ·  ATR {mover['atr_exp']:.1f}×  ·  RSI {int(rsi)}",
             divider,
-            _entry_banner,
+            timing_line,
             "",
-            f"📌  **{ticker}**  —  ${price:.3f}  (+{mover['daily_ret']*100:.1f}% today)",
-            f"📊  Volume **{mover['vol_r']:.1f}×** average  |  ATR **{mover['atr_exp']:.1f}×** normal",
+            f"🟢 Entry    {entry_hint}",
+            f"⛔ Max      ${max_entry:.2f}  _(don't chase above this)_",
+            f"💰 Target   **${plan['tgt']:.2f}**  +{plan['tgt_pct']*100:.0f}%"
+            f"  ·  🛑 Stop  **${plan['stop']:.2f}**  {plan['sl_pct']:.1f}%"
+            f"  ·  ⚖️ R/R  **{plan['rr']:.1f}:1**",
+            f"🚪 Exit by  **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
             "",
-        ]
-        for e in mover["evidence"]:
-            lines.append(f"  • {e}")
-        lines += [
-            "",
-            "**📅 Trade Plan**",
-            f"📆  Entry date:   **{entry_date}**",
-            f"⏰  Entry window: {entry_window}",
-            f"🟢  Entry price:  {entry_px}",
-            f"⛔  Max entry:   ${max_entry:.3f}  _(do not chase above this)_",
-            f"🚪  Exit by:      **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
-            f"💰  Target:       **${plan['tgt']:.3f}**  (+{plan['tgt_pct']*100:.0f}%)",
-            f"🛑  Stop-loss:    **${plan['stop']:.3f}**  ({plan['sl_pct']:.1f}%)",
-            f"⚖️  Risk/Reward:  **{plan['rr']:.1f}:1**",
-            "",
-            "⚡ _Large move confirmed. Wait for a pullback before entering — do not buy the high._",
-            divider,
             f"_{now_str}_",
         ]
 
@@ -2174,37 +2163,28 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
         plan      = _trade_plan(watch, atr_raw, atr_pct, hold_days=10, tier="SETUP")
         ai_pct    = mover.get("ai_prob", 0) * 100
         max_entry = round(watch * 1.025, 4)
+        rsi       = mover.get("rsi", 50)
+        adx       = mover.get("adx", 0)
+        obv_r     = mover.get("obv_r", 1.0)
 
-        # Entry is conditional — only after breakout confirmation
-        # Earliest possible entry = next session open after watch level is broken
-        brk_date, brk_window = _next_session_str(now_aest)
+        brk_date, _ = _next_session_str(now_aest)
+        entry_window = "10:00–10:30am AEST" if is_asx else "11:30pm–12:00am AEST"
 
         lines = [
             divider,
-            "**TRADEY BOI X  |  ⚡ BREAKOUT SETUP FORMING**",
+            f"⚡  **{ticker}**  ${mover['price']:.2f}"
+            f"  |  Squeeze  ·  OBV {obv_r:.1f}×  ·  ADX {adx:.0f}↑  ·  AI {ai_pct:.0f}%",
             divider,
-            f"📌  **{ticker}**  —  ${mover['price']:.3f}  |  AI confidence: **{ai_pct:.0f}%**",
-            "_Squeeze + accumulation detected — large move likely within 1–3 sessions._",
+            f"👁  Watch  **${watch:.2f}**  →  entry {brk_date}  ·  {entry_window}",
+            f"_Large move expected within 1–3 sessions if watch level breaks with volume_",
             "",
-        ]
-        for e in mover["evidence"]:
-            lines.append(f"  • {e}")
-        lines += [
+            f"🟢 Entry    **${watch:.2f}–${max_entry:.2f}**  _(buy the break, not before)_",
+            f"💰 Target   **${plan['tgt']:.2f}**  +{plan['tgt_pct']*100:.0f}%"
+            f"  ·  🛑 Stop  **${plan['stop']:.2f}**  {plan['sl_pct']:.1f}%"
+            f"  ·  ⚖️ R/R  **{plan['rr']:.1f}:1**",
+            f"🚪 Exit by  **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
             "",
-            "**📅 Trade Plan**  _(conditional — only if breakout confirms)_",
-            f"👁  Watch level:   **${watch:.3f}**  — enter only on a close/break above this with volume",
-            f"📆  Earliest entry: **{brk_date}**  _(if watch level breaks today)_",
-            f"⏰  Entry window:  {brk_window}",
-            f"🟢  Entry price:   **${watch:.3f}–${max_entry:.3f}**  _(buy the break, not before it)_",
-            f"🚪  Exit by:       **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
-            f"💰  Target:        **${plan['tgt']:.3f}**  (+{plan['tgt_pct']*100:.0f}% from breakout level)",
-            f"🛑  Stop-loss:     **${plan['stop']:.3f}**  ({plan['sl_pct']:.1f}%  — if squeeze fails)",
-            f"⚖️  Risk/Reward:   **{plan['rr']:.1f}:1**",
-            "",
-            "⚠️  _No action yet — this is a WATCH alert._",
-            "_Only enter if price breaks the watch level on above-average volume._",
-            "_If it resolves downward, ignore it entirely._",
-            divider,
+            f"⚠️ _WATCH only — enter only if price closes above ${watch:.2f} on volume_",
             f"_{now_str}_",
         ]
 
