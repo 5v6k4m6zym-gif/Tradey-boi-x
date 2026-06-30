@@ -284,20 +284,53 @@ class EnsembleModel:
         return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
 
 
+def _compute_r_multiple(entry: dict) -> float:
+    """
+    Compute the R-multiple for a resolved trade entry.
+
+    R = actual_pct / risk_pct
+    where risk_pct = abs(entry_price − stop_price) / entry_price.
+
+    Fallback: if stop_price is absent or invalid, risk_pct = abs(target_pct)
+    (the target return is used as a 1R proxy).
+
+    Output clamped to [−5.0, +5.0] so a single runaway trade cannot
+    dominate the expectancy calculation.
+    """
+    try:
+        actual   = float(entry.get("actual_pct") or 0.0)
+        entry_px = float(entry.get("entry_price") or 0.0)
+        stop_px  = entry.get("stop_price")
+        if entry_px > 0 and stop_px is not None and float(stop_px) > 0:
+            risk_pct = abs(entry_px - float(stop_px)) / entry_px
+        else:
+            risk_pct = abs(float(entry.get("target_pct") or 0.04))
+        if risk_pct <= 0:
+            risk_pct = 0.04
+        return max(-5.0, min(5.0, actual / risk_pct))
+    except Exception:
+        return 0.0
+
+
 def _apply_feedback_weights(combined: pd.DataFrame, weights: pd.Series) -> tuple["pd.Series", int, int]:
     """
-    Boost / penalize training rows that match resolved past signal outcomes.
-      WIN  (HIT_TARGET or EXPIRED_GAIN)  → row weight ×2.5
-      LOSS (HIT_STOP or EXPIRED_LOSS)    → row weight ×0.5
+    Boost / penalise training rows that match resolved past signal outcomes.
+    Uses R-multiple-scaled multipliers (asymmetric: large losses penalised
+    significantly more than equivalent wins are rewarded).
+
+      Win  (R > 0): multiplier = min(3.0, 1.5 + R × 0.5)
+                    R=+0.5 → ×1.75  |  R=+2.0 → ×2.5  |  R≥+3.0 → ×3.0
+      Loss (R ≤ 0): multiplier = max(0.1, 0.65 − abs(R) × 0.25)
+                    R=−0.5 → ×0.525  |  R=−1.0 → ×0.40  |  R≤−2.2 → ×0.10
+
     Requires ≥10 resolved signals before applying — prevents overfitting to
-    early noisy feedback. Multipliers are intentionally modest to avoid a
-    handful of outcomes dominating a 100k-row training set.
+    early noisy feedback.
     Returns (adjusted_weights, n_wins_applied, n_losses_applied).
     """
     entries = _load_log()
     resolved = [e for e in entries if e.get("outcome") in
                 ("WIN", "LOSS", "HIT_TARGET", "HIT_STOP", "EXPIRED_GAIN", "EXPIRED_LOSS")]
-    if len(resolved) < 10:          # not enough signal history yet — skip
+    if len(resolved) < 10:
         return weights, 0, 0
 
     weights   = weights.copy().astype(float)
@@ -315,11 +348,14 @@ def _apply_feedback_weights(combined: pd.DataFrame, weights: pd.Series) -> tuple
             if not mask.any():
                 continue
             is_win = e["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN")
-            weights[mask] *= (2.5 if is_win else 0.5)
+            r      = _compute_r_multiple(e)
             if is_win:
-                n_win += 1
+                multiplier = min(3.0, 1.5 + r * 0.5)
+                n_win  += 1
             else:
+                multiplier = max(0.1, 0.65 - abs(r) * 0.25)
                 n_loss += 1
+            weights[mask] *= multiplier
         except Exception:
             pass
     return weights, n_win, n_loss
@@ -570,32 +606,43 @@ def performance_adjustments() -> dict[str, int]:
     Uses the most recent 20 resolved signals per ticker (rolling window).
     Needs ≥3 resolved signals before adjusting.
 
-    Win rate  →  adj
-    ≥ 75%     →  +2  (hot streak — lower bar to re-enter)
-    ≥ 60%     →  +1  (proven winner)
-    40–60%    →   0  (neutral — no adjustment)
-    ≤ 40%     →  -1  (underperforming — needs stronger signal)
-    ≤ 25%     →  -2  (consistent loser — penalise heavily)
+    Optimises for EXPECTANCY (profit per trade in R-multiples), not win rate.
+    Losses are penalised 1.3× more than equivalent wins are rewarded (asymmetric).
+
+    weighted_expectancy = avg_win_R × win_rate − avg_loss_R × 1.3 × (1 − win_rate)
+
+    Expectancy  →  adj
+    ≥ +1.0R     →  +2  (strong positive expectancy — lower bar to re-enter)
+    ≥ +0.2R     →  +1  (positive — above breakeven)
+    −0.2..+0.2  →   0  (noise zone — neutral)
+    ≤ −0.2R     →  -1  (slight negative — tighten the bar)
+    ≤ −1.0R     →  -2  (deeply negative — penalise heavily)
     """
     from collections import defaultdict
+    WIN_OUTCOMES = ("WIN", "HIT_TARGET", "EXPIRED_GAIN")
     entries  = _load_log()
     resolved = [e for e in entries if e["outcome"] is not None]
     if not resolved:
         return {}
-    bucket: dict[str, list[bool]] = defaultdict(list)
+    bucket: dict[str, list] = defaultdict(list)
     for e in resolved:
-        bucket[e["ticker"]].append(e["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN"))
+        bucket[e["ticker"]].append(e)
     adj = {}
-    for ticker, results in bucket.items():
-        recent = results[-20:]          # rolling 20-signal window
+    for ticker, trades in bucket.items():
+        recent = trades[-20:]
         if len(recent) < 3:
             continue
-        wr = sum(recent) / len(recent)
-        if   wr >= 0.75: adj[ticker] = +2
-        elif wr >= 0.60: adj[ticker] = +1
-        elif wr <= 0.25: adj[ticker] = -2
-        elif wr <= 0.40: adj[ticker] = -1
-        else:            adj[ticker] =  0
+        wins   = [_compute_r_multiple(e) for e in recent if e["outcome"] in WIN_OUTCOMES]
+        losses = [abs(_compute_r_multiple(e)) for e in recent if e["outcome"] not in WIN_OUTCOMES]
+        win_rate   = len(wins)   / len(recent)
+        avg_win_R  = sum(wins)   / len(wins)   if wins   else 0.0
+        avg_loss_R = sum(losses) / len(losses) if losses else 0.0
+        expectancy = avg_win_R * win_rate - avg_loss_R * 1.3 * (1 - win_rate)
+        if   expectancy >= 1.0:  adj[ticker] = +2
+        elif expectancy >= 0.2:  adj[ticker] = +1
+        elif expectancy <= -1.0: adj[ticker] = -2
+        elif expectancy <= -0.2: adj[ticker] = -1
+        else:                    adj[ticker] =  0
     return adj
 
 
@@ -624,21 +671,31 @@ def update_ticker_performance() -> dict:
     for e in resolved:
         bucket[e["ticker"]].append(e)
 
+    WIN_OUTCOMES = ("WIN", "HIT_TARGET", "EXPIRED_GAIN")
     lines = [
         "**TRADEY BOI X** | 📊 Outcome Update",
-        f"_{new_count} trade(s) resolved — model adjustments updated_",
+        f"_{new_count} trade(s) resolved — expectancy model updated_",
         "",
     ]
     for ticker, trades in sorted(bucket.items()):
-        recent = trades[-20:]
-        wins   = sum(1 for t in recent
-                    if t["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN"))
-        wr     = wins / len(recent) * 100
-        last   = trades[-1]
-        change = f"{last['actual_pct']*100:+.1f}%" if last.get("actual_pct") is not None else "?"
-        a      = adj.get(ticker, 0)
-        adj_str = f"adj {a:+d}" if a != 0 else "adj 0 (neutral)"
-        lines.append(f"**{ticker}** — Win rate {wr:.0f}% ({wins}/{len(recent)}) | Last: {change} | {adj_str}")
+        recent     = trades[-20:]
+        win_Rs     = [_compute_r_multiple(e) for e in recent if e["outcome"] in WIN_OUTCOMES]
+        loss_Rs    = [abs(_compute_r_multiple(e)) for e in recent if e["outcome"] not in WIN_OUTCOMES]
+        win_rate   = len(win_Rs) / len(recent) if recent else 0.0
+        avg_win_R  = sum(win_Rs)  / len(win_Rs)  if win_Rs  else 0.0
+        avg_loss_R = sum(loss_Rs) / len(loss_Rs) if loss_Rs else 0.0
+        expectancy = avg_win_R * win_rate - avg_loss_R * 1.3 * (1 - win_rate)
+        last       = trades[-1]
+        change     = f"{last['actual_pct']*100:+.1f}%" if last.get("actual_pct") is not None else "?"
+        a          = adj.get(ticker, 0)
+        adj_str    = f"adj {a:+d}" if a != 0 else "adj 0 (neutral)"
+        win_str    = f"+{avg_win_R:.2f}R" if win_Rs  else "–"
+        loss_str   = f"-{avg_loss_R:.2f}R" if loss_Rs else "–"
+        lines.append(
+            f"**{ticker}** — Exp: {expectancy:+.2f}R | W avg {win_str} / L avg {loss_str} | Last: {change} | {adj_str}"
+        )
+        if loss_Rs and max(loss_Rs) >= 2.0:
+            lines.append(f"  ⚠ Largest loss this window: -{max(loss_Rs):.1f}R")
 
     if DISCORD:
         try:
@@ -1907,17 +1964,36 @@ def resolve_outcomes() -> list:
     return entries
 
 def accuracy_stats(entries: list) -> dict:
+    WIN_OUTCOMES = ("WIN", "HIT_TARGET", "EXPIRED_GAIN")
     resolved = [e for e in entries if e["outcome"] is not None]
     if not resolved:
-        return {"total": 0, "wins": 0, "losses": 0, "win_rate": None, "avg_return": None}
-    wins = sum(1 for e in resolved
-               if e["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN"))
+        return {
+            "total": 0, "wins": 0, "losses": 0,
+            "win_rate": None, "avg_return": None,
+            "expectancy": None, "avg_win_R": None, "avg_loss_R": None,
+            "largest_win_R": None, "largest_loss_R": None,
+        }
+    wins_list   = [e for e in resolved if e["outcome"] in WIN_OUTCOMES]
+    losses_list = [e for e in resolved if e["outcome"] not in WIN_OUTCOMES]
+    wins        = len(wins_list)
+    losses      = len(losses_list)
+    win_Rs      = [_compute_r_multiple(e) for e in wins_list]
+    loss_Rs     = [abs(_compute_r_multiple(e)) for e in losses_list]
+    win_rate    = wins / len(resolved)
+    avg_win_R   = sum(win_Rs)  / len(win_Rs)  if win_Rs  else 0.0
+    avg_loss_R  = sum(loss_Rs) / len(loss_Rs) if loss_Rs else 0.0
+    expectancy  = avg_win_R * win_rate - avg_loss_R * 1.3 * (1 - win_rate)
     return {
-        "total":      len(resolved),
-        "wins":       wins,
-        "losses":     len(resolved) - wins,
-        "win_rate":   wins / len(resolved),
-        "avg_return": sum(e.get("actual_pct", 0) for e in resolved) / len(resolved),
+        "total":          len(resolved),
+        "wins":           wins,
+        "losses":         losses,
+        "win_rate":       win_rate,
+        "avg_return":     sum(e.get("actual_pct", 0) for e in resolved) / len(resolved),
+        "expectancy":     round(expectancy, 4),
+        "avg_win_R":      round(avg_win_R,  4) if win_Rs  else None,
+        "avg_loss_R":     round(avg_loss_R, 4) if loss_Rs else None,
+        "largest_win_R":  round(max(win_Rs),  4) if win_Rs  else None,
+        "largest_loss_R": round(max(loss_Rs), 4) if loss_Rs else None,
     }
 
 
