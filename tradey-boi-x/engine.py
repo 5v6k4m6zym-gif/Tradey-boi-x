@@ -22,16 +22,32 @@ _vader = SentimentIntensityAnalyzer()
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 WATCHLIST = [
-    # US — tech
-    "AAPL", "MSFT", "NVDA", "AMD", "META", "AMZN",
-    # US — other sectors
-    "TSLA", "XOM", "JPM",
-    # ASX — big miners (iron ore)
-    "BHP.AX", "FMG.AX", "RIO.AX", "S32.AX",
-    # ASX — specialty miners
-    "NST.AX", "CXO.AX", "LTR.AX", "MIN.AX", "PDN.AX",
-    # ASX — other
-    "CBA.AX", "WDS.AX", "CSL.AX",
+    # US — mega-cap tech
+    "AAPL", "MSFT", "NVDA", "AMD", "META", "AMZN", "GOOGL", "NFLX",
+    # US — semiconductors
+    "QCOM", "AVGO", "MU", "TSM", "SMCI", "ARM",
+    # US — software & cloud
+    "CRM", "ORCL", "SHOP", "UBER",
+    # US — EV & energy
+    "TSLA", "XOM", "CVX", "OXY",
+    # US — finance
+    "JPM", "GS", "BAC", "V", "MA",
+    # US — healthcare
+    "LLY", "UNH",
+    # ASX — big 4 banks
+    "CBA.AX", "WBC.AX", "ANZ.AX", "NAB.AX",
+    # ASX — iron ore & diversified miners
+    "BHP.AX", "FMG.AX", "RIO.AX", "S32.AX", "MIN.AX",
+    # ASX — gold miners
+    "NST.AX", "EVN.AX",
+    # ASX — lithium & battery metals
+    "PLS.AX", "LTR.AX", "IGO.AX", "CXO.AX",
+    # ASX — uranium & energy
+    "PDN.AX", "WHC.AX", "WDS.AX", "STO.AX",
+    # ASX — copper
+    "SFR.AX",
+    # ASX — other blue chips
+    "CSL.AX", "WES.AX", "GMG.AX", "RMD.AX", "TLS.AX",
 ]
 FEATURES        = [
     "rsi", "macd_diff", "bb_width", "atr",
