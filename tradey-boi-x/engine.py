@@ -1790,15 +1790,18 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame",
         bb_mid = (float(row["bb_upper"]) + float(row["bb_lower"])) / 2
 
         # Hard gates — ALL must pass
-        if not sq:                      return None   # squeeze not active
-        if obv_r  < 1.8:               return None   # not enough accumulation
-        if adx    < 20:                return None   # no trend energy
-        if adx    <= adx_3d:           return None   # ADX not rising
-        if not (32 <= rsi <= 62):      return None   # RSI out of range
-        if price  < bb_mid:            return None   # price below midline (bearish bias)
-        if not (0.8 <= vol_r <= 2.5):  return None   # volume already exploded or too flat
-        if not vix_safe():             return None
-        if not earnings_safe(ticker):  return None
+        watch_level = float(row["bb_upper"]) * 1.005
+        if not sq:                           return None   # squeeze not active
+        if obv_r  < 1.8:                    return None   # not enough accumulation
+        if adx    < 20:                     return None   # no trend energy
+        if adx    <= adx_3d:                return None   # ADX not rising
+        if not (32 <= rsi <= 62):           return None   # RSI out of range
+        if price  < bb_mid:                 return None   # price below midline (bearish bias)
+        if not (0.8 <= vol_r <= 2.5):       return None   # volume already exploded or too flat
+        if price  >= watch_level:           return None   # breakout already happened — ACTIVE tier handles it
+        if price  < watch_level * 0.92:     return None   # too far below watch level — not imminent
+        if not vix_safe():                  return None
+        if not earnings_safe(ticker):       return None
 
         # AI model gate — hard reject if model actively disagrees
         ai_prob = 0.0
@@ -1870,8 +1873,8 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame",
         if score < 8:
             return None
 
-        # Watch level: BB upper + small buffer
-        watch_level = round(float(row["bb_upper"]) * 1.005, 4)
+        # Watch level: BB upper + small buffer (computed at top for gate checks)
+        watch_level = round(watch_level, 4)
 
         return {
             "tier":        "SETUP",
