@@ -72,5 +72,35 @@
     "outcome": null,
     "exit_price": null,
     "actual_pct": null
+  },
+  {
+    "ticker": "MSFT",
+    "tier": "ACTIVE",
+    "score": 9,
+    "prob": 0.0,
+    "entry_price": 368.57,
+    "stop_price": 341.1036,
+    "target_price": 412.7984,
+    "signal_date": "2026-06-30",
+    "target_pct": 0.03,
+    "pred_days": 6,
+    "outcome": null,
+    "exit_price": null,
+    "actual_pct": null
+  },
+  {
+    "ticker": "AMD",
+    "tier": "SETUP",
+    "score": 9,
+    "prob": 0.41,
+    "entry_price": 569.2429,
+    "stop_price": 501.0292,
+    "target_price": 626.1672,
+    "signal_date": "2026-06-30",
+    "target_pct": 0.03,
+    "pred_days": 10,
+    "outcome": null,
+    "exit_price": null,
+    "actual_pct": null
   }
 ]
