@@ -43,11 +43,11 @@ WATCHLIST = [
     "CBA.AX", "WBC.AX", "ANZ.AX", "NAB.AX", "MQG.AX",
     "SUN.AX", "QBE.AX", "IAG.AX", "BOQ.AX", "BEN.AX",
     # ── ASX — iron ore & diversified miners ──────────────────────────────
-    "BHP.AX", "FMG.AX", "RIO.AX", "S32.AX", "MIN.AX", "AWC.AX",
+    "BHP.AX", "FMG.AX", "RIO.AX", "S32.AX", "MIN.AX",
     # ── ASX — gold miners ────────────────────────────────────────────────
-    "NST.AX", "EVN.AX", "RRL.AX", "GOR.AX", "SLR.AX", "WAF.AX",
+    "NST.AX", "EVN.AX", "RRL.AX", "WAF.AX",
     # ── ASX — lithium & battery metals ───────────────────────────────────
-    "PLS.AX", "LTR.AX", "IGO.AX", "CXO.AX", "GL1.AX", "SYA.AX",
+    "PLS.AX", "LTR.AX", "IGO.AX", "CXO.AX", "GL1.AX",
     # ── ASX — uranium ────────────────────────────────────────────────────
     "PDN.AX", "BOE.AX", "DYL.AX",
     # ── ASX — coal ───────────────────────────────────────────────────────
