@@ -1,0 +1,121 @@
+THIS IS A READ-ONLY SPECIFICATION ONLY.
+
+DO NOT IMPLEMENT.
+DO NOT MODIFY EXISTING SYSTEM.
+DO NOT CHANGE CODE OR LOGIC.
+
+This is for analysis, review, and understanding only.
+
+=========================
+TRADEY BOI X 2.0 CONCEPT (NON-EXECUTABLE)
+=========================
+
+The following describes a proposed enhancement layer that would be added ONLY in a future version.
+
+It must NOT be applied to the current system.
+
+=========================
+CORE ADDITION: EXPECTANCY TRACKING LAYER
+=========================
+
+Track each completed trade with:
+
+- Entry price
+- Exit price
+- Net P/L (after fees)
+- Risk per trade
+- R-multiple (profit/risk)
+- Setup type classification (based on existing filters, not new logic)
+
+Compute:
+- Expectancy per trade (average R over time)
+- Average win size
+- Average loss size
+- Win rate (secondary metric only)
+
+IMPORTANT:
+This is observational only and does NOT influence trading decisions.
+
+=========================
+REGIME PERFORMANCE ANALYSIS (OBSERVATIONAL ONLY)
+=========================
+
+Classify trades into:
+
+- Bull market conditions
+- Bear market conditions
+- Sideways markets
+- High volatility / fear conditions
+- Earnings proximity conditions
+
+Track performance metrics per regime:
+- Expectancy
+- Win rate
+- Drawdown contribution
+
+This is for reporting only.
+
+=========================
+CONFIDENCE CALIBRATION STUDY
+=========================
+
+Compare:
+- Confidence score at time of trade
+vs
+- Actual outcome
+
+Output:
+- Calibration accuracy
+- Overconfidence / underconfidence patterns
+
+DO NOT adjust confidence system.
+
+=========================
+SETUP TYPE ANALYSIS
+=========================
+
+Group trades by setup type:
+- breakout
+- momentum
+- reversal
+- volume expansion
+(ONLY existing categories — no new ones)
+
+Measure:
+- expectancy per setup type
+- consistency over time
+
+Flag weak setups only for reporting.
+
+=========================
+ANTI-OVERFITTING RULE
+=========================
+
+- No immediate reaction to short-term results
+- Requires large sample sizes before conclusions
+- No behavioural changes allowed
+- No parameter tuning
+
+=========================
+CRITICAL SAFETY CONSTRAINT
+=========================
+
+THIS SPEC:
+- DOES NOT CHANGE STRATEGY
+- DOES NOT MODIFY FILTERS
+- DOES NOT ALTER INDICATORS
+- DOES NOT CHANGE AI BEHAVIOUR
+- DOES NOT IMPLEMENT ANYTHING
+
+It is strictly informational.
+
+=========================
+INTENDED PURPOSE
+=========================
+
+This is a conceptual upgrade proposal intended to:
+- measure real trading edge
+- evaluate system performance over time
+- detect which strategies work best
+
+It is NOT active system logic.
