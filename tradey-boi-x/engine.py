@@ -1942,54 +1942,142 @@ def big_mover_check(ticker: str, df: "pd.DataFrame", model=None) -> dict | None:
 
 # ── Discord alerts ────────────────────────────────────────────────────────────
 
-def send_mover_alert(ticker: str, mover: dict) -> bool:
-    """Dispatch to the correct alert format based on tier."""
+def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None) -> bool:
+    """Dispatch to the correct alert format based on tier.
+    Pass df for ATR-based trade parameters (entry, exit, R/R).
+    """
     if not DISCORD:
         return False
+
     import pytz as _ptz
-    now_str = datetime.now(_ptz.timezone("Australia/Sydney")).strftime("%a %d %b %Y %I:%M %p AEST")
-    divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    _aest    = _ptz.timezone("Australia/Sydney")
+    now_aest = datetime.now(_aest)
+    now_str  = now_aest.strftime("%a %d %b %Y %I:%M %p AEST")
+    divider  = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    is_asx   = ticker.endswith(".AX")
+
+    # ── Schedule-aware banner (same logic as original scanner) ────────────────
+    _h, _m, _wd = now_aest.hour, now_aest.minute, now_aest.weekday()
+    _asx_open  = is_asx       and 10 <= _h < 16 and _wd < 5
+    _us_open   = (not is_asx) and (_h >= 23 or _h < 6) and _wd < 5
+    _mkt_open  = _asx_open or _us_open
+    _open_str  = "10:00am AEST tomorrow" if is_asx else "11:30pm AEST tonight"
+
+    if _mkt_open:
+        _entry_banner = "⚡  **Market is OPEN** — entry is live"
+    else:
+        _entry_banner = (f"📋  **Market closed** — set your order before {_open_str}")
+
+    # ── ATR-based trade parameters ────────────────────────────────────────────
+    def _trade_plan(entry_price: float, atr_raw: float, atr_pct: float,
+                    hold_days: int, tier: str) -> dict:
+        if atr_pct >= 3.0:
+            tgt_pct = 0.10
+        elif atr_pct >= 1.5:
+            tgt_pct = 0.07
+        else:
+            tgt_pct = 0.05
+        if tier == "ACTIVE":
+            tgt_pct = min(tgt_pct * 1.20, 0.20)   # wider target — move already started
+
+        sl_mult  = 2.0 if atr_pct >= 3.0 else (1.5 if atr_pct >= 1.5 else 1.2)
+        stop     = round(max(entry_price - sl_mult * atr_raw, entry_price * 0.88), 4)
+        sl_pct   = round((stop - entry_price) / entry_price * 100, 1)
+        tgt      = round(entry_price * (1 + tgt_pct), 4)
+        rr       = round(abs(tgt_pct / sl_pct * 100), 1) if sl_pct != 0 else 0.0
+
+        buy_date  = _next_trading_day(now_aest)
+        exit_date = _add_trading_days(buy_date, hold_days)
+        return {
+            "stop": stop, "sl_pct": sl_pct,
+            "tgt": tgt,   "tgt_pct": tgt_pct,
+            "rr": rr,
+            "buy_date":  buy_date.strftime("%a %d %b %Y"),
+            "exit_date": exit_date.strftime("%a %d %b %Y"),
+            "hold_days": hold_days,
+        }
+
+    # Pull ATR from df if available
+    atr_raw, atr_pct = 0.0, 1.5
+    if df is not None and len(df) > 0:
+        try:
+            price_ref = mover["price"]
+            atr_raw   = float(df.iloc[-1]["atr"])
+            atr_pct   = atr_raw / price_ref * 100
+        except Exception:
+            pass
 
     if mover["tier"] == "ACTIVE":
+        price    = mover["price"]
+        rsi      = mover.get("rsi", 55)
+        plan     = _trade_plan(price, atr_raw, atr_pct, hold_days=6, tier="ACTIVE")
+
+        # RSI-based entry suggestion
+        if rsi < 55:
+            entry_note = f"${price:.3f} — move still early, enter now or on any dip"
+        elif rsi < 65:
+            entry_note = f"${price*0.99:.3f}–${price*0.985:.3f} — wait for a 1–1.5% pullback"
+        else:
+            entry_note = f"${price*0.98:.3f} — RSI elevated, wait for a 2% dip before entering"
+
+        # Max valid entry (don't chase past this)
+        max_entry = round(price * 1.025, 4)
+
         lines = [
             divider,
             "**TRADEY BOI X  |  🔥 LARGE MOVE CONFIRMED**",
             divider,
-            f"**{ticker}**  —  ${mover['price']:.3f}",
-            f"Up **{mover['daily_ret']*100:.1f}%** today  |  Volume **{mover['vol_r']:.1f}×** avg  |  ATR **{mover['atr_exp']:.1f}×** normal",
+            _entry_banner,
+            "",
+            f"📌  **{ticker}**  —  ${price:.3f}  (+{mover['daily_ret']*100:.1f}% today)",
+            f"📊  Volume **{mover['vol_r']:.1f}×** average  |  ATR **{mover['atr_exp']:.1f}×** normal",
             "",
         ]
         for e in mover["evidence"]:
             lines.append(f"  • {e}")
         lines += [
             "",
-            f"**🛑 Stop-loss:** ${mover['stop_loss']:.3f}  ({mover['sl_pct']:.1f}%)  _exit here if move reverses_",
+            "**📅 Trade Plan**",
+            f"🟢  Entry:     {entry_note}",
+            f"⛔  Max entry: ${max_entry:.3f}  _(do not chase above this)_",
+            f"🚪  Exit by:   **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
+            f"💰  Target:    **${plan['tgt']:.3f}**  (+{plan['tgt_pct']*100:.0f}%)",
+            f"🛑  Stop-loss: **${plan['stop']:.3f}**  ({plan['sl_pct']:.1f}%)",
+            f"⚖️  Risk/Reward: **{plan['rr']:.1f}:1**",
             "",
-            "⚡ _A confirmed large move is happening NOW. The move may continue or be near its peak._",
-            "_If not already in: wait for a 1–2% intraday pullback before entering._",
-            "_If already in: trail your stop — do not chase at the high._",
+            "⚡ _Large move confirmed. Wait for a small pullback before entering — do not buy the high._",
             divider,
             f"_{now_str}_",
         ]
 
     else:  # SETUP
+        watch    = mover["watch_level"]
+        plan     = _trade_plan(watch, atr_raw, atr_pct, hold_days=10, tier="SETUP")
+        ai_pct   = mover.get("ai_prob", 0) * 100
+        max_entry = round(watch * 1.025, 4)
+
         lines = [
             divider,
             "**TRADEY BOI X  |  ⚡ BREAKOUT SETUP FORMING**",
             divider,
-            f"**{ticker}**  —  ${mover['price']:.3f}",
-            "_Volatility squeeze + accumulation detected — a large move may be 1–3 sessions away._",
+            f"📌  **{ticker}**  —  ${mover['price']:.3f}  |  AI confidence: **{ai_pct:.0f}%**",
+            "_Squeeze + accumulation detected — large move likely within 1–3 sessions._",
             "",
         ]
         for e in mover["evidence"]:
             lines.append(f"  • {e}")
         lines += [
             "",
-            f"**👁 Watch level:** above **${mover['watch_level']:.3f}** on volume — breakout confirmation",
+            "**📅 Trade Plan**  _(activates only if breakout confirms)_",
+            f"👁  Watch level:  **${watch:.3f}**  — breakout confirmed on a close above this with volume",
+            f"🟢  Entry:        **${watch:.3f}–${max_entry:.3f}**  _(buy the break, not before)_",
+            f"🚪  Exit by:      **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
+            f"💰  Target:       **${plan['tgt']:.3f}**  (+{plan['tgt_pct']*100:.0f}% from breakout level)",
+            f"🛑  Stop-loss:    **${plan['stop']:.3f}**  ({plan['sl_pct']:.1f}%  — squeeze failed)",
+            f"⚖️  Risk/Reward:  **{plan['rr']:.1f}:1**",
             "",
-            "⚠️  _This is a SETUP alert — NOT a buy signal._",
-            "_No action needed yet. Watch for a volume surge above the watch level._",
-            "_If the setup resolves downward, ignore it._",
+            "⚠️  _SETUP alert — no action yet. Only enter if price breaks the watch level on volume._",
+            "_If the setup resolves downward, ignore it entirely._",
             divider,
             f"_{now_str}_",
         ]
