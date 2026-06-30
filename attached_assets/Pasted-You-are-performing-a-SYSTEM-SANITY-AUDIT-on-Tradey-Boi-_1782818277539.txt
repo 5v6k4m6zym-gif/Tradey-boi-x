@@ -1,0 +1,121 @@
+You are performing a SYSTEM SANITY AUDIT on Tradey Boi X.
+
+Your role is NOT to improve, optimise, or modify the system.
+
+Your only role is to verify that the system is behaving consistently, logically, and in alignment with its original design.
+
+DO NOT change code.
+DO NOT add features.
+DO NOT redesign logic.
+Only detect drift, inconsistencies, or unintended behavioural changes.
+
+=========================
+CORE OBJECTIVE
+=========================
+
+Ensure Tradey Boi X remains:
+• Behaviourally consistent with its last stable version
+• Logically coherent across all modules
+• Stable across market conditions
+• Free from unintended changes introduced by bug fixes or updates
+
+=========================
+1. OUTPUT CONSISTENCY CHECK
+=========================
+
+Compare current behaviour to expected stable behaviour.
+
+Check:
+• Similar market conditions produce similar trade signals
+• Indicator interpretation (RSI, EMA, ADX, OBV, ATR, volume) is consistent
+• Breakout detection behaves the same as before recent changes
+• Confidence scores remain within historical normal ranges
+• Risk/reward calculations remain stable
+• Entry and exit logic has not shifted unintentionally
+
+Flag any behavioural drift, even if the system is still functioning correctly.
+
+=========================
+2. CONFIDENCE CALIBRATION CHECK
+=========================
+
+Verify confidence scoring integrity:
+
+• High confidence aligns with historically successful setups
+• Low confidence is not overly restrictive or too lenient
+• No inflation of confidence after winning streaks
+• No deflation after losing streaks
+• Confidence remains stable across similar trade setups
+
+Report any calibration bias or drift.
+
+=========================
+3. MARKET REGIME ALIGNMENT CHECK
+=========================
+
+Ensure system behaviour matches market conditions:
+
+• Signal frequency decreases in weak or uncertain markets
+• Signal quality increases in strong markets
+• Correct identification of bull, bear, and sideways regimes
+• No forced trading during poor conditions
+• Risk thresholds adjust appropriately with volatility
+
+Flag any mismatch between regime and behaviour.
+
+=========================
+4. REGRESSION CONSISTENCY CHECK
+=========================
+
+Check whether recent updates or bug fixes altered system behaviour unintentionally:
+
+• Trade selection remains consistent
+• Filter outputs remain stable
+• Historical backtest behaviour remains similar
+• Confidence and risk calculations unchanged unless a bug was explicitly fixed
+• No unintended side effects introduced by previous changes
+
+If differences exist, classify them as:
+- Intended fix
+- Unintended behaviour change
+- Unknown drift
+
+=========================
+5. SYSTEM IDENTITY CHECK
+=========================
+
+Determine whether Tradey Boi X is still fundamentally the same system.
+
+Check for:
+• Trading style drift
+• Overcomplication of decision logic
+• Conflicting modules producing inconsistent outputs
+• Emergence of unintended behaviours
+• Loss of original filtering philosophy
+
+Answer clearly:
+
+- "System is consistent with original design"
+OR
+- "System has drifted" (explain why)
+
+=========================
+FINAL OUTPUT FORMAT
+=========================
+
+Provide:
+
+1. System stability status (Stable / Minor Drift / Major Drift)
+2. Output consistency issues (if any)
+3. Confidence calibration status
+4. Market regime alignment status
+5. Regression differences detected (if any)
+6. Identity check result
+7. Overall risk of behavioural drift (Low / Medium / High)
+
+=========================
+CRITICAL RULE
+
+You are NOT improving the system.
+
+You are ONLY verifying whether it is still behaving as intended and whether any unintended changes have occurred.

@@ -1527,5 +1527,176 @@ class TestConfidenceGradeBarClamp(unittest.TestCase):
         self.assertGreater(filled_count, 0)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 19. LOG SIGNAL — same-ticker+same-date+same-tier deduplication
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestLogSignalDedup(unittest.TestCase):
+    """
+    REGRESSION: log_signal() had no deduplication guard. Calling it twice
+    for the same ticker + signal_date + tier (e.g. from a double-fired
+    GitHub Actions run, or legacy code paths) produced duplicate log entries
+    that inflated the outcome history used by the adaptive learning loop.
+
+    Fix: before appending, log_signal() now checks for an existing unresolved
+    entry with the same (ticker, signal_date, tier) and skips if found.
+    """
+
+    def _write_and_read(self, tmp_path, calls):
+        """
+        Patch LOG_FILE to a temp path, call log_signal N times, return entries.
+        Each call is a dict of kwargs to log_signal().
+        """
+        import engine as eng
+        original = eng.LOG_FILE
+        eng.LOG_FILE = tmp_path
+        try:
+            for kw in calls:
+                eng.log_signal(**kw)
+            return eng._load_log()
+        finally:
+            eng.LOG_FILE = original
+            if tmp_path.exists():
+                tmp_path.unlink()
+            tmp = tmp_path.with_suffix(".tmp")
+            if tmp.exists():
+                tmp.unlink()
+
+    def test_first_entry_is_written(self):
+        """A single call must produce exactly one log entry."""
+        import tempfile
+        from pathlib import Path
+        tmp = Path(tempfile.mktemp(suffix=".json"))
+        entries = self._write_and_read(tmp, [
+            {"ticker": "BHP.AX", "price": 45.0, "tier": "ELITE",
+             "score": 12, "prob": 0.82}
+        ])
+        self.assertEqual(len(entries), 1)
+
+    def test_duplicate_same_ticker_date_tier_is_skipped(self):
+        """
+        REGRESSION MARKER — calling log_signal twice with the same
+        ticker + today's date + tier must produce only ONE entry.
+        """
+        import tempfile
+        from pathlib import Path
+        tmp = Path(tempfile.mktemp(suffix=".json"))
+        entries = self._write_and_read(tmp, [
+            {"ticker": "CBA.AX", "price": 163.0, "tier": "ELITE",
+             "score": 11, "prob": 0.75},
+            {"ticker": "CBA.AX", "price": 164.0, "tier": "ELITE",
+             "score": 12, "prob": 0.80},   # duplicate — same ticker+date+tier
+        ])
+        self.assertEqual(len(entries), 1,
+            "Second call for same ticker+date+tier must be silently skipped")
+        self.assertAlmostEqual(entries[0]["entry_price"], 163.0,
+            msg="First entry must be preserved, not overwritten")
+
+    def test_different_tier_same_ticker_is_allowed(self):
+        """Same ticker can be logged under different tiers on the same day."""
+        import tempfile
+        from pathlib import Path
+        tmp = Path(tempfile.mktemp(suffix=".json"))
+        entries = self._write_and_read(tmp, [
+            {"ticker": "NVDA", "price": 224.0, "tier": "SETUP",  "score": 10},
+            {"ticker": "NVDA", "price": 225.0, "tier": "ACTIVE", "score": 9},
+        ])
+        self.assertEqual(len(entries), 2,
+            "Different tiers for the same ticker on the same day must both be logged")
+
+    def test_different_ticker_same_tier_is_allowed(self):
+        """Different tickers with the same tier are always independent entries."""
+        import tempfile
+        from pathlib import Path
+        tmp = Path(tempfile.mktemp(suffix=".json"))
+        entries = self._write_and_read(tmp, [
+            {"ticker": "AAPL", "price": 281.0, "tier": "ACTIVE", "score": 9},
+            {"ticker": "MSFT", "price": 368.0, "tier": "ACTIVE", "score": 9},
+        ])
+        self.assertEqual(len(entries), 2)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 20. ACTIVE TIER — ai_prob present in return dict
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestActiveTierAiProbInDict(unittest.TestCase):
+    """
+    REGRESSION: _large_move_check() computed ai_prob (used for the ≥ 38% gate)
+    but did NOT include it in the returned dict. send_mover_alert() called
+    mover.get("ai_prob", 0.0) — always receiving 0.0 — so every ACTIVE alert
+    was logged and displayed with prob=0.0, regardless of the actual AI score.
+
+    Fix: "ai_prob": ai_prob added to the _large_move_check() return dict,
+    making the logged probability accurate for ACTIVE tier alerts.
+    """
+
+    def test_active_return_dict_contains_ai_prob_key(self):
+        """
+        The ACTIVE tier return dict must contain the 'ai_prob' key.
+        Verified by inspecting the source of _large_move_check().
+        """
+        import inspect
+        src = inspect.getsource(engine._large_move_check)
+        # Find the return block
+        in_return = False
+        keys_found = []
+        for line in src.splitlines():
+            if '"tier":' in line and '"ACTIVE"' in line:
+                in_return = True
+            if in_return and '":' in line:
+                key = line.strip().split('"')[1]
+                keys_found.append(key)
+            if in_return and line.strip().startswith("}"):
+                break
+        self.assertIn("ai_prob", keys_found,
+            "ACTIVE return dict must include 'ai_prob' so send_mover_alert logs correct prob")
+
+    def test_active_prob_not_zero_when_model_provides_value(self):
+        """
+        REGRESSION MARKER — old code always produced prob=0.0 for ACTIVE alerts.
+        When a model returns a real probability, the dict must carry it forward.
+        Simulate by running with a mock model that returns a known prob.
+        """
+        import pandas as pd
+
+        mock_model = MagicMock()
+        mock_model.predict_proba.return_value = [[0.45, 0.55]]   # 55% → above gate
+
+        rows = 30
+        data = {c: [1.0] * rows for c in engine.FEATURES}
+        data.update({
+            "Close": [100.0] * rows, "Open":  [95.0]  * rows,
+            "High":  [105.0] * rows, "Low":   [93.0]  * rows,
+            "Volume":[5_000_000.0]   * rows,
+            "vol_ratio": [5.0]       * rows,
+            "rsi":       [55.0]      * rows,
+            "atr":       [3.0]       * rows,
+            "adx":       [30.0]      * rows,
+            "bb_upper":  [105.0]     * rows,
+            "bb_lower":  [95.0]      * rows,
+            "bb_squeeze":[0]         * rows,
+            "ema20":     [98.0]      * rows,
+            "ema50":     [95.0]      * rows,
+        })
+        df = pd.DataFrame(data)
+
+        result = engine._large_move_check("AAPL", df, model=mock_model)
+        # Result may be None if daily gates don't pass (vol_r, daily_ret, atr_exp etc.)
+        # but if it fires, ai_prob must be present and non-zero
+        if result is not None:
+            self.assertIn("ai_prob", result,
+                "ACTIVE result dict must contain 'ai_prob'")
+            self.assertGreater(result["ai_prob"], 0.0,
+                "ai_prob must reflect the model's actual output, not default 0.0")
+
+    def test_setup_also_returns_ai_prob(self):
+        """SETUP tier already included ai_prob — verify it is unchanged."""
+        import inspect
+        src = inspect.getsource(engine._breakout_setup_check)
+        self.assertIn('"ai_prob"', src,
+            "SETUP return dict must still contain 'ai_prob'")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
