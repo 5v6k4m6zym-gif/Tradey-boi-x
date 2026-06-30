@@ -1896,8 +1896,8 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame",
         # Hard gates — ALL must pass
         watch_level = float(row["bb_upper"]) * 1.005
         if not sq:                           return None   # squeeze not active
-        if obv_r  < 1.8:                    return None   # not enough accumulation
-        if adx    < 20:                     return None   # no trend energy
+        if obv_r  < 2.0:                    return None   # not enough accumulation
+        if adx    < 23:                     return None   # no trend energy
         if adx    <= adx_3d:                return None   # ADX not rising
         if not (32 <= rsi <= 62):           return None   # RSI out of range
         if price  < bb_mid:                 return None   # price below midline (bearish bias)
@@ -1907,14 +1907,14 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame",
         if not vix_safe():                  return None
         if not earnings_safe(ticker):       return None
 
-        # AI model gate — top-tier signals only (≥ 35% puts a ticker well above the
-        # daily baseline of 17–31%; genuine setups historically reach 38–41%)
+        # AI model gate — top-tier signals only (≥ 38% is where genuine setups
+        # historically begin; daily baseline is 17–31%, so this cuts the borderline zone)
         ai_prob = 0.0
         if model is not None:
             try:
                 ai_prob = float(model.predict_proba(
                     pd.DataFrame([row[FEATURES]]))[0][1])
-                if ai_prob < 0.35:
+                if ai_prob < 0.38:
                     return None   # below top-tier threshold
             except Exception:
                 pass
@@ -1974,8 +1974,8 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame",
             score += 1
             evidence.append(f"🤖 AI model {ai_prob*100:.0f}% — above baseline")
 
-        # Minimum quality bar — must score ≥ 8 to fire (raised from 7 now AI adds up to 3 pts)
-        if score < 8:
+        # Minimum quality bar — must score ≥ 9 to fire (tightened alongside expanded watchlist)
+        if score < 9:
             return None
 
         # Watch level: BB upper + small buffer (computed at top for gate checks)
@@ -2054,8 +2054,8 @@ def _large_move_check(ticker: str, df: "pd.DataFrame") -> dict | None:
         rsi      = float(row["rsi"])
 
         # Hard gates — ALL must pass
-        if vol_r     < 3.5:             return None
-        if daily_ret < 0.035:           return None
+        if vol_r     < 4.0:             return None
+        if daily_ret < 0.040:           return None
         if atr_exp   < 1.8:             return None
         if not (38 <= rsi <= 76):       return None
         if not vix_safe():              return None
@@ -2114,15 +2114,15 @@ def _large_move_check(ticker: str, df: "pd.DataFrame") -> dict | None:
             try:
                 ai_prob = float(model.predict_proba(
                     pd.DataFrame([row[FEATURES]]))[0][1])
-                if ai_prob < 0.35:
+                if ai_prob < 0.38:
                     return None   # below top-tier threshold
             except Exception:
                 pass
         else:
             return None   # no model — don't alert without AI confirmation
 
-        # Minimum quality bar — must score ≥ 7
-        if score < 7:
+        # Minimum quality bar — must score ≥ 8 (tightened alongside expanded watchlist)
+        if score < 8:
             return None
 
         atr_raw  = float(df.iloc[-1]["atr"])
