@@ -14,20 +14,33 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('tradey-boi-x/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install dependencies
         run: pip install yfinance ta scikit-learn pandas requests pytz vaderSentiment xgboost
+
       - name: Run scanner
         env:
           Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
-        run: python scanner.py --once
+        run: cd tradey-boi-x && python scanner.py --once
+
       - name: Save signal log
         run: |
           git config user.email "actions@github.com"
           git config user.name "Tradey Boi X"
-          git add signal_log.json cooldowns.json 2>/dev/null || true
+          git add tradey-boi-x/signal_log.json tradey-boi-x/cooldowns.json 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: update signal log [skip ci]"
+          git pull --rebase origin main
           git push
