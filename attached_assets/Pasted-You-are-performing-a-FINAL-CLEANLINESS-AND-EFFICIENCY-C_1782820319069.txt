@@ -1,0 +1,77 @@
+You are performing a FINAL CLEANLINESS AND EFFICIENCY CHECK on Tradey Boi X.
+
+IMPORTANT RULES:
+- Do NOT change code
+- Do NOT add features
+- Do NOT redesign logic
+- Only inspect, validate, and report
+
+=========================
+OBJECTIVE
+=========================
+
+Verify that the system is:
+• Clean (no unnecessary or duplicate logic)
+• Efficient (no wasted computation or redundant processing)
+• Stable (no conflicts between modules)
+• Maintainable (clear and logical structure)
+• Lightweight (no unnecessary overhead)
+
+=========================
+CLEANLINESS CHECK
+=========================
+
+Identify:
+• Duplicate logic across modules
+• Redundant calculations or repeated indicators
+• Unused variables, functions, or imports
+• Overlapping filter rules doing the same job
+• Conflicting logic paths producing similar outputs
+
+Report any unnecessary complexity.
+
+=========================
+EFFICIENCY CHECK
+=========================
+
+Assess:
+• Expensive operations that could be simplified
+• Redundant recalculation of indicators (RSI, EMA, ADX, ATR, OBV, volume)
+• Unnecessary reprocessing of market data
+• Duplicate scanning of the same dataset
+• Slow or inefficient loops or API calls
+
+Flag anything that reduces performance without improving accuracy.
+
+=========================
+LOGICAL STRUCTURE CHECK
+=========================
+
+Ensure:
+• Filters are not contradicting each other
+• Confidence scoring is not duplicated across modules
+• Risk/reward is calculated once and used consistently
+• AI learning does not reprocess the same data multiple times
+• No circular logic between modules
+
+=========================
+FINAL OUTPUT
+=========================
+
+Provide:
+
+1. Cleanliness status (Clean / Minor Issues / Unclean)
+2. Efficiency status (Efficient / Moderate / Inefficient)
+3. List of redundant or unnecessary components
+4. List of performance bottlenecks (if any)
+5. List of logical conflicts (if any)
+6. Overall system health score (/100)
+
+=========================
+CRITICAL RULE
+=========================
+
+You are ONLY auditing.
+
+Do NOT modify, rewrite, or optimise anything.
+Just identify issues clearly and simply.
