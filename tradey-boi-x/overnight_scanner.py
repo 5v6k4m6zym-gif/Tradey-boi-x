@@ -40,7 +40,7 @@ OVERNIGHT_UNIVERSE = [
     "PRU", "MET", "AFL", "PGR", "COF", "SCHW", "USB", "TFC", "PNC",
     # ── US — more consumer ───────────────────────────────────────────────
     "PG", "KO", "PEP", "PM", "MO", "SBUX", "TGT", "LOW",
-    "ULTA", "RH", "NKE", "F", "GM", "FORD",
+    "ULTA", "RH", "NKE", "F", "GM",
     # ── US — more industrials & transport ────────────────────────────────
     "UNP", "CSX", "NSC", "UPS", "FDX", "WM", "RSG",
     "EMR", "ETN", "PH", "AME", "ROK", "VRSK",
@@ -59,11 +59,11 @@ OVERNIGHT_UNIVERSE = [
     "RMS.AX", "SBM.AX", "TIE.AX", "OGC.AX", "BGL.AX", "MML.AX",
     # ── ASX — more lithium & battery metals ──────────────────────────────
     "EUR.AX", "LKE.AX", "INR.AX", "AGY.AX", "ADD.AX",
-    "FFX.AX", "CPM.AX", "SLB.AX", "LPI.AX",
+    "CPM.AX",
     # ── ASX — more uranium ────────────────────────────────────────────────
     "AGE.AX", "CAM.AX", "LOT.AX", "ERA.AX", "MEY.AX", "TOE.AX",
     # ── ASX — more copper & nickel ───────────────────────────────────────
-    "CTM.AX", "AIS.AX", "NIC.AX", "WSA.AX", "MCR.AX",
+    "CTM.AX", "AIS.AX", "NIC.AX", "MCR.AX",
     # ── ASX — more oil & gas ─────────────────────────────────────────────
     "CVN.AX", "HZN.AX", "VEA.AX", "ALD.AX",
     # ── ASX — more tech & software ───────────────────────────────────────
@@ -85,7 +85,7 @@ OVERNIGHT_UNIVERSE = [
     "NWH.AX", "GNG.AX", "MLD.AX", "MAH.AX", "SRG.AX",
     "CIM.AX", "SVW.AX", "DOW.AX", "AZJ.AX", "WOR.AX",
     # ── ASX — more diversified & small-cap resources ─────────────────────
-    "MLX.AX", "PAN.AX", "IVZ.AX", "AKE.AX", "CHN.AX",
+    "MLX.AX", "PAN.AX", "IVZ.AX", "CHN.AX",
     "LRS.AX", "WRM.AX", "PGM.AX", "GRR.AX", "CIA.AX",
     # ── ASX — more diversified ───────────────────────────────────────────
     "WEB.AX", "ARX.AX", "NWL.AX", "HLS.AX", "DHG.AX",
