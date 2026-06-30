@@ -1,0 +1,218 @@
+You are now acting as a senior quantitative software engineer, AI engineer, financial systems architect, cybersecurity engineer, DevOps engineer, and QA tester.
+
+Your objective is to perform a COMPLETE end-to-end audit of Tradey Boi X.
+
+DO NOT simply review the code.
+You must actively attempt to break, improve, optimise and validate every component.
+
+=========================
+PHASE 1 - CODE QUALITY
+=========================
+
+• Review every file.
+• Remove duplicate or unnecessary code.
+• Refactor inefficient logic.
+• Improve runtime performance.
+• Reduce memory usage.
+• Eliminate dead code.
+• Verify all imports.
+• Ensure modular architecture.
+• Ensure proper separation of concerns.
+• Ensure all functions have proper error handling.
+• Check for race conditions.
+• Check for async issues.
+• Check for memory leaks.
+• Check for API bottlenecks.
+• Verify thread safety where applicable.
+
+=========================
+PHASE 2 - BUG HUNT
+=========================
+
+Attempt to deliberately break the system.
+
+Test:
+
+• Missing data
+• Empty API responses
+• Corrupt market data
+• Delayed API responses
+• Invalid JSON
+• Network outages
+• Discord outages
+• Timezone issues
+• Market holidays
+• Delisted stocks
+• Trading halts
+• Suspended securities
+• Low liquidity stocks
+• Incorrect ticker mappings
+• Duplicate alerts
+• Infinite loops
+• Incorrect confidence calculations
+• Incorrect risk calculations
+• Failed news parsing
+• Insider data failures
+• EMA failures
+• RSI failures
+• ATR failures
+• OBV failures
+• ADX failures
+• Volume calculation errors
+
+Automatically fix every issue discovered.
+
+=========================
+PHASE 3 - TRADING LOGIC VALIDATION
+=========================
+
+Verify every trading rule.
+
+Ensure:
+
+• No look-ahead bias.
+• No survivorship bias.
+• No data leakage.
+• No future information is used.
+• Correct historical candle usage.
+• Indicators calculated correctly.
+• Confidence scoring behaves consistently.
+• Risk/reward calculations are accurate.
+• Entry logic matches exit logic.
+• Weekly learning does not overfit recent trades.
+• Learning weights remain stable.
+• Breakout detection is mathematically correct.
+• Market regime detection is validated.
+
+=========================
+PHASE 4 - AI VALIDATION
+=========================
+
+Audit the AI learning engine.
+
+Determine whether:
+
+• Learning genuinely improves predictions.
+• Model drifts over time.
+• Recent trades are overweighted.
+• Confidence scores are calibrated.
+• Feature importance makes sense.
+• Weak features should be removed.
+• Strong features should receive higher weighting.
+
+Recommend improvements.
+
+=========================
+PHASE 5 - PERFORMANCE TESTING
+=========================
+
+Stress test the entire application.
+
+Simulate:
+
+• 10,000 stocks.
+• Massive news spikes.
+• Thousands of API requests.
+• Simultaneous Discord alerts.
+• High CPU load.
+• Low memory.
+• Slow internet.
+• Temporary API failures.
+• Exchange outages.
+• Unexpected process restarts.
+
+Automatically optimise bottlenecks.
+
+=========================
+PHASE 6 - SECURITY
+=========================
+
+Audit the project for:
+
+• API key exposure.
+• Secret leaks.
+• Environment variable misuse.
+• Injection vulnerabilities.
+• Unsafe dependencies.
+• Dependency vulnerabilities.
+• Excessive permissions.
+• Logging of sensitive data.
+• Rate limit abuse.
+
+Automatically harden the project.
+
+=========================
+PHASE 7 - DATA QUALITY
+=========================
+
+Validate all market data.
+
+Check:
+
+• Missing candles
+• Incorrect splits
+• Dividend adjustments
+• Timestamp alignment
+• Duplicate candles
+• Outlier prices
+• Incorrect volume
+• Timezone consistency
+
+=========================
+PHASE 8 - BACKTEST VALIDATION
+=========================
+
+Audit every historical test.
+
+Ensure:
+
+• No future data contamination.
+• Correct transaction costs.
+• Slippage simulation.
+• Realistic fills.
+• Market open/close handling.
+• Delisted stocks included where appropriate.
+• Walk-forward validation.
+• Out-of-sample testing.
+
+=========================
+PHASE 9 - LIVE SYSTEM RELIABILITY
+=========================
+
+Ensure the live system can recover from:
+
+• Internet loss.
+• Reboot.
+• API downtime.
+• Discord downtime.
+• Partial failures.
+• Corrupted cache.
+• Database corruption.
+• Unexpected exceptions.
+
+Implement automatic recovery wherever possible.
+
+=========================
+PHASE 10 - REPORT
+=========================
+
+Produce a detailed engineering report including:
+
+1. Bugs found
+2. Bugs fixed
+3. Performance improvements
+4. Security improvements
+5. AI improvements
+6. Trading logic improvements
+7. Reliability improvements
+8. Remaining weaknesses
+9. Recommended future upgrades
+10. Overall system health score (/100)
+
+Do not stop after finding issues.
+
+Continue auditing until no further meaningful improvements can be made.
+
+Prioritise correctness, robustness, maintainability, reliability and realistic trading performance over adding complexity.
+
+Do not invent features or change the core trading philosophy without explaining why. Every optimisation must include a rationale and, where possible, evidence that it improves robustness rather than merely fitting historical data.

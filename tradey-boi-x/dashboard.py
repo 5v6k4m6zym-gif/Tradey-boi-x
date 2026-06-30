@@ -155,7 +155,7 @@ if all_signals:
             "Entry $": e["entry_price"],
             "Exit $":  e["exit_price"] if e["exit_price"] else "pending",
             "Return":  f"{e['actual_pct']*100:+.1f}%" if e["actual_pct"] is not None else "pending",
-            "Outcome": ("✅ WIN" if e["outcome"] == "WIN" else "❌ LOSS")
+            "Outcome": ("✅ WIN" if e["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN") else "❌ LOSS")
                        if e["outcome"] else f"⏳ ~{e['pred_days']}d window",
         } for e in reversed(all_signals)]
         st.dataframe(pd.DataFrame(rows_h), use_container_width=True)

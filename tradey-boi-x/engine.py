@@ -248,7 +248,8 @@ def get_data(ticker: str, period: str) -> pd.DataFrame:
     df["atr"]         = ta.volatility.AverageTrueRange(high, low, close).average_true_range()
     df["ema20"]       = ta.trend.EMAIndicator(close, window=20).ema_indicator()
     df["ema50"]       = ta.trend.EMAIndicator(close, window=50).ema_indicator()
-    df["vol_ratio"]   = vol / vol.rolling(20).mean()
+    vol_mean = vol.rolling(20).mean().replace(0, float("nan"))
+    df["vol_ratio"]   = vol / vol_mean
     df["ret_5"]       = close.pct_change(5)
     df["ret_10"]      = close.pct_change(10)
     df["ret_20"]      = close.pct_change(20)
@@ -1141,7 +1142,7 @@ def insider_signal(ticker: str) -> tuple:
         # Date filter — last 90 days
         date_col = next((c for c in df.columns if "date" in c), None)
         if date_col:
-            df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+            df[date_col] = pd.to_datetime(df[date_col], errors="coerce", utc=True)
             cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=90)
             df = df[df[date_col] >= cutoff]
         if df.empty:
@@ -1230,28 +1231,20 @@ def options_flow_signal(ticker: str) -> tuple:
                 if atm_co > 0 and atm_cv / atm_co > 1.5:
                     unusual_count += 1
 
-            # ── 4: Max pain — price where total option holder value is minimised
-            # Options writers (often market makers) benefit from pinning here
+            # ── 4: Max pain — vectorised (O(N) not O(N²) per strike)
             try:
-                strikes = sorted(set(
-                    calls["strike"].dropna().tolist() +
-                    puts["strike"].dropna().tolist()
-                ))
-                min_val = None; mp_strike = None
-                for s in strikes:
-                    call_val = float(
-                        ((s - calls["strike"]).clip(lower=0) *
-                         calls["openInterest"].fillna(0)).sum()
-                    )
-                    put_val = float(
-                        ((puts["strike"] - s).clip(lower=0) *
-                         puts["openInterest"].fillna(0)).sum()
-                    )
-                    total = call_val + put_val
-                    if min_val is None or total < min_val:
-                        min_val = total; mp_strike = s
-                if mp_strike:
-                    max_pain_prices.append(mp_strike)
+                import numpy as np
+                c_strikes = calls["strike"].dropna().values
+                c_oi      = calls["openInterest"].fillna(0).values
+                p_strikes = puts["strike"].dropna().values
+                p_oi      = puts["openInterest"].fillna(0).values
+                all_strikes = np.union1d(c_strikes, p_strikes)
+                if len(all_strikes) > 0:
+                    # Broadcasting: (N_strikes, N_options) — memory efficient for typical chains
+                    call_pain = np.maximum(all_strikes[:, None] - c_strikes[None, :], 0) @ c_oi
+                    put_pain  = np.maximum(p_strikes[None, :] - all_strikes[:, None], 0) @ p_oi
+                    mp_idx    = (call_pain + put_pain).argmin()
+                    max_pain_prices.append(float(all_strikes[mp_idx]))
             except Exception:
                 pass
 
@@ -1259,8 +1252,8 @@ def options_flow_signal(ticker: str) -> tuple:
             try:
                 atm_band = (calls["strike"] >= price * 0.97) & (calls["strike"] <= price * 1.03)
                 atm_puts  = (puts["strike"]  >= price * 0.97) & (puts["strike"]  <= price * 1.03)
-                c_iv = calls.loc[atm_band,  "impliedVolatility"].dropna()
-                p_iv = puts.loc[atm_puts,   "impliedVolatility"].dropna()
+                c_iv = calls.loc[atm_band, "impliedVolatility"].replace(0, float("nan")).dropna()
+                p_iv = puts.loc[atm_puts,  "impliedVolatility"].replace(0, float("nan")).dropna()
                 if not c_iv.empty: call_ivs.append(float(c_iv.mean()))
                 if not p_iv.empty: put_ivs.append(float(p_iv.mean()))
             except Exception:
