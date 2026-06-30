@@ -103,20 +103,61 @@ class EnsembleModel:
         return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
 
 
+def _apply_feedback_weights(combined: pd.DataFrame, weights: pd.Series) -> tuple["pd.Series", int, int]:
+    """
+    Boost / penalize training rows that match resolved past signal outcomes.
+      WIN  (hit target or expired gain)  → row weight ×10
+      LOSS (hit stop or expired loss)    → row weight ×0.3
+    Returns (adjusted_weights, n_wins_applied, n_losses_applied).
+    """
+    entries = _load_log()
+    resolved = [e for e in entries if e.get("outcome") in
+                ("WIN", "LOSS", "HIT_TARGET", "HIT_STOP", "EXPIRED_GAIN", "EXPIRED_LOSS")]
+    if not resolved:
+        return weights, 0, 0
+
+    weights   = weights.copy().astype(float)
+    dates_col = pd.to_datetime(combined["_row_date"], utc=True)
+    n_win = n_loss = 0
+
+    for e in resolved:
+        try:
+            sig_ts = pd.Timestamp(e["signal_date"], tz="UTC")
+            mask   = (
+                (combined.get("_ticker", pd.Series([""] * len(combined), index=combined.index)) == e["ticker"]) &
+                (dates_col >= sig_ts - pd.Timedelta(days=1)) &
+                (dates_col <= sig_ts + pd.Timedelta(days=1))
+            )
+            if not mask.any():
+                continue
+            is_win = e["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN")
+            weights[mask] *= (10.0 if is_win else 0.3)
+            if is_win:
+                n_win += 1
+            else:
+                n_loss += 1
+        except Exception:
+            pass
+    return weights, n_win, n_loss
+
+
 def train_model() -> "EnsembleModel":
     """
-    Train XGBoost on ALL watchlist tickers with recency-weighted samples.
-    Recent data counts more than old data:
-      last  30 days → weight 4×
-      last  90 days → weight 2×
-      older         → weight 1×
+    Train XGBoost + RandomForest ensemble on ALL watchlist tickers.
+
+    Weighting layers (applied multiplicatively):
+      1. Recency   — last 30 days ×4, last 90 days ×2, older ×1
+      2. Feedback  — rows matching past WIN signals ×10, LOSS signals ×0.3
+         This is the closed feedback loop: every resolved signal teaches
+         the model which market conditions actually worked vs which failed.
     """
     frames = []
     for ticker in WATCHLIST:
         try:
             df = get_data(ticker, "2y").copy()
-            df["target"] = (df["Close"].shift(-PREDICTION_DAYS) / df["Close"] - 1 > TARGET_RETURN).astype(int)
-            df["_row_date"] = df.index   # keep the date for recency weighting
+            df["target"]   = (df["Close"].shift(-PREDICTION_DAYS) / df["Close"] - 1 > TARGET_RETURN).astype(int)
+            df["_row_date"] = df.index
+            df["_ticker"]   = ticker          # needed for feedback weight matching
             frames.append(df.dropna())
         except Exception:
             pass
@@ -124,24 +165,28 @@ def train_model() -> "EnsembleModel":
         df0 = get_data("AAPL", "2y").copy()
         df0["target"]    = (df0["Close"].shift(-PREDICTION_DAYS) / df0["Close"] - 1 > TARGET_RETURN).astype(int)
         df0["_row_date"] = df0.index
+        df0["_ticker"]   = "AAPL"
         frames = [df0.dropna()]
     combined = pd.concat(frames, ignore_index=True)
 
-    # Recency weights — more weight on recent market conditions
+    # Layer 1 — Recency weights
     try:
-        now  = pd.Timestamp.now(tz="UTC")
+        now   = pd.Timestamp.now(tz="UTC")
         dates = pd.to_datetime(combined["_row_date"], utc=True)
         ages  = (now - dates).dt.days.fillna(365)
     except Exception:
         ages = pd.Series([365] * len(combined))
     weights = ages.apply(lambda d: 4.0 if d <= 30 else (2.0 if d <= 90 else 1.0))
 
+    # Layer 2 — Feedback from past signal outcomes
+    weights, n_win, n_loss = _apply_feedback_weights(combined, weights)
+
     neg = int((combined["target"] == 0).sum())
     pos = int((combined["target"] == 1).sum())
     spw = round(neg / pos, 2) if pos > 0 else 1.0
     X, y = combined[FEATURES], combined["target"]
 
-    # XGBoost — recency-weighted
+    # XGBoost — recency + feedback weighted
     xgb_pipe = Pipeline([
         ("sc",  StandardScaler()),
         ("xgb", XGBClassifier(
@@ -153,7 +198,7 @@ def train_model() -> "EnsembleModel":
     ])
     xgb_pipe.fit(X, y, xgb__sample_weight=weights.values)
 
-    # RandomForest — balanced class weights, independent from XGBoost
+    # RandomForest — balanced class weights, independent signal
     rf_pipe = Pipeline([
         ("sc", StandardScaler()),
         ("rf", RandomForestClassifier(
@@ -164,8 +209,9 @@ def train_model() -> "EnsembleModel":
     rf_pipe.fit(X, y)
 
     recent = int((ages <= 30).sum())
+    fb_msg = f" | feedback: {n_win} WIN boosts, {n_loss} LOSS penalties" if (n_win + n_loss) else ""
     print(f"  Ensemble trained: {len(combined):,} rows ({pos} buy / {neg} no-buy) | "
-          f"XGBoost + RandomForest | recency-weighted ({recent} rows ×4)")
+          f"XGBoost + RandomForest | recency-weighted ({recent} rows ×4){fb_msg}")
     return EnsembleModel(xgb_pipe, rf_pipe)
 
 # ─── MARKET REGIME, VIX, SECTOR, WEEKLY, EARNINGS ───────────────────────────
@@ -1538,20 +1584,26 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
 
 # ─── SIGNAL LOG + OUTCOME TRACKING ───────────────────────────────────────────
 def log_signal(ticker: str, price: float, tier: str,
-               score: int = 0, prob: float = 0.0):
+               score: int = 0, prob: float = 0.0,
+               stop_price: float | None = None,
+               target_price: float | None = None,
+               hold_days: int | None = None):
+    """Log a signal. Include stop/target so resolve_outcomes can detect intraday hits."""
     entries = _load_log()
     entries.append({
-        "ticker":      ticker,
-        "tier":        tier,
-        "score":       score,
-        "prob":        round(prob, 4),
-        "entry_price": round(price, 4),
-        "signal_date": datetime.now().strftime("%Y-%m-%d"),
-        "target_pct":  TARGET_RETURN,
-        "pred_days":   PREDICTION_DAYS,
-        "outcome":     None,
-        "exit_price":  None,
-        "actual_pct":  None,
+        "ticker":       ticker,
+        "tier":         tier,
+        "score":        score,
+        "prob":         round(prob, 4),
+        "entry_price":  round(price, 4),
+        "stop_price":   round(stop_price,   4) if stop_price   else None,
+        "target_price": round(target_price, 4) if target_price else None,
+        "signal_date":  datetime.now().strftime("%Y-%m-%d"),
+        "target_pct":   TARGET_RETURN,
+        "pred_days":    hold_days if hold_days else PREDICTION_DAYS,
+        "outcome":      None,
+        "exit_price":   None,
+        "actual_pct":   None,
     })
     _save_log(entries)
 
@@ -1567,28 +1619,68 @@ def _save_log(entries: list):
     LOG_FILE.write_text(json.dumps(entries, indent=2))
 
 def resolve_outcomes() -> list:
+    """
+    Grade all pending signals. For each unresolved entry whose hold period
+    has fully elapsed, fetch the OHLC history and check day-by-day:
+      • If the LOW touched the stop_price  → HIT_STOP  (loss, exit early)
+      • If the HIGH touched the target_price → HIT_TARGET (win, exit early)
+      • Otherwise at end of hold period:
+          actual_pct >= target_pct → EXPIRED_GAIN (win)
+          otherwise                → EXPIRED_LOSS (loss)
+    This means the model learns from realistic trade outcomes, not just
+    end-of-period closes.
+    """
     entries = _load_log()
     changed = False
     for e in entries:
-        if e["outcome"] is not None:
+        if e.get("outcome") is not None:
             continue
         signal_date = datetime.strptime(e["signal_date"], "%Y-%m-%d")
-        if datetime.now() < signal_date + timedelta(days=e["pred_days"] * 1.4):
+        # Wait until the hold period is fully over before grading
+        if datetime.now() < signal_date + timedelta(days=e["pred_days"]):
             continue
         try:
             start = signal_date + timedelta(days=1)
-            end   = signal_date + timedelta(days=e["pred_days"] * 2)
+            end   = signal_date + timedelta(days=e["pred_days"] + 5)
             hist  = yf.Ticker(e["ticker"]).history(
                 start=start.strftime("%Y-%m-%d"),
                 end=end.strftime("%Y-%m-%d")
             )
-            if len(hist) >= e["pred_days"]:
-                exit_price = float(hist["Close"].iloc[e["pred_days"] - 1])
-                actual_pct = (exit_price - e["entry_price"]) / e["entry_price"]
-                e["exit_price"] = round(exit_price, 4)
-                e["actual_pct"] = round(actual_pct, 4)
-                e["outcome"]    = "WIN" if actual_pct >= e["target_pct"] else "LOSS"
-                changed = True
+            if len(hist) < e["pred_days"]:
+                continue
+
+            hold_slice  = hist.iloc[:e["pred_days"]]
+            entry       = e["entry_price"]
+            stop_px     = e.get("stop_price")
+            target_px   = e.get("target_price")
+            outcome     = None
+            exit_px     = None
+
+            # Day-by-day scan: did we hit stop or target intraday?
+            for _, row in hold_slice.iterrows():
+                day_low  = float(row["Low"])
+                day_high = float(row["High"])
+                day_close= float(row["Close"])
+
+                if stop_px and day_low <= stop_px:
+                    outcome  = "HIT_STOP"
+                    exit_px  = stop_px
+                    break
+                if target_px and day_high >= target_px:
+                    outcome  = "HIT_TARGET"
+                    exit_px  = target_px
+                    break
+                exit_px = day_close   # update to last known close
+
+            if outcome is None:
+                # Held to end — grade on final close
+                actual_pct = (exit_px - entry) / entry
+                outcome    = "EXPIRED_GAIN" if actual_pct >= e["target_pct"] else "EXPIRED_LOSS"
+
+            e["exit_price"] = round(exit_px, 4)
+            e["actual_pct"] = round((exit_px - entry) / entry, 4)
+            e["outcome"]    = outcome
+            changed = True
         except Exception:
             pass
     if changed:
@@ -2120,6 +2212,18 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
         r = requests.post(DISCORD, json={"content": "\n".join(lines)[:2000]}, timeout=5)
         if r.status_code in (200, 204):
             _mover_cd_mark(mover["_cd_key"])
+            # Log to signal_log so outcomes can be resolved and fed back into training
+            _log_price = mover["watch_level"] if mover["tier"] == "SETUP" else mover["price"]
+            log_signal(
+                ticker,
+                _log_price,
+                tier=mover["tier"],
+                score=mover.get("score", 0),
+                prob=mover.get("ai_prob", 0.0),
+                stop_price=plan["stop"],
+                target_price=plan["tgt"],
+                hold_days=plan["hold_days"],
+            )
             return True
         return False
     except Exception:
