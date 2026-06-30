@@ -12,6 +12,7 @@ from engine import (
     WATCHLIST, MAX_ALERTS, CORRELATION_GROUPS,
     get_data, train_model, decide, send_alert,
     log_signal, mark_alerted, update_ticker_performance,
+    big_mover_check, send_mover_alert,
 )
 
 SCAN_INTERVAL_SECONDS = 3600   # scan every hour while markets are open
@@ -103,6 +104,15 @@ def run_scan(model) -> int:
             else:
                 status = res["label"] if res["signal"] != "GATED" else "🚫 GATED"
                 print(f"  — {ticker}: {status}")
+
+                # ── Big Mover check — runs on every non-alerted ticker ────────
+                # Catches large moves in progress even when standard gates fail.
+                mover = big_mover_check(ticker, df)
+                if mover:
+                    price = float(df.iloc[-1]["Close"])
+                    sent  = send_mover_alert(ticker, mover)
+                    flag  = "🚀 LARGE MOVE alert sent" if sent else "🚀 LARGE MOVE detected (cooldown active)"
+                    print(f"  {flag}: {ticker} +{mover['daily_return']*100:.1f}% | {mover['vol_ratio']:.1f}× vol | {mover['strength']}")
 
         except Exception as e:
             print(f"  ⚠️  {ticker}: {e}")

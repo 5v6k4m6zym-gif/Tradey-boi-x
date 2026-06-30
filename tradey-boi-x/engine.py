@@ -1607,3 +1607,185 @@ def accuracy_stats(entries: list) -> dict:
         "win_rate":   wins / len(resolved),
         "avg_return": sum(e["actual_pct"] for e in resolved) / len(resolved),
     }
+
+
+# ─── BIG MOVER DETECTOR ───────────────────────────────────────────────────────
+# A separate, looser signal path that runs on every ticker that failed the
+# standard gates. Designed to catch stocks making LARGE MOVES RIGHT NOW —
+# volume explosions, ATR expansion, and strong intraday momentum.
+#
+# This is NOT a trend-confirmation signal. It fires when something unusual
+# is happening regardless of MACD/EMA alignment.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_MOVER_GUARD_FILE = Path(__file__).parent / "mover_cooldowns.json"
+_MOVER_COOLDOWN_HOURS = 6   # don't re-alert same ticker within 6 hours
+
+
+def _mover_guard_ok(ticker: str) -> bool:
+    """Return True if this ticker hasn't fired a mover alert in the last 6 hours."""
+    try:
+        data = json.loads(_MOVER_GUARD_FILE.read_text()) if _MOVER_GUARD_FILE.exists() else {}
+        last = data.get(ticker, 0)
+        return (time.time() - last) > (_MOVER_COOLDOWN_HOURS * 3600)
+    except Exception:
+        return True
+
+
+def _mover_guard_mark(ticker: str):
+    try:
+        data = json.loads(_MOVER_GUARD_FILE.read_text()) if _MOVER_GUARD_FILE.exists() else {}
+        data[ticker] = time.time()
+        _MOVER_GUARD_FILE.write_text(json.dumps(data))
+    except Exception:
+        pass
+
+
+def big_mover_check(ticker: str, df: "pd.DataFrame") -> dict | None:
+    """
+    Scan for a large move in progress. Returns a result dict if the ticker
+    qualifies, or None if it doesn't.
+
+    Criteria (ALL must pass):
+      • Volume   ≥ 2.5× 20-day average  — unusual institutional activity
+      • Today's move ≥ 2.0% intraday     — clear directional push
+      • ATR expansion ≥ 1.4× 20-day avg  — volatility picking up (big move underway)
+      • RSI between 35–80                — room to run, stock not dead
+      • VIX safe (< 30)                  — market not in panic
+      • No earnings within 3 days        — avoid earnings noise
+
+    Returns a dict with move stats used to build the Discord alert.
+    """
+    if len(df) < 25:
+        return None
+
+    try:
+        row   = df.iloc[-1]
+        price = float(row["Close"])
+        open_ = float(row["Open"])
+
+        # Core metrics
+        vol_ratio    = float(row["vol_ratio"])
+        daily_return = (price - open_) / open_      # intraday move
+        atr_now      = float(row["atr"])
+        atr_avg      = float(df["atr"].rolling(20).mean().iloc[-1])
+        atr_expansion = atr_now / atr_avg if atr_avg > 0 else 1.0
+        rsi          = float(row["rsi"])
+
+        # Hard gates
+        if vol_ratio    < 2.5:   return None
+        if daily_return < 0.02:  return None   # must be up ≥ 2% today
+        if atr_expansion < 1.4:  return None
+        if not (35 <= rsi <= 80): return None
+        if not vix_safe():        return None
+        if not earnings_safe(ticker): return None
+
+        # Strength rating
+        score = 0
+        reasons = []
+
+        if vol_ratio >= 4.0:
+            score += 3; reasons.append(f"🔥 Volume {vol_ratio:.1f}× average — extreme institutional activity")
+        elif vol_ratio >= 3.0:
+            score += 2; reasons.append(f"📊 Volume {vol_ratio:.1f}× average — strong institutional activity")
+        else:
+            score += 1; reasons.append(f"📊 Volume {vol_ratio:.1f}× average — above-normal activity")
+
+        if daily_return >= 0.05:
+            score += 3; reasons.append(f"🚀 Up {daily_return*100:.1f}% today — explosive move")
+        elif daily_return >= 0.03:
+            score += 2; reasons.append(f"📈 Up {daily_return*100:.1f}% today — strong intraday move")
+        else:
+            score += 1; reasons.append(f"📈 Up {daily_return*100:.1f}% today")
+
+        if atr_expansion >= 2.0:
+            score += 2; reasons.append(f"⚡ ATR {atr_expansion:.1f}× normal — exceptional volatility expansion")
+        else:
+            score += 1; reasons.append(f"⚡ ATR {atr_expansion:.1f}× normal range — volatility expanding")
+
+        # Bonus signals
+        if bool(row.get("breakout", 0)):
+            score += 2; reasons.append("💥 52-week high breakout — new highs on volume")
+        if rsi < 60:
+            score += 1; reasons.append(f"RSI {rsi:.0f} — room to continue higher")
+        if bool(row.get("bb_squeeze", 0)):
+            score += 1; reasons.append("🗜 Breaking out of volatility squeeze")
+
+        # Minimum quality bar
+        if score < 4:
+            return None
+
+        # ATR-based stop loss
+        sl = round(max(price - 2.0 * atr_now, price * 0.90), 4)
+        sl_pct = round((sl - price) / price * 100, 1)
+
+        strength = "EXTREME" if score >= 8 else ("STRONG" if score >= 6 else "MODERATE")
+
+        return {
+            "ticker":        ticker,
+            "price":         price,
+            "daily_return":  daily_return,
+            "vol_ratio":     vol_ratio,
+            "atr_expansion": atr_expansion,
+            "rsi":           rsi,
+            "score":         score,
+            "strength":      strength,
+            "reasons":       reasons,
+            "stop_loss":     sl,
+            "stop_loss_pct": sl_pct,
+        }
+
+    except Exception:
+        return None
+
+
+def send_mover_alert(ticker: str, mover: dict) -> bool:
+    """Send a 🚀 LARGE MOVE Discord alert. Distinct format from standard BUY alerts."""
+    if not DISCORD:
+        return False
+    if not _mover_guard_ok(ticker):
+        return False
+
+    import pytz as _pytz_m
+    _aest    = _pytz_m.timezone("Australia/Sydney")
+    now_aest = datetime.now(_aest)
+    now_str  = now_aest.strftime("%a %d %b %Y %I:%M %p AEST")
+
+    price    = mover["price"]
+    strength = mover["strength"]
+    divider  = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    strength_emoji = {"EXTREME": "🔥", "STRONG": "🚀", "MODERATE": "📈"}.get(strength, "📈")
+
+    lines = [
+        divider,
+        f"**TRADEY BOI X  |  {strength_emoji} LARGE MOVE DETECTED**",
+        divider,
+        f"**{ticker}**  —  ${price:.3f}",
+        f"  Up **{mover['daily_return']*100:.1f}%** today  |  Volume **{mover['vol_ratio']:.1f}×** average  |  Strength: **{strength}**",
+        "",
+    ]
+
+    for r in mover["reasons"]:
+        lines.append(f"  • {r}")
+
+    lines += [
+        "",
+        f"**🛑 Stop-loss:** ${mover['stop_loss']:.3f}  ({mover['stop_loss_pct']:.1f}%)  _exit if the move reverses here_",
+        "",
+        "⚠️  _This is a MOMENTUM alert — a large move is happening NOW._",
+        "_It is NOT a confirmed trend signal. The move may already be extended._",
+        "_Best approach: wait for a small pullback / consolidation before entering._",
+        "",
+        divider,
+        f"_{now_str}_",
+    ]
+
+    try:
+        r = requests.post(DISCORD, json={"content": "\n".join(lines)[:2000]}, timeout=5)
+        if r.status_code in (200, 204):
+            _mover_guard_mark(ticker)
+            return True
+        return False
+    except Exception:
+        return False
