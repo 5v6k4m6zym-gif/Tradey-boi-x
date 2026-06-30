@@ -2182,7 +2182,7 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
 
         lines = [
             divider,
-            f"⚡ BREAKOUT SETUP  |  **{ticker}**  ${mover['price']:.2f}"
+            f"⏳ INCOMING BREAKOUT  |  **{ticker}**  ${mover['price']:.2f}"
             f"  |  OBV: {obv_r:.1f}×  ·  ADX: {adx:.0f}↑  ·  Confidence: {ai_pct:.0f}%",
             divider,
             f"👁  Watch  **${watch:.2f}**  →  entry {brk_date}  ·  {entry_window}",
