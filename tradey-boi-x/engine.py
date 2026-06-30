@@ -2007,21 +2007,46 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
         except Exception:
             pass
 
+    # ── Entry date & time window helpers ─────────────────────────────────────
+    def _next_session_str(from_dt) -> tuple[str, str]:
+        """Return (date_str, time_window_str) for the next market open."""
+        if is_asx:
+            return (_next_trading_day(from_dt).strftime("%a %d %b %Y"),
+                    "10:00am – 10:30am AEST  _(ASX open — tightest spreads)_")
+        else:
+            # US open = 11:30pm AEST (next calendar day if past midnight)
+            next_td  = _next_trading_day(from_dt)
+            return (next_td.strftime("%a %d %b %Y"),
+                    "11:30pm – 12:00am AEST  _(US open — tightest spreads)_")
+
+    def _today_window_str() -> str:
+        """Time remaining in today's session."""
+        if is_asx:
+            return f"Now until **4:00pm AEST**  _(ASX closes at 4pm — act before then)_"
+        else:
+            return f"Now until **6:00am AEST**  _(US closes at 6am AEST — act before then)_"
+
     if mover["tier"] == "ACTIVE":
         price    = mover["price"]
         rsi      = mover.get("rsi", 55)
         plan     = _trade_plan(price, atr_raw, atr_pct, hold_days=6, tier="ACTIVE")
 
-        # RSI-based entry suggestion
+        # RSI-based entry price suggestion
         if rsi < 55:
-            entry_note = f"${price:.3f} — move still early, enter now or on any dip"
+            entry_px = f"${price:.3f}  _(move still early — enter at market or any dip)_"
         elif rsi < 65:
-            entry_note = f"${price*0.99:.3f}–${price*0.985:.3f} — wait for a 1–1.5% pullback"
+            entry_px = f"${price*0.99:.3f}–${price*0.985:.3f}  _(wait for 1–1.5% pullback)_"
         else:
-            entry_note = f"${price*0.98:.3f} — RSI elevated, wait for a 2% dip before entering"
+            entry_px = f"${price*0.98:.3f}  _(RSI elevated — wait for a 2% dip)_"
 
-        # Max valid entry (don't chase past this)
         max_entry = round(price * 1.025, 4)
+
+        # Entry date & window
+        if _mkt_open:
+            entry_date = now_aest.strftime("%a %d %b %Y")
+            entry_window = _today_window_str()
+        else:
+            entry_date, entry_window = _next_session_str(now_aest)
 
         lines = [
             divider,
@@ -2038,23 +2063,29 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
         lines += [
             "",
             "**📅 Trade Plan**",
-            f"🟢  Entry:     {entry_note}",
-            f"⛔  Max entry: ${max_entry:.3f}  _(do not chase above this)_",
-            f"🚪  Exit by:   **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
-            f"💰  Target:    **${plan['tgt']:.3f}**  (+{plan['tgt_pct']*100:.0f}%)",
-            f"🛑  Stop-loss: **${plan['stop']:.3f}**  ({plan['sl_pct']:.1f}%)",
-            f"⚖️  Risk/Reward: **{plan['rr']:.1f}:1**",
+            f"📆  Entry date:   **{entry_date}**",
+            f"⏰  Entry window: {entry_window}",
+            f"🟢  Entry price:  {entry_px}",
+            f"⛔  Max entry:   ${max_entry:.3f}  _(do not chase above this)_",
+            f"🚪  Exit by:      **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
+            f"💰  Target:       **${plan['tgt']:.3f}**  (+{plan['tgt_pct']*100:.0f}%)",
+            f"🛑  Stop-loss:    **${plan['stop']:.3f}**  ({plan['sl_pct']:.1f}%)",
+            f"⚖️  Risk/Reward:  **{plan['rr']:.1f}:1**",
             "",
-            "⚡ _Large move confirmed. Wait for a small pullback before entering — do not buy the high._",
+            "⚡ _Large move confirmed. Wait for a pullback before entering — do not buy the high._",
             divider,
             f"_{now_str}_",
         ]
 
     else:  # SETUP
-        watch    = mover["watch_level"]
-        plan     = _trade_plan(watch, atr_raw, atr_pct, hold_days=10, tier="SETUP")
-        ai_pct   = mover.get("ai_prob", 0) * 100
+        watch     = mover["watch_level"]
+        plan      = _trade_plan(watch, atr_raw, atr_pct, hold_days=10, tier="SETUP")
+        ai_pct    = mover.get("ai_prob", 0) * 100
         max_entry = round(watch * 1.025, 4)
+
+        # Entry is conditional — only after breakout confirmation
+        # Earliest possible entry = next session open after watch level is broken
+        brk_date, brk_window = _next_session_str(now_aest)
 
         lines = [
             divider,
@@ -2068,16 +2099,19 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
             lines.append(f"  • {e}")
         lines += [
             "",
-            "**📅 Trade Plan**  _(activates only if breakout confirms)_",
-            f"👁  Watch level:  **${watch:.3f}**  — breakout confirmed on a close above this with volume",
-            f"🟢  Entry:        **${watch:.3f}–${max_entry:.3f}**  _(buy the break, not before)_",
-            f"🚪  Exit by:      **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
-            f"💰  Target:       **${plan['tgt']:.3f}**  (+{plan['tgt_pct']*100:.0f}% from breakout level)",
-            f"🛑  Stop-loss:    **${plan['stop']:.3f}**  ({plan['sl_pct']:.1f}%  — squeeze failed)",
-            f"⚖️  Risk/Reward:  **{plan['rr']:.1f}:1**",
+            "**📅 Trade Plan**  _(conditional — only if breakout confirms)_",
+            f"👁  Watch level:   **${watch:.3f}**  — enter only on a close/break above this with volume",
+            f"📆  Earliest entry: **{brk_date}**  _(if watch level breaks today)_",
+            f"⏰  Entry window:  {brk_window}",
+            f"🟢  Entry price:   **${watch:.3f}–${max_entry:.3f}**  _(buy the break, not before it)_",
+            f"🚪  Exit by:       **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
+            f"💰  Target:        **${plan['tgt']:.3f}**  (+{plan['tgt_pct']*100:.0f}% from breakout level)",
+            f"🛑  Stop-loss:     **${plan['stop']:.3f}**  ({plan['sl_pct']:.1f}%  — if squeeze fails)",
+            f"⚖️  Risk/Reward:   **{plan['rr']:.1f}:1**",
             "",
-            "⚠️  _SETUP alert — no action yet. Only enter if price breaks the watch level on volume._",
-            "_If the setup resolves downward, ignore it entirely._",
+            "⚠️  _No action yet — this is a WATCH alert._",
+            "_Only enter if price breaks the watch level on above-average volume._",
+            "_If it resolves downward, ignore it entirely._",
             divider,
             f"_{now_str}_",
         ]
