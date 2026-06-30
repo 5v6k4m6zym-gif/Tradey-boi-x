@@ -148,7 +148,7 @@ def main():
     print("  TRADEY BOI X — Auto Scanner")
     print(f"  Interval: every {SCAN_INTERVAL_SECONDS // 60} min during market hours")
     print(f"  Markets: US (09:30–16:00 ET) | ASX (10:00–16:00 AEST)")
-    print(f"  Watchlist: {', '.join(WATCHLIST)}")
+    print(f"  Watchlist: {len(WATCHLIST)} tickers")
     print("=" * 50)
 
     print("\nTraining AI model…")
