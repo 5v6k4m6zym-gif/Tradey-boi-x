@@ -1520,60 +1520,67 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         # Mid-session, market open — buy now per RSI logic above
         _entry_banner = ("⚡  **BUY NOW** — market is open, entry is live")
 
-    # Good/bad header label
-    verdict = "✅ GOOD BUY" if result["signal"] == "STRONG BUY" else "🏆 ELITE BUY — HIGH CONVICTION"
+    verdict = "🏆" if result["signal"] == "ELITE BUY" else "✅"
     divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    news = result.get("news", {})
+    # Compact timing line (no ASCII box)
+    if _opening_now:
+        _open_label = "ASX open" if _is_asx else "US open"
+        timing_line = f"⚡ **BUY NOW** — {_open_label.upper()}  ·  tightest spreads right now"
+    elif _is_intraday and not _mkt_open:
+        timing_line = "⚠️ **INTRADAY signal — market closed**  ·  skip unless signal recurs at next open"
+    elif not _mkt_open and _is_swing:
+        _open_str   = "10:00am AEST" if _is_asx else "11:30pm AEST"
+        _open_date  = buy_date.strftime("%a %d %b")
+        timing_line = f"📋 **BUY AT OPEN** — {_open_date}  ·  {_open_str}"
+    else:
+        timing_line = "⚡ **BUY NOW** — market is open, entry is live"
+
+    # Optional extras — only if present, kept to one line each
+    news      = result.get("news", {})
     news_line = ""
     if news and news.get("count", 0) > 0:
-        emoji = "🟢" if news["label"] == "POSITIVE" else "⚪"
-        headline = news["headlines"][0][:75] if news.get("headlines") else ""
-        news_line = f"{emoji} {news['label']} (score {news['compound']:+.2f})" + (f" — _{headline}_" if headline else "")
+        emoji    = "🟢" if news["label"] == "POSITIVE" else "⚪"
+        headline = (news["headlines"][0][:60] + "…") if news.get("headlines") else ""
+        news_line = f"📰 {emoji} {news['label']} — _{headline}_" if headline else f"📰 {emoji} {news['label']}"
 
-    adj = result.get("adj", 0)
-    track_line = ""
-    if adj != 0:
-        direction = "boosted ↑" if adj > 0 else "penalised ↓"
-        track_line = f"🧠 Past performance {direction} this ticker's score by {adj:+d}"
+    adj        = result.get("adj", 0)
+    track_line = f"🧠 Track record {'boosted ↑' if adj > 0 else 'penalised ↓'} this score by {adj:+d}" if adj != 0 else ""
 
     hist_line = ""
-    if ci:
-        hist_line = (f"📈 Historical ({ci['n']} similar signals): "
-                     f"worst {ci['worst']*100:+.1f}% · typical {ci['p25']*100:+.1f}% to "
-                     f"{ci['p75']*100:+.1f}% · best {ci['best']*100:+.1f}%")
+    if ci and ci.get("n", 0) >= 3:
+        hist_line = (f"📈 {ci['n']} similar signals: "
+                     f"typical {ci['p25']*100:+.0f}% to {ci['p75']*100:+.0f}%  ·  "
+                     f"best {ci['best']*100:+.0f}%  ·  worst {ci['worst']*100:+.0f}%")
+
+    # Why list — single compact line
+    why_str = "  ·  ".join(result["why"])
+
+    rr = round(abs(target_pct / params["stop_loss_pct"]), 1) if params["stop_loss_pct"] else 0
 
     lines = [
         divider,
-        f"**TRADEY BOI X**  |  {verdict}",
+        f"{verdict}  **{ticker}**  ${price:.2f}  |  Score {result['score']}/14"
+        f"  ·  AI {result['prob']*100:.0f}%  ·  {grade} {glabel}  `{gbar}`",
         divider,
-        _entry_banner,
+        timing_line,
         "",
-        f"📌  **{ticker}**  —  {short_name}",
-        f"💵  Price: **${price:.3f}**  |  Grade: **{grade} — {glabel}**  `{gbar}`",
-        f"📊  Score: **{result['score']}/14**  |  AI confidence: **{result['prob']*100:.1f}%**",
+        f"🟢 Entry    {entry_price}  _({entry_note})_",
+        f"💰 Target   **${target_price:.2f}**  +{target_pct*100:.0f}%"
+        f"  ·  🛑 Stop  **${params['stop_loss']:.2f}**  {params['stop_loss_pct']:.1f}%"
+        f"  ·  ⚖️ R/R  **{rr:.1f}:1**",
+        f"🚪 Exit by  **{exit_date.strftime('%a %d %b %Y')}**  ({exit_days} trading days)",
         "",
-        f"**💬 What the bot sees:**",
-        _simple_read(ticker, result, price),
-        "",
-        f"**📅 Trade Plan**",
-        f"🟢  Buy:       **{buy_date.strftime('%A %d %b %Y')}**  @  {entry_price}  _({entry_note})_",
-        f"🚪  Exit:      **{exit_date.strftime('%A %d %b %Y')}**  ({exit_days} trading days)",
-        f"💰  Target:    **${target_price:.3f}**  (+{target_pct*100:.0f}%)  _— {params['rationale']}_",
-        f"🛑  Stop-loss: **${params['stop_loss']:.3f}**  ({params['stop_loss_pct']:.1f}%)  _exit if price falls here_",
-        f"⚖️  Risk/Reward: **{abs(target_pct/params['stop_loss_pct']):.1f}:1**  _({target_pct*100:.0f}% gain vs {abs(params['stop_loss_pct']):.1f}% risk)_",
+        f"_{why_str}_",
     ]
 
-    if hist_line:  lines += ["", hist_line]
+    if hist_line:  lines += [hist_line]
     if track_line: lines += [track_line]
-    if news_line:  lines += ["", f"**📰 News**", news_line]
+    if news_line:  lines += [news_line]
 
     lines += [
-        "",
-        f"**✅ Why it qualified:**",
-        "  " + "  •  ".join(result["why"]),
         divider,
-        f"_{now.strftime('%Y-%m-%d %H:%M')}_",
+        f"_{now_aest.strftime('%a %d %b %Y %I:%M %p AEST')}_",
     ]
 
     try:
