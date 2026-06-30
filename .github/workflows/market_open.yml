@@ -1,0 +1,27 @@
+name: Tradey Boi X Market Open Report
+
+"on":
+  schedule:
+    # ASX open: 00:00 UTC Mon-Fri = 10:00am AEST
+    - cron: "0 0 * * 1-5"
+    # US open: 13:30 UTC Mon-Fri = 9:30am ET = 11:30pm AEST
+    - cron: "30 13 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  market-open:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install yfinance pandas requests pytz
+      - name: Run market open report
+        env:
+          Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
+        run: cd tradey-boi-x && python market_open.py
