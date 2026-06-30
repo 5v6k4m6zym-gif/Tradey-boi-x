@@ -115,7 +115,9 @@ def _load_cursor() -> int:
 
 
 def _save_cursor(pos: int):
-    CURSOR_FILE.write_text(json.dumps({"position": pos}))
+    tmp = CURSOR_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"position": pos}))
+    tmp.replace(CURSOR_FILE)
 
 
 def run_overnight_scan(model) -> int:

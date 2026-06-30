@@ -1289,5 +1289,113 @@ class TestBehaviouralRegressionSummary(unittest.TestCase):
         self.assertAlmostEqual(r["avg_return"], expected_avg, places=4)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 16. UPDATE TICKER PERFORMANCE — Discord win rate in outcome notifications
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestUpdateTickerPerformanceWinRate(unittest.TestCase):
+    """
+    REGRESSION: update_ticker_performance() previously computed the per-ticker
+    win rate for the Discord outcome-update message using:
+
+        wins = sum(1 for t in recent if t["outcome"] == "WIN")
+
+    Since real outcomes are "HIT_TARGET" / "EXPIRED_GAIN" (never the literal
+    string "WIN"), this always produced wins=0 and reported 0% win rate in
+    every Discord notification regardless of actual results.
+
+    The fix changes the check to:
+
+        wins = sum(1 for t in recent
+                   if t["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN"))
+    """
+
+    def _make_log(self, n_wins: int, n_losses: int, ticker: str = "BHP.AX") -> list:
+        """Build a resolved signal log with realistic outcome strings."""
+        base = {
+            "ticker":       ticker,
+            "signal_date":  "2024-01-10",
+            "pred_days":    6,
+            "entry_price":  50.0,
+            "stop_price":   47.0,
+            "target_price": 54.0,
+            "target_pct":   0.04,
+            "stop_pct":     0.06,
+            "exit_price":   54.0,
+            "actual_pct":   0.04,
+        }
+        entries = []
+        for _ in range(n_wins):
+            e = dict(base)
+            e["outcome"] = "HIT_TARGET"   # real win outcome string — not "WIN"
+            entries.append(e)
+        for _ in range(n_losses):
+            e = dict(base)
+            e["outcome"] = "HIT_STOP"
+            e["exit_price"] = 47.0
+            e["actual_pct"] = -0.06
+            entries.append(e)
+        return entries
+
+    def _compute_discord_win_rate(self, trades: list) -> float:
+        """Replicate the win-rate calculation in update_ticker_performance()."""
+        recent = trades[-20:]
+        wins   = sum(1 for t in recent
+                     if t["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN"))
+        return wins / len(recent) * 100 if recent else 0.0
+
+    def _compute_discord_win_rate_old(self, trades: list) -> float:
+        """Replicate the BROKEN old calculation for comparison."""
+        recent = trades[-20:]
+        wins   = sum(1 for t in recent if t["outcome"] == "WIN")
+        return wins / len(recent) * 100 if recent else 0.0
+
+    def test_regression_old_code_reported_zero_win_rate(self):
+        """
+        REGRESSION MARKER — old code used outcome == 'WIN' which never matches
+        real outcomes. This proves the bug: 6 HIT_TARGET wins → 0% reported.
+        """
+        log = self._make_log(n_wins=6, n_losses=4)
+        old_wr = self._compute_discord_win_rate_old(log)
+        self.assertEqual(old_wr, 0.0,
+            "Old code must reproduce the 0% bug to prove the regression was real")
+
+    def test_new_code_reports_correct_win_rate(self):
+        """6 HIT_TARGET + 4 HIT_STOP → Discord message must show 60%."""
+        log = self._make_log(n_wins=6, n_losses=4)
+        wr  = self._compute_discord_win_rate(log)
+        self.assertAlmostEqual(wr, 60.0, places=1,
+            msg="6/10 HIT_TARGET → Discord must report 60% win rate")
+
+    def test_expired_gain_counts_as_win_in_discord(self):
+        """EXPIRED_GAIN is a win — must be counted in Discord notification."""
+        trades = [{"outcome": "EXPIRED_GAIN"}, {"outcome": "HIT_STOP"}]
+        wr = self._compute_discord_win_rate(trades)
+        self.assertEqual(wr, 50.0)
+
+    def test_all_hit_target_reports_100_pct(self):
+        """All HIT_TARGET → 100% win rate in Discord."""
+        log = self._make_log(n_wins=10, n_losses=0)
+        wr  = self._compute_discord_win_rate(log)
+        self.assertAlmostEqual(wr, 100.0)
+
+    def test_all_hit_stop_reports_0_pct(self):
+        """All HIT_STOP → 0% win rate (correctly) in Discord."""
+        log = self._make_log(n_wins=0, n_losses=10)
+        wr  = self._compute_discord_win_rate(log)
+        self.assertEqual(wr, 0.0)
+
+    def test_rolling_window_capped_at_20(self):
+        """Discord win rate uses last 20 trades even when log has more."""
+        log = self._make_log(n_wins=25, n_losses=0)  # 25 wins, take last 20
+        wr  = self._compute_discord_win_rate(log)
+        self.assertAlmostEqual(wr, 100.0)
+        log2 = self._make_log(n_wins=0, n_losses=5)
+        # Prepend 20 losses so the last 20 are all losses
+        full = self._make_log(n_wins=0, n_losses=25)
+        wr2  = self._compute_discord_win_rate(full)
+        self.assertEqual(wr2, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

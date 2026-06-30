@@ -1,0 +1,235 @@
+You have completed the engineering audit of Tradey Boi X.
+
+Your task is now to fix every identified issue while preserving the core behaviour, trading philosophy and reliability of the system.
+
+=========================
+PRIMARY OBJECTIVES
+=========================
+
+Priority order:
+
+1. Accuracy
+2. Reliability
+3. Stability
+4. Robustness
+5. Maintainability
+6. Performance
+7. Simplicity
+
+Do NOT add features unless they are required to fix a verified issue.
+
+Do NOT redesign working systems simply because a different implementation exists.
+
+=========================
+ENGINEERING RULES
+=========================
+
+Before making ANY code change:
+
+• Identify the root cause.
+• Determine the smallest possible fix.
+• Avoid introducing additional complexity.
+• Avoid unnecessary dependencies.
+• Avoid rewriting working modules.
+• Preserve existing architecture wherever possible.
+• Prefer removing unnecessary code over adding more code.
+
+Every change must satisfy ALL of the following:
+
+✓ Fixes the issue.
+✓ Does not reduce system accuracy.
+✓ Does not alter the intended trading philosophy.
+✓ Does not introduce unnecessary complexity.
+✓ Passes all regression tests.
+
+If a proposed fix cannot satisfy all of these requirements, reject it and choose a simpler solution.
+
+=========================
+SAFE MODIFICATION PROCESS
+=========================
+
+For EVERY issue:
+
+Step 1
+Identify the exact cause.
+
+Step 2
+Explain why it happens.
+
+Step 3
+Implement the smallest complete fix.
+
+Step 4
+Run regression tests.
+
+Step 5
+Verify:
+
+• Scanner still works.
+• Market data still loads.
+• AI learning still functions.
+• Confidence scores remain consistent.
+• Risk calculations remain correct.
+• Breakout detection still works.
+• News parsing still works.
+• Insider data still works.
+• Weekly reports still generate.
+• Discord alerts still send.
+• No new warnings or errors appear.
+
+Only then continue to the next issue.
+
+Never fix multiple unrelated issues in a single change.
+
+=========================
+DO NOT CHANGE
+=========================
+
+Unless a verified bug exists, do NOT modify:
+
+• Trading philosophy
+• Recommendation engine
+• AI learning methodology
+• Confidence calculations
+• Trade ranking logic
+• Entry calculations
+• Exit calculations
+• Risk/reward calculations
+• Market regime detection
+• Breakout strategy
+• Existing filter logic
+
+If any of these require modification:
+
+1. Justify the change.
+2. Compare before vs after behaviour using identical historical data.
+3. Demonstrate why the new behaviour is objectively more robust.
+4. Reject the modification if no measurable improvement is demonstrated.
+
+=========================
+TRADING VALIDATION
+=========================
+
+Ensure:
+
+• No look-ahead bias.
+• No survivorship bias.
+• No future data leakage.
+• Correct historical candle usage.
+• Correct indicator calculations.
+• Correct ATR.
+• Correct EMA.
+• Correct RSI.
+• Correct ADX.
+• Correct OBV.
+• Correct volume calculations.
+• Correct news timestamps.
+• Correct insider timestamps.
+• Correct market regime classification.
+
+=========================
+AI VALIDATION
+=========================
+
+Verify the learning engine:
+
+• Does not overfit.
+• Does not overweight recent trades.
+• Maintains stable feature weighting.
+• Learns only from completed trade outcomes.
+• Produces calibrated confidence scores.
+• Does not become increasingly aggressive after winning streaks.
+• Does not become excessively conservative after losing streaks.
+
+=========================
+PERFORMANCE VALIDATION
+=========================
+
+Stress test:
+
+• Heavy market volume.
+• Large news events.
+• API delays.
+• API failures.
+• Missing data.
+• Discord outages.
+• Slow internet.
+• Low memory.
+• High CPU.
+• Restart recovery.
+• Corrupted cache.
+• Duplicate data.
+• Empty datasets.
+
+System must recover gracefully without crashing.
+
+=========================
+SECURITY VALIDATION
+=========================
+
+Verify:
+
+• Secrets remain protected.
+• Environment variables secure.
+• No sensitive logging.
+• Dependency vulnerabilities removed where practical.
+• Input validation present.
+• Safe API handling.
+• Proper exception handling.
+
+=========================
+REGRESSION TESTING
+=========================
+
+After EVERY fix:
+
+Run the complete regression suite.
+
+Confirm that:
+
+• Existing behaviour remains intact.
+• No previous functionality has regressed.
+• Recommendation quality has not decreased.
+• Confidence calculations remain internally consistent.
+• Historical benchmark results are unchanged unless a verified bug required a correction.
+
+=========================
+FINAL ACCEPTANCE CRITERIA
+=========================
+
+Do NOT declare the project complete until ALL of the following are true:
+
+✓ No known bugs remain.
+✓ All regression tests pass.
+✓ Stress tests pass.
+✓ No unnecessary complexity has been introduced.
+✓ Existing behaviour is preserved unless a verified defect required a change.
+✓ Code is clean, modular and maintainable.
+✓ Performance is equal to or better than before.
+✓ Reliability is equal to or better than before.
+✓ Trading logic remains internally consistent.
+
+=========================
+FINAL REPORT
+=========================
+
+Produce a complete engineering report containing:
+
+1. Every issue discovered.
+2. Every issue fixed.
+3. Root cause of each issue.
+4. Why the chosen fix was selected.
+5. Tests performed.
+6. Test results.
+7. Behavioural differences before vs after.
+8. Performance improvements.
+9. Security improvements.
+10. Reliability improvements.
+11. Remaining limitations.
+12. Recommendations for future improvements (only if they do not add unnecessary complexity).
+
+If any fix cannot be validated through testing, clearly state that it remains unverified rather than assuming it is correct.
+
+The goal is NOT to build a more complex system.
+
+The goal is to produce the most accurate, reliable, robust and maintainable version of Tradey Boi X possible while preserving its proven behaviour and minimising unnecessary change.

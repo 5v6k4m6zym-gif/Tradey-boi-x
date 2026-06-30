@@ -1,0 +1,184 @@
+You are now performing a FINAL SYSTEM OPTIMISATION AUDIT on Tradey Boi X.
+
+CRITICAL CONSTRAINT:
+You MUST NOT change, rewrite, refactor, or restructure any existing code.
+
+Your only objective is to ensure the system is operating at MAXIMUM ACCURACY, MAXIMUM LOGICAL CONSISTENCY, and MAXIMUM RELIABILITY based on the current implementation.
+
+=========================
+PRIMARY OBJECTIVE
+=========================
+
+Ensure Tradey Boi X is:
+• As accurate as possible in its current form
+• Logically consistent across all modules
+• Stable under real-world market conditions
+• Free of internal contradictions
+• Free of redundant or conflicting logic
+• Properly calibrated in confidence scoring
+• Not overfitting or self-conflicting in its learning system
+
+NO NEW FEATURES.
+NO ARCHITECTURE CHANGES.
+NO REWRITES.
+
+Only optimisation of existing behaviour.
+
+=========================
+CORE RULE
+=========================
+
+You are NOT improving the system by adding anything.
+
+You are improving it by:
+• Removing confusion
+• Correcting logical inconsistencies
+• Aligning existing components
+• Ensuring stable outputs
+• Ensuring deterministic behaviour where applicable
+
+If a change introduces complexity, reject it.
+
+If a change alters system behaviour unnecessarily, reject it.
+
+=========================
+SYSTEM STABILITY CHECK
+=========================
+
+Verify consistency across:
+
+• Market scanning logic
+• 24 filter system
+• Breakout detection
+• News interpretation
+• Insider trading signals
+• Volume and momentum logic
+• EMA / RSI / ADX / ATR calculations
+• Confidence scoring engine
+• Risk/reward calculations
+• Entry and exit suggestions
+• AI learning feedback loop
+• Weekly performance evaluation
+
+Ensure ALL modules agree with each other logically.
+
+Flag any contradictions between modules.
+
+=========================
+LOGIC CONSISTENCY RULE
+=========================
+
+If two components produce conflicting outputs:
+
+• Identify which one is mathematically or logically correct
+• Adjust interpretation WITHOUT changing system structure
+• Do NOT add extra layers to resolve conflict
+• Do NOT create new scoring systems
+• Do NOT duplicate logic to “fix” disagreements
+
+Simplify alignment, do not expand complexity.
+
+=========================
+CONFIDENCE CALIBRATION CHECK
+=========================
+
+Ensure:
+
+• Confidence scores match actual historical performance trends
+• High confidence ≠ overestimation bias
+• Low confidence ≠ unnecessary filtering
+• Scores are stable across similar conditions
+• No inflation during winning streaks
+• No deflation during losing streaks
+
+If miscalibration exists:
+Adjust weighting interpretation only (not system design).
+
+=========================
+LEARNING SYSTEM SAFETY
+=========================
+
+Verify that the AI learning system:
+
+• Does not overreact to recent trades
+• Does not overweight short-term performance
+• Does not drift into unstable weighting
+• Learns only from valid completed trades
+• Maintains long-term stability over short-term noise
+
+If instability exists:
+Stabilise weighting behaviour without changing architecture.
+
+=========================
+MARKET REGIME CONSISTENCY
+=========================
+
+Ensure:
+• Bull/bear detection is consistent with outputs
+• Trade frequency matches regime strength
+• Signal quality increases in strong regimes
+• Signal quality decreases in weak regimes
+
+If mismatch exists:
+Correct interpretation, not system redesign.
+
+=========================
+DATA INTEGRITY CHECK
+=========================
+
+Verify:
+• No missing or misaligned data interpretation
+• Indicators (RSI, EMA, ADX, ATR, OBV) are used consistently
+• No conflicting data sources influencing the same decision differently
+• No timestamp mismatches
+
+Fix interpretation errors only.
+
+=========================
+BEHAVIOUR PRESERVATION RULE
+=========================
+
+The system’s existing behaviour is the SOURCE OF TRUTH.
+
+Do NOT:
+• Change filter logic structure
+• Change indicator formulas
+• Change scoring architecture
+• Change AI learning system design
+• Change recommendation framework
+
+Only correct:
+• Misalignment
+• Inconsistency
+• Misinterpretation
+• Redundant logic paths
+• Conflicting outputs
+
+=========================
+FINAL OUTPUT REQUIREMENTS
+=========================
+
+Provide a report:
+
+1. System health score (/100)
+2. Logical inconsistencies found
+3. Confidence calibration issues (if any)
+4. AI learning stability assessment
+5. Market regime alignment check
+6. Data integrity status
+7. Risk of overfitting (low / medium / high)
+8. Any critical fixes applied (must be minimal and non-structural)
+9. Confirmation that NO architecture changes were made
+
+=========================
+FINAL GOAL
+=========================
+
+The goal is NOT to improve performance by redesigning the system.
+
+The goal is to ensure:
+• The current system is logically sound
+• Internally consistent
+• Stable under real-world use
+• Not confused or self-contradictory
+• Operating at maximum efficiency within its existing design
