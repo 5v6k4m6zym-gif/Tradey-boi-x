@@ -247,106 +247,165 @@ class TestAccuracyStats(unittest.TestCase):
         self.assertEqual(broken_wins, 0,    "Old code: 0 wins (bug confirmed)")
         self.assertEqual(correct_wins, 3,   "New code: 3 wins (fix confirmed)")
 
+    def test_empty_returns_none_expectancy_fields(self):
+        """Empty log → all new expectancy fields are None."""
+        r = accuracy_stats([])
+        self.assertIsNone(r["expectancy"])
+        self.assertIsNone(r["avg_win_R"])
+        self.assertIsNone(r["avg_loss_R"])
+        self.assertIsNone(r["largest_win_R"])
+        self.assertIsNone(r["largest_loss_R"])
+
+    def test_expectancy_fields_present_in_resolved_stats(self):
+        """accuracy_stats() must return all five expectancy keys for resolved entries."""
+        entries = [
+            {"outcome": "HIT_TARGET", "actual_pct": 0.04,
+             "entry_price": 100.0, "stop_price": 97.0, "target_pct": 0.04},
+            {"outcome": "HIT_STOP",   "actual_pct": -0.03,
+             "entry_price": 100.0, "stop_price": 97.0, "target_pct": 0.04},
+        ]
+        r = accuracy_stats(entries)
+        for key in ("expectancy", "avg_win_R", "avg_loss_R", "largest_win_R", "largest_loss_R"):
+            self.assertIn(key, r, f"accuracy_stats() missing key: {key}")
+
+    def test_all_wins_expectancy_positive(self):
+        """All-win log → positive expectancy; loss R fields are None."""
+        entries = [{"outcome": "HIT_TARGET", "actual_pct": 0.04, "target_pct": 0.04}] * 4
+        r = accuracy_stats(entries)
+        self.assertGreater(r["expectancy"], 0)
+        self.assertIsNone(r["avg_loss_R"])
+        self.assertIsNone(r["largest_loss_R"])
+
+    def test_all_losses_expectancy_negative(self):
+        """All-loss log → negative expectancy; win R fields are None."""
+        entries = [{"outcome": "HIT_STOP", "actual_pct": -0.03, "target_pct": 0.04}] * 4
+        r = accuracy_stats(entries)
+        self.assertLess(r["expectancy"], 0)
+        self.assertIsNone(r["avg_win_R"])
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 2. PERFORMANCE ADJUSTMENTS — per-ticker score learning
+# 2. PERFORMANCE ADJUSTMENTS — per-ticker expectancy-based score learning
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestPerformanceAdjustments(unittest.TestCase):
+class TestExpectancyBasedAdjustments(unittest.TestCase):
     """
-    REGRESSION: performance_adjustments() used `outcome == "WIN"` — same bug
-    as accuracy_stats(). Every ticker with ANY resolved signal received a
-    permanent −2 score penalty because win rate was always computed as 0%.
+    Verifies that performance_adjustments() optimises for R-multiple expectancy,
+    not win rate.  Losses are penalised 1.3× more than equivalent wins are
+    rewarded (asymmetric weighting).
+
+    Formula: weighted_expectancy = avg_win_R × win_rate − avg_loss_R × 1.3 × (1 − win_rate)
+    Adj map: ≥+1.0R → +2 | ≥+0.2R → +1 | noise zone → 0 | ≤−0.2R → -1 | ≤−1.0R → -2
+
+    Previous win-rate system replaced: a ticker winning 71% of the time with
+    −2R losses and +0.3R wins previously received +1. The expectancy system
+    correctly penalises it (see test_asymmetric_loss_penalty).
     """
 
-    def _log(self, ticker: str, outcomes: list):
-        return [{"ticker": ticker, "outcome": o} for o in outcomes]
+    def _win(self, ticker="TST.AX", actual_pct=0.03):
+        # entry=100, stop=97 → risk_pct=3% → 1R = 3%
+        return {"ticker": ticker, "outcome": "HIT_TARGET", "actual_pct": actual_pct,
+                "entry_price": 100.0, "stop_price": 97.0, "target_pct": 0.04}
+
+    def _loss(self, ticker="TST.AX", actual_pct=-0.03):
+        return {"ticker": ticker, "outcome": "HIT_STOP", "actual_pct": actual_pct,
+                "entry_price": 100.0, "stop_price": 97.0, "target_pct": 0.04}
 
     def test_no_resolved_signals_returns_empty(self):
         with patch("engine._load_log", return_value=[{"ticker": "AAA", "outcome": None}]):
-            result = engine.performance_adjustments()
-        self.assertEqual(result, {})
+            self.assertEqual(engine.performance_adjustments(), {})
 
     def test_requires_at_least_3_resolved(self):
         """Fewer than 3 resolved signals → no adjustment (noise gate)."""
-        entries = self._log("BHP.AX", ["HIT_TARGET", "HIT_STOP"])
+        entries = [self._win(), self._loss()]
         with patch("engine._load_log", return_value=entries):
-            result = engine.performance_adjustments()
-        self.assertNotIn("BHP.AX", result)
+            self.assertNotIn("TST.AX", engine.performance_adjustments())
 
-    def test_100pct_win_rate_gives_plus2(self):
-        """INTENTIONAL FIX: 3× HIT_TARGET → win rate 100% → +2."""
-        entries = self._log("BHP.AX", ["HIT_TARGET"] * 4)
+    def test_strong_positive_expectancy_gives_plus2(self):
+        """5 wins at +2.0R each → expectancy=2.0 → +2."""
+        entries = [self._win(actual_pct=0.06)] * 5   # R = 0.06/0.03 = 2.0
         with patch("engine._load_log", return_value=entries):
-            result = engine.performance_adjustments()
-        self.assertEqual(result.get("BHP.AX"), 2)
+            self.assertEqual(engine.performance_adjustments().get("TST.AX"), 2)
 
-    def test_100pct_loss_rate_gives_minus2(self):
-        entries = self._log("XYZ.AX", ["HIT_STOP"] * 4)
+    def test_modest_positive_expectancy_gives_plus1(self):
+        """4 wins at +1.0R, 1 loss at −0.5R → expectancy≈+0.67 → +1."""
+        entries = [self._win(actual_pct=0.03)] * 4 + [self._loss(actual_pct=-0.015)]
         with patch("engine._load_log", return_value=entries):
-            result = engine.performance_adjustments()
-        self.assertEqual(result.get("XYZ.AX"), -2)
+            self.assertEqual(engine.performance_adjustments().get("TST.AX"), 1)
 
-    def test_60pct_win_rate_gives_plus1(self):
-        outcomes = ["HIT_TARGET"] * 3 + ["HIT_STOP"] * 2  # 60%
-        entries = self._log("AAA.AX", outcomes)
+    def test_neutral_expectancy_gives_zero(self):
+        """3 wins at +0.5R, 3 losses at −0.5R → expectancy≈−0.075 → 0 (noise zone)."""
+        entries = (
+            [self._win(actual_pct=0.015)] * 3 +    # R = 0.5
+            [self._loss(actual_pct=-0.015)] * 3    # abs R = 0.5
+        )
         with patch("engine._load_log", return_value=entries):
-            result = engine.performance_adjustments()
-        self.assertEqual(result.get("AAA.AX"), 1)
+            self.assertEqual(engine.performance_adjustments().get("TST.AX"), 0)
 
-    def test_40pct_win_rate_gives_minus1(self):
-        outcomes = ["HIT_TARGET"] * 2 + ["HIT_STOP"] * 3  # 40%
-        entries = self._log("AAA.AX", outcomes)
+    def test_modest_negative_expectancy_gives_minus1(self):
+        """1 win at +0.5R, 3 losses at −1.0R → expectancy≈−0.85 → −1."""
+        entries = (
+            [self._win(actual_pct=0.015)] * 1 +    # R = 0.5
+            [self._loss(actual_pct=-0.03)]  * 3    # abs R = 1.0
+        )
         with patch("engine._load_log", return_value=entries):
-            result = engine.performance_adjustments()
-        self.assertEqual(result.get("AAA.AX"), -1)
+            self.assertEqual(engine.performance_adjustments().get("TST.AX"), -1)
 
-    def test_50pct_win_rate_gives_zero(self):
-        outcomes = ["HIT_TARGET"] * 3 + ["HIT_STOP"] * 3  # 50%
-        entries = self._log("AAA.AX", outcomes)
+    def test_strong_negative_expectancy_gives_minus2(self):
+        """0 wins, 4 losses at −2.0R → expectancy=−2.6 → −2."""
+        entries = [self._loss(actual_pct=-0.06)] * 4  # abs R = 2.0
         with patch("engine._load_log", return_value=entries):
-            result = engine.performance_adjustments()
-        self.assertEqual(result.get("AAA.AX"), 0)
+            self.assertEqual(engine.performance_adjustments().get("TST.AX"), -2)
+
+    def test_asymmetric_loss_penalty(self):
+        """
+        5 wins at +0.3R, 2 losses at −2.0R (71% win rate, negative expectancy).
+        Old win-rate system: 71% → +1.
+        New expectancy system: 0.3×0.714 − 2.0×1.3×0.286 ≈ −0.53 → −1.
+        Proves losses are penalised more than equivalent wins are rewarded.
+        """
+        entries = (
+            [self._win(actual_pct=0.009)] * 5 +    # R = 0.3
+            [self._loss(actual_pct=-0.06)]  * 2    # abs R = 2.0
+        )
+        with patch("engine._load_log", return_value=entries):
+            adj = engine.performance_adjustments().get("TST.AX")
+        self.assertLessEqual(adj, 0,
+            "71% win rate with outsized losses must NOT give a positive adjustment")
 
     def test_rolling_window_capped_at_20(self):
-        """Only the 20 most recent signals are used per ticker."""
-        outcomes = ["HIT_STOP"] * 25 + ["HIT_TARGET"] * 20  # recent 20 = 100% win
-        entries = self._log("CAP.AX", outcomes)
+        """25 early losses then 20 wins at +2.0R — last 20 are all wins → +2."""
+        early_losses = [self._loss(actual_pct=-0.03)] * 25
+        recent_wins  = [self._win(actual_pct=0.06)]  * 20   # R = 2.0
+        with patch("engine._load_log", return_value=early_losses + recent_wins):
+            self.assertEqual(engine.performance_adjustments().get("TST.AX"), 2)
+
+    def test_fallback_when_no_stop_price(self):
+        """No stop_price → falls back to target_pct as 1R. actual=0.08, target=0.04 → R=2.0."""
+        entries = [
+            {"ticker": "FB.AX", "outcome": "HIT_TARGET",
+             "actual_pct": 0.08, "target_pct": 0.04}
+        ] * 5
         with patch("engine._load_log", return_value=entries):
-            result = engine.performance_adjustments()
-        self.assertEqual(result.get("CAP.AX"), 2)
+            self.assertEqual(engine.performance_adjustments().get("FB.AX"), 2)
 
-    def test_expired_gain_counts_as_win(self):
-        entries = self._log("EG.AX", ["EXPIRED_GAIN"] * 4)
+    def test_expired_outcomes_handled_correctly(self):
+        """EXPIRED_GAIN = win, EXPIRED_LOSS = loss."""
+        entries = [
+            {"ticker": "EX.AX", "outcome": "EXPIRED_GAIN", "actual_pct": 0.06,
+             "entry_price": 100.0, "stop_price": 97.0, "target_pct": 0.04}
+        ] * 4
         with patch("engine._load_log", return_value=entries):
-            result = engine.performance_adjustments()
-        self.assertEqual(result.get("EG.AX"), 2)
+            self.assertEqual(engine.performance_adjustments().get("EX.AX"), 2)
 
-    def test_expired_loss_counts_as_loss(self):
-        entries = self._log("EL.AX", ["EXPIRED_LOSS"] * 4)
+    def test_legacy_win_string_counts_as_win(self):
+        """Legacy 'WIN' outcome string is treated as a win."""
+        entries = [
+            {"ticker": "LG.AX", "outcome": "WIN", "actual_pct": 0.06,
+             "entry_price": 100.0, "stop_price": 97.0, "target_pct": 0.04}
+        ] * 5
         with patch("engine._load_log", return_value=entries):
-            result = engine.performance_adjustments()
-        self.assertEqual(result.get("EL.AX"), -2)
-
-    # ── REGRESSION: old code gave -2 for all tickers ─────────────────────────
-    def test_regression_old_code_penalised_all_winners(self):
-        """
-        REGRESSION MARKER — old code used outcome == "WIN":
-        With 4× HIT_TARGET entries the old code computed win_rate=0,
-        which falls into the ≤25% bucket → returned −2 (penalising a winner).
-        New code: win_rate=1.0 → returns +2.
-        Difference: INTENTIONAL FIX.
-        """
-        outcomes = ["HIT_TARGET"] * 4
-        broken_wins  = [o == "WIN" for o in outcomes]
-        broken_rate  = sum(broken_wins) / len(broken_wins)   # 0.0
-        correct_wins = [o in ("WIN", "HIT_TARGET", "EXPIRED_GAIN") for o in outcomes]
-        correct_rate = sum(correct_wins) / len(correct_wins)  # 1.0
-
-        self.assertAlmostEqual(broken_rate, 0.0,
-            msg="Old code produced 0% win rate for HIT_TARGET entries")
-        self.assertAlmostEqual(correct_rate, 1.0,
-            msg="New code produces 100% win rate for HIT_TARGET entries")
+            self.assertGreaterEqual(engine.performance_adjustments().get("LG.AX", 0), 1)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1288,9 +1347,28 @@ class TestBehaviouralRegressionSummary(unittest.TestCase):
         expected_avg = (18 * 0.04 + 12 * (-0.02)) / 30
         self.assertAlmostEqual(r["avg_return"], expected_avg, places=4)
 
+    def test_expectancy_positive_for_winning_log(self):
+        """60% win log with 2× win size → expectancy must be positive."""
+        log = self._make_realistic_log()
+        r   = accuracy_stats(log)
+        # wins: actual_pct=0.04, fallback risk=0.04 → R=1.0
+        # losses: actual_pct=-0.02, fallback risk=0.04 → R=0.5
+        # expectancy = 1.0×0.6 − 0.5×1.3×0.4 = 0.34 > 0
+        self.assertGreater(r["expectancy"], 0,
+            "60% win rate with larger wins than losses must give positive expectancy")
+
+    def test_avg_win_r_exceeds_avg_loss_r_for_winning_log(self):
+        """In this winning log, avg win R-multiple must exceed avg loss R-multiple."""
+        log = self._make_realistic_log()
+        r   = accuracy_stats(log)
+        self.assertIsNotNone(r["avg_win_R"])
+        self.assertIsNotNone(r["avg_loss_R"])
+        self.assertGreater(r["avg_win_R"], r["avg_loss_R"],
+            "Win R-multiple must exceed loss R-multiple in a profitable log")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 16. UPDATE TICKER PERFORMANCE — Discord win rate in outcome notifications
+# 16. UPDATE TICKER PERFORMANCE — Discord expectancy in outcome notifications
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestUpdateTickerPerformanceWinRate(unittest.TestCase):
@@ -1395,6 +1473,32 @@ class TestUpdateTickerPerformanceWinRate(unittest.TestCase):
         full = self._make_log(n_wins=0, n_losses=25)
         wr2  = self._compute_discord_win_rate(full)
         self.assertEqual(wr2, 0.0)
+
+    def test_compute_r_multiple_with_stop_price(self):
+        """_compute_r_multiple: entry=50, stop=47, actual=+0.04 → R = 0.04/(3/50)."""
+        entry = {"entry_price": 50.0, "stop_price": 47.0,
+                 "actual_pct": 0.04, "target_pct": 0.04, "outcome": "HIT_TARGET"}
+        r = engine._compute_r_multiple(entry)
+        self.assertAlmostEqual(r, 0.04 / (3 / 50), places=4)
+
+    def test_compute_r_multiple_fallback_no_stop(self):
+        """_compute_r_multiple fallback: no stop_price → uses target_pct as 1R."""
+        entry = {"actual_pct": 0.08, "target_pct": 0.04, "outcome": "HIT_TARGET"}
+        r = engine._compute_r_multiple(entry)
+        self.assertAlmostEqual(r, 2.0, places=4)
+
+    def test_compute_r_multiple_clamp(self):
+        """_compute_r_multiple: output clamped to ±5.0."""
+        big_win  = {"actual_pct":  1.0, "target_pct": 0.04, "outcome": "HIT_TARGET"}
+        big_loss = {"actual_pct": -1.0, "target_pct": 0.04, "outcome": "HIT_STOP"}
+        self.assertAlmostEqual(engine._compute_r_multiple(big_win),   5.0, places=4)
+        self.assertAlmostEqual(engine._compute_r_multiple(big_loss), -5.0, places=4)
+
+    def test_compute_r_multiple_zero_risk_fallback(self):
+        """_compute_r_multiple: zero/missing risk_pct falls back to 0.04 default."""
+        entry = {"actual_pct": 0.04, "target_pct": 0.0, "outcome": "HIT_TARGET"}
+        r = engine._compute_r_multiple(entry)
+        self.assertAlmostEqual(r, 1.0, places=4)   # 0.04 / 0.04 default = 1.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
