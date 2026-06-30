@@ -87,7 +87,7 @@ WATCHLIST = [
     "ALD.AX", "STX.AX",
 
     # ── Copper & nickel ───────────────────────────────────────────────────
-    "SFR.AX", "MGX.AX", "CTM.AX", "AIS.AX", "WSA.AX",
+    "SFR.AX", "CTM.AX", "AIS.AX", "WSA.AX",
     "MCR.AX", "NIC.AX", "29M.AX", "SFX.AX",
 
     # ── Rare earths & specialty metals ───────────────────────────────────
@@ -127,7 +127,7 @@ WATCHLIST = [
     "LLC.AX", "ABP.AX",
 
     # ── Infrastructure & transport ────────────────────────────────────────
-    "TCL.AX", "ALX.AX", "QAN.AX", "AZJ.AX",
+    "TCL.AX", "ALX.AX", "QAN.AX",
 
     # ── Telecoms ─────────────────────────────────────────────────────────
     "TLS.AX", "CPU.AX", "SPK.AX",
@@ -136,6 +136,82 @@ WATCHLIST = [
     "EBO.AX", "GNC.AX", "NEC.AX", "MTS.AX", "BAP.AX",
     "HLS.AX", "NWL.AX", "GNE.AX", "MLX.AX", "IVZ.AX",
     "FPH.AX", "FBU.AX",
+
+    # ════════════════════════════════════════════════════════════════════
+    # EXPANSION BLOCK — additional ASX coverage
+    # ════════════════════════════════════════════════════════════════════
+
+    # ── Finance & fintech (additional) ───────────────────────────────────
+    "ZIP.AX", "SQ2.AX", "CCP.AX", "ASX.AX", "LNK.AX",
+    "AFG.AX", "PNI.AX", "MNY.AX", "APM.AX",
+
+    # ── Industrials & engineering (additional) ────────────────────────────
+    "ALQ.AX", "MND.AX", "ORA.AX", "PGH.AX", "GWA.AX",
+    "NCK.AX", "ING.AX", "APE.AX", "QUB.AX", "EHL.AX",
+
+    # ── Consumer, media & travel (additional) ────────────────────────────
+    "NWS.AX", "BGA.AX", "BKW.AX", "AHX.AX", "SWM.AX",
+    "AMA.AX", "PFP.AX", "TAH.AX", "UNI.AX", "FLT.AX",
+    "EDV.AX", "KMD.AX", "TPW.AX", "ADH.AX", "PMV.AX",
+    "AX1.AX", "CCX.AX", "AAC.AX", "SHV.AX", "RIC.AX",
+    "CGC.AX",
+
+    # ── Healthcare & biotech (additional) ────────────────────────────────
+    "RHC.AX", "SPL.AX", "EBR.AX", "CHM.AX", "HGH.AX",
+    "SOM.AX", "RAC.AX", "RNO.AX", "SRX.AX", "STA.AX",
+    "CAJ.AX", "IHL.AX", "BPH.AX", "GTG.AX", "EHE.AX",
+    "REG.AX", "OCA.AX", "IDX.AX", "EMV.AX", "OSL.AX",
+    "ANP.AX", "ARX.AX",
+
+    # ── Technology & software (additional) ───────────────────────────────
+    "BRN.AX", "HT1.AX", "TUA.AX", "OCL.AX", "IDA.AX",
+    "AVD.AX", "NXL.AX", "M7T.AX", "BTH.AX", "IFM.AX",
+    "ADA.AX",
+
+    # ── REITs & property (additional) ────────────────────────────────────
+    "WPR.AX", "RGN.AX", "GDI.AX", "COF.AX", "HCW.AX",
+    "URW.AX", "CMW.AX", "INA.AX", "HPI.AX", "GOZ.AX",
+    "LIC.AX", "JLG.AX", "APZ.AX",
+
+    # ── Gold explorers (additional) ──────────────────────────────────────
+    "OGC.AX", "CHN.AX", "PGM.AX", "CYL.AX", "MEI.AX",
+    "NMC.AX", "SIL.AX", "AEI.AX", "NSM.AX", "TON.AX",
+    "WAG.AX", "AUT.AX", "TTM.AX", "YRL.AX", "MRC.AX",
+    "SCN.AX", "GRL.AX", "BDC.AX", "RXL.AX", "MHC.AX",
+    "WKT.AX", "KIN.AX", "MAU.AX", "SMI.AX", "CDO.AX",
+    "SIR.AX", "GHC.AX", "PNR.AX",
+
+    # ── Lithium & battery metals (additional) ────────────────────────────
+    "LRS.AX", "WRM.AX", "ENS.AX", "MGT.AX", "NMT.AX",
+    "AZI.AX", "DLI.AX", "EV1.AX", "LGO.AX", "LIN.AX",
+    "NNL.AX", "RNU.AX", "SRI.AX", "SYL.AX", "AZS.AX",
+    "ENX.AX", "GEN.AX", "PNN.AX", "ABE.AX", "EGR.AX",
+    "CLQ.AX", "GLN.AX",
+
+    # ── Uranium (additional) ─────────────────────────────────────────────
+    "ERA.AX", "MEY.AX", "CAM.AX", "CXU.AX", "EL8.AX",
+    "LAM.AX",
+
+    # ── Coal (additional) ────────────────────────────────────────────────
+    "YAL.AX", "SMR.AX", "BCB.AX", "TER.AX",
+
+    # ── Oil & gas (additional) ───────────────────────────────────────────
+    "GFL.AX", "SEN.AX", "KEG.AX",
+
+    # ── Copper, nickel & base metals (additional) ────────────────────────
+    "PAN.AX", "ARS.AX", "C29.AX", "PXX.AX", "HOC.AX",
+    "SIC.AX", "OVL.AX", "EQR.AX", "CZN.AX", "KM1.AX",
+    "HG8.AX", "CBH.AX",
+
+    # ── Rare earths & specialty (additional) ─────────────────────────────
+    "ARU.AX", "TMT.AX",
+
+    # ── NZ dual-listed on ASX ─────────────────────────────────────────────
+    "AIA.AX", "SKC.AX", "CEN.AX", "MEZ.AX", "MCY.AX",
+    "CNU.AX",
+
+    # ── Diversified / other ───────────────────────────────────────────────
+    "PMC.AX", "BFG.AX", "SXL.AX",
 ]
 FEATURES        = [
     "rsi", "macd_diff", "bb_width", "atr",
