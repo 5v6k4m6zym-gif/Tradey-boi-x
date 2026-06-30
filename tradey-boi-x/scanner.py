@@ -12,7 +12,7 @@ from engine import (
     WATCHLIST, MAX_ALERTS, CORRELATION_GROUPS,
     get_data, train_model, decide, send_alert,
     log_signal, mark_alerted, update_ticker_performance,
-    big_mover_check, send_mover_alert,
+    big_mover_check, send_mover_alert, resolve_outcomes,
 )
 
 SCAN_INTERVAL_SECONDS = 3600   # scan every hour while markets are open
@@ -72,6 +72,20 @@ def _corr_group(ticker: str) -> int | None:
 
 
 def run_scan(model) -> int:
+    # Grade any signals whose hold period has now elapsed, so the next
+    # train_model() call can use those outcomes as feedback weights.
+    try:
+        entries  = resolve_outcomes()
+        resolved = [e for e in entries if e.get("outcome")]
+        pending  = [e for e in entries if not e.get("outcome")]
+        if resolved:
+            wins   = sum(1 for e in resolved if e["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN"))
+            losses = len(resolved) - wins
+            rate   = round(wins / len(resolved) * 100) if resolved else 0
+            print(f"  📊 Signal log: {len(resolved)} resolved ({wins}W/{losses}L, {rate}% win rate) | {len(pending)} pending")
+    except Exception as _e:
+        print(f"  ⚠️  resolve_outcomes error: {_e}")
+
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Scanning {len(WATCHLIST)} tickers…")
     fired          = 0
     alerted_groups: set = set()   # correlation guard — one alert per group per scan
