@@ -1520,7 +1520,7 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         # Mid-session, market open — buy now per RSI logic above
         _entry_banner = ("⚡  **BUY NOW** — market is open, entry is live")
 
-    verdict = "🏆" if result["signal"] == "ELITE BUY" else "✅"
+    verdict = "🏆 ELITE BUY" if result["signal"] == "ELITE BUY" else "✅ GOOD BUY"
     divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     # Compact timing line (no ASCII box)
