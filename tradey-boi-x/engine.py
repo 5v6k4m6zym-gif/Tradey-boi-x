@@ -550,7 +550,9 @@ def _load_cooldowns() -> dict:
     return {}
 
 def _save_cooldowns(cd: dict):
-    COOLDOWN_FILE.write_text(json.dumps({k: v.isoformat() for k, v in cd.items()}, indent=2))
+    tmp = COOLDOWN_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({k: v.isoformat() for k, v in cd.items()}, indent=2))
+    tmp.replace(COOLDOWN_FILE)
 
 def cooldown_ok(ticker: str) -> bool:
     cd = _load_cooldowns()
@@ -629,7 +631,8 @@ def update_ticker_performance() -> dict:
     ]
     for ticker, trades in sorted(bucket.items()):
         recent = trades[-20:]
-        wins   = sum(1 for t in recent if t["outcome"] == "WIN")
+        wins   = sum(1 for t in recent
+                    if t["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN"))
         wr     = wins / len(recent) * 100
         last   = trades[-1]
         change = f"{last['actual_pct']*100:+.1f}%" if last.get("actual_pct") is not None else "?"
@@ -1444,7 +1447,9 @@ def _guard_ok(ticker: str, window_seconds: int = 90) -> bool:
 
         data[ticker]        = now
         data["__last_any__"] = now
-        SEND_GUARD_FILE.write_text(json.dumps(data))
+        _tmp = SEND_GUARD_FILE.with_suffix(".tmp")
+        _tmp.write_text(json.dumps(data))
+        _tmp.replace(SEND_GUARD_FILE)
         return True
     except Exception:
         return True
@@ -1821,7 +1826,11 @@ def _load_log() -> list:
     return []
 
 def _save_log(entries: list):
-    LOG_FILE.write_text(json.dumps(entries, indent=2))
+    """Atomic write — prevents partial reads if two processes write simultaneously.
+    Writes to a .tmp sibling file then os.rename()s it into place (POSIX atomic)."""
+    tmp = LOG_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(entries, indent=2))
+    tmp.replace(LOG_FILE)
 
 def resolve_outcomes() -> list:
     """
@@ -1945,7 +1954,9 @@ def _mover_cd_mark(key: str):
     try:
         data = json.loads(_MOVER_GUARD_FILE.read_text()) if _MOVER_GUARD_FILE.exists() else {}
         data[key] = time.time()
-        _MOVER_GUARD_FILE.write_text(json.dumps(data))
+        _tmp = _MOVER_GUARD_FILE.with_suffix(".tmp")
+        _tmp.write_text(json.dumps(data))
+        _tmp.replace(_MOVER_GUARD_FILE)
     except Exception:
         pass
 
