@@ -1560,15 +1560,15 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
 
     lines = [
         divider,
-        f"{verdict}  **{ticker}**  ${price:.2f}  |  Score {result['score']}/14"
-        f"  ·  AI {result['prob']*100:.0f}%  ·  {grade} {glabel}  `{gbar}`",
+        f"{verdict}  **{ticker}**  ${price:.2f}  |  Score: {result['score']}/14"
+        f"  ·  Confidence: {result['prob']*100:.0f}%  ·  Grade: {grade} {glabel}  `{gbar}`",
         divider,
         timing_line,
         "",
         f"🟢 Entry    {entry_price}  _({entry_note})_",
         f"💰 Target   **${target_price:.2f}**  +{target_pct*100:.0f}%"
         f"  ·  🛑 Stop  **${params['stop_loss']:.2f}**  {params['stop_loss_pct']:.1f}%"
-        f"  ·  ⚖️ R/R  **{rr:.1f}:1**",
+        f"  ·  ⚖️ Risk: 1  ·  Reward: {rr:.1f}",
         f"🚪 Exit by  **{exit_date.strftime('%a %d %b %Y')}**  ({exit_days} trading days)",
         "",
         f"_{why_str}_",
@@ -2151,7 +2151,7 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
         lines = [
             divider,
             f"🔥  **{ticker}**  +{mover['daily_ret']*100:.1f}%  ${price:.2f}"
-            f"  |  Vol {mover['vol_r']:.1f}×  ·  ATR {mover['atr_exp']:.1f}×  ·  RSI {int(rsi)}",
+            f"  |  Vol: {mover['vol_r']:.1f}×  ·  ATR: {mover['atr_exp']:.1f}×  ·  RSI: {int(rsi)}",
             divider,
             timing_line,
             "",
@@ -2159,7 +2159,7 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
             f"⛔ Max      ${max_entry:.2f}  _(don't chase above this)_",
             f"💰 Target   **${plan['tgt']:.2f}**  +{plan['tgt_pct']*100:.0f}%"
             f"  ·  🛑 Stop  **${plan['stop']:.2f}**  {plan['sl_pct']:.1f}%"
-            f"  ·  ⚖️ R/R  **{plan['rr']:.1f}:1**",
+            f"  ·  ⚖️ Risk: 1  ·  Reward: {plan['rr']:.1f}",
             f"🚪 Exit by  **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
             "",
             f"_{now_str}_",
@@ -2180,7 +2180,7 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
         lines = [
             divider,
             f"⚡  **{ticker}**  ${mover['price']:.2f}"
-            f"  |  Squeeze  ·  OBV {obv_r:.1f}×  ·  ADX {adx:.0f}↑  ·  AI {ai_pct:.0f}%",
+            f"  |  Squeeze  ·  OBV: {obv_r:.1f}×  ·  ADX: {adx:.0f}↑  ·  Confidence: {ai_pct:.0f}%",
             divider,
             f"👁  Watch  **${watch:.2f}**  →  entry {brk_date}  ·  {entry_window}",
             f"_Large move expected within 1–3 sessions if watch level breaks with volume_",
@@ -2188,7 +2188,7 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
             f"🟢 Entry    **${watch:.2f}–${max_entry:.2f}**  _(buy the break, not before)_",
             f"💰 Target   **${plan['tgt']:.2f}**  +{plan['tgt_pct']*100:.0f}%"
             f"  ·  🛑 Stop  **${plan['stop']:.2f}**  {plan['sl_pct']:.1f}%"
-            f"  ·  ⚖️ R/R  **{plan['rr']:.1f}:1**",
+            f"  ·  ⚖️ Risk: 1  ·  Reward: {plan['rr']:.1f}",
             f"🚪 Exit by  **{plan['exit_date']}**  ({plan['hold_days']} trading days)",
             "",
             f"⚠️ _WATCH only — enter only if price closes above ${watch:.2f} on volume_",
