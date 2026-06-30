@@ -7,6 +7,7 @@ import os
 import requests
 from datetime import datetime, timedelta
 import pytz as _pytz
+from collections import defaultdict
 from pathlib import Path
 
 import pandas as pd
@@ -310,6 +311,34 @@ def _compute_r_multiple(entry: dict) -> float:
         return max(-5.0, min(5.0, actual / risk_pct))
     except Exception:
         return 0.0
+
+
+# Module-level constant — single source of truth for outcome classification.
+# Used by _expectancy_stats(), performance_adjustments(), update_ticker_performance(),
+# and accuracy_stats(). Change here propagates everywhere.
+WIN_OUTCOMES: tuple = ("WIN", "HIT_TARGET", "EXPIRED_GAIN")
+
+
+def _expectancy_stats(trades: list) -> tuple:
+    """
+    Compute R-multiple expectancy statistics for a list of resolved trade entries.
+
+    Returns (win_Rs, loss_Rs, win_rate, avg_win_R, avg_loss_R, expectancy) where:
+      win_Rs     — R-multiple for each winning trade
+      loss_Rs    — abs R-multiple for each losing trade
+      expectancy = avg_win_R × win_rate − avg_loss_R × 1.3 × (1 − win_rate)
+
+    Single implementation shared by performance_adjustments(),
+    update_ticker_performance(), and accuracy_stats() so the formula
+    cannot drift between callers.
+    """
+    win_Rs     = [_compute_r_multiple(e) for e in trades if e["outcome"] in WIN_OUTCOMES]
+    loss_Rs    = [abs(_compute_r_multiple(e)) for e in trades if e["outcome"] not in WIN_OUTCOMES]
+    win_rate   = len(win_Rs) / len(trades) if trades else 0.0
+    avg_win_R  = sum(win_Rs)  / len(win_Rs)  if win_Rs  else 0.0
+    avg_loss_R = sum(loss_Rs) / len(loss_Rs) if loss_Rs else 0.0
+    expectancy = avg_win_R * win_rate - avg_loss_R * 1.3 * (1 - win_rate)
+    return win_Rs, loss_Rs, win_rate, avg_win_R, avg_loss_R, expectancy
 
 
 def _apply_feedback_weights(combined: pd.DataFrame, weights: pd.Series) -> tuple["pd.Series", int, int]:
@@ -618,8 +647,6 @@ def performance_adjustments() -> dict[str, int]:
     ≤ −0.2R     →  -1  (slight negative — tighten the bar)
     ≤ −1.0R     →  -2  (deeply negative — penalise heavily)
     """
-    from collections import defaultdict
-    WIN_OUTCOMES = ("WIN", "HIT_TARGET", "EXPIRED_GAIN")
     entries  = _load_log()
     resolved = [e for e in entries if e["outcome"] is not None]
     if not resolved:
@@ -632,12 +659,7 @@ def performance_adjustments() -> dict[str, int]:
         recent = trades[-20:]
         if len(recent) < 3:
             continue
-        wins   = [_compute_r_multiple(e) for e in recent if e["outcome"] in WIN_OUTCOMES]
-        losses = [abs(_compute_r_multiple(e)) for e in recent if e["outcome"] not in WIN_OUTCOMES]
-        win_rate   = len(wins)   / len(recent)
-        avg_win_R  = sum(wins)   / len(wins)   if wins   else 0.0
-        avg_loss_R = sum(losses) / len(losses) if losses else 0.0
-        expectancy = avg_win_R * win_rate - avg_loss_R * 1.3 * (1 - win_rate)
+        _, _, win_rate, avg_win_R, avg_loss_R, expectancy = _expectancy_stats(recent)
         if   expectancy >= 1.0:  adj[ticker] = +2
         elif expectancy >= 0.2:  adj[ticker] = +1
         elif expectancy <= -1.0: adj[ticker] = -2
@@ -666,25 +688,18 @@ def update_ticker_performance() -> dict:
     # Build per-ticker summary of newly resolved outcomes
     adj   = performance_adjustments()
     resolved = [e for e in updated if e["outcome"] is not None]
-    from collections import defaultdict
     bucket: dict[str, list] = defaultdict(list)
     for e in resolved:
         bucket[e["ticker"]].append(e)
 
-    WIN_OUTCOMES = ("WIN", "HIT_TARGET", "EXPIRED_GAIN")
     lines = [
         "**TRADEY BOI X** | 📊 Outcome Update",
         f"_{new_count} trade(s) resolved — expectancy model updated_",
         "",
     ]
     for ticker, trades in sorted(bucket.items()):
-        recent     = trades[-20:]
-        win_Rs     = [_compute_r_multiple(e) for e in recent if e["outcome"] in WIN_OUTCOMES]
-        loss_Rs    = [abs(_compute_r_multiple(e)) for e in recent if e["outcome"] not in WIN_OUTCOMES]
-        win_rate   = len(win_Rs) / len(recent) if recent else 0.0
-        avg_win_R  = sum(win_Rs)  / len(win_Rs)  if win_Rs  else 0.0
-        avg_loss_R = sum(loss_Rs) / len(loss_Rs) if loss_Rs else 0.0
-        expectancy = avg_win_R * win_rate - avg_loss_R * 1.3 * (1 - win_rate)
+        recent                                                       = trades[-20:]
+        win_Rs, loss_Rs, win_rate, avg_win_R, avg_loss_R, expectancy = _expectancy_stats(recent)
         last       = trades[-1]
         change     = f"{last['actual_pct']*100:+.1f}%" if last.get("actual_pct") is not None else "?"
         a          = adj.get(ticker, 0)
@@ -1964,7 +1979,6 @@ def resolve_outcomes() -> list:
     return entries
 
 def accuracy_stats(entries: list) -> dict:
-    WIN_OUTCOMES = ("WIN", "HIT_TARGET", "EXPIRED_GAIN")
     resolved = [e for e in entries if e["outcome"] is not None]
     if not resolved:
         return {
@@ -1973,16 +1987,9 @@ def accuracy_stats(entries: list) -> dict:
             "expectancy": None, "avg_win_R": None, "avg_loss_R": None,
             "largest_win_R": None, "largest_loss_R": None,
         }
-    wins_list   = [e for e in resolved if e["outcome"] in WIN_OUTCOMES]
-    losses_list = [e for e in resolved if e["outcome"] not in WIN_OUTCOMES]
-    wins        = len(wins_list)
-    losses      = len(losses_list)
-    win_Rs      = [_compute_r_multiple(e) for e in wins_list]
-    loss_Rs     = [abs(_compute_r_multiple(e)) for e in losses_list]
-    win_rate    = wins / len(resolved)
-    avg_win_R   = sum(win_Rs)  / len(win_Rs)  if win_Rs  else 0.0
-    avg_loss_R  = sum(loss_Rs) / len(loss_Rs) if loss_Rs else 0.0
-    expectancy  = avg_win_R * win_rate - avg_loss_R * 1.3 * (1 - win_rate)
+    win_Rs, loss_Rs, win_rate, avg_win_R, avg_loss_R, expectancy = _expectancy_stats(resolved)
+    wins   = len(win_Rs)
+    losses = len(loss_Rs)
     return {
         "total":          len(resolved),
         "wins":           wins,
