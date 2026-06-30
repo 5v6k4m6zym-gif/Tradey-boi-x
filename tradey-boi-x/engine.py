@@ -22,32 +22,60 @@ _vader = SentimentIntensityAnalyzer()
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 WATCHLIST = [
-    # US — mega-cap tech
+    # ── US — mega-cap tech ────────────────────────────────────────────────
     "AAPL", "MSFT", "NVDA", "AMD", "META", "AMZN", "GOOGL", "NFLX",
-    # US — semiconductors
-    "QCOM", "AVGO", "MU", "TSM", "SMCI", "ARM",
-    # US — software & cloud
-    "CRM", "ORCL", "SHOP", "UBER",
-    # US — EV & energy
-    "TSLA", "XOM", "CVX", "OXY",
-    # US — finance
-    "JPM", "GS", "BAC", "V", "MA",
-    # US — healthcare
-    "LLY", "UNH",
-    # ASX — big 4 banks
-    "CBA.AX", "WBC.AX", "ANZ.AX", "NAB.AX",
-    # ASX — iron ore & diversified miners
-    "BHP.AX", "FMG.AX", "RIO.AX", "S32.AX", "MIN.AX",
-    # ASX — gold miners
-    "NST.AX", "EVN.AX",
-    # ASX — lithium & battery metals
-    "PLS.AX", "LTR.AX", "IGO.AX", "CXO.AX",
-    # ASX — uranium & energy
-    "PDN.AX", "WHC.AX", "WDS.AX", "STO.AX",
-    # ASX — copper
-    "SFR.AX",
-    # ASX — other blue chips
-    "CSL.AX", "WES.AX", "GMG.AX", "RMD.AX", "TLS.AX",
+    # ── US — semiconductors ──────────────────────────────────────────────
+    "QCOM", "AVGO", "MU", "TSM", "SMCI", "ARM", "INTC",
+    # ── US — software, cloud & cyber ─────────────────────────────────────
+    "CRM", "ORCL", "SHOP", "UBER", "ADBE", "PANW", "CRWD", "PLTR", "NOW",
+    # ── US — EV & energy ─────────────────────────────────────────────────
+    "TSLA", "XOM", "CVX", "OXY", "COP",
+    # ── US — finance ─────────────────────────────────────────────────────
+    "JPM", "GS", "BAC", "V", "MA", "MS", "C", "WFC", "AXP", "BLK",
+    # ── US — healthcare ──────────────────────────────────────────────────
+    "LLY", "UNH", "JNJ", "PFE", "ABBV", "MRK", "AMGN",
+    # ── US — consumer ────────────────────────────────────────────────────
+    "COST", "WMT", "HD", "NKE", "MCD", "DIS",
+    # ── US — industrials ─────────────────────────────────────────────────
+    "CAT", "DE", "HON", "BA", "GE",
+
+    # ── ASX — big 4 banks + finance ──────────────────────────────────────
+    "CBA.AX", "WBC.AX", "ANZ.AX", "NAB.AX", "MQG.AX",
+    "SUN.AX", "QBE.AX", "IAG.AX", "BOQ.AX", "BEN.AX",
+    # ── ASX — iron ore & diversified miners ──────────────────────────────
+    "BHP.AX", "FMG.AX", "RIO.AX", "S32.AX", "MIN.AX", "AWC.AX",
+    # ── ASX — gold miners ────────────────────────────────────────────────
+    "NST.AX", "EVN.AX", "RRL.AX", "GOR.AX", "SLR.AX", "WAF.AX",
+    # ── ASX — lithium & battery metals ───────────────────────────────────
+    "PLS.AX", "LTR.AX", "IGO.AX", "CXO.AX", "GL1.AX", "SYA.AX",
+    # ── ASX — uranium ────────────────────────────────────────────────────
+    "PDN.AX", "BOE.AX", "DYL.AX",
+    # ── ASX — coal ───────────────────────────────────────────────────────
+    "WHC.AX", "NHC.AX", "CRN.AX",
+    # ── ASX — oil & gas ──────────────────────────────────────────────────
+    "WDS.AX", "STO.AX", "AGL.AX", "ORG.AX", "APA.AX", "BPT.AX", "KAR.AX",
+    # ── ASX — copper & base metals ───────────────────────────────────────
+    "SFR.AX", "OZL.AX", "MGX.AX",
+    # ── ASX — rare earths & specialty ────────────────────────────────────
+    "LYC.AX", "ILU.AX",
+    # ── ASX — industrials ────────────────────────────────────────────────
+    "BXB.AX", "AMC.AX", "JHX.AX", "WOR.AX", "ORI.AX", "IPL.AX", "NUF.AX",
+    # ── ASX — consumer & retail ──────────────────────────────────────────
+    "WES.AX", "WOW.AX", "COL.AX", "JBH.AX", "HVN.AX",
+    "LOV.AX", "TWE.AX", "DMP.AX", "SUL.AX", "MYR.AX",
+    # ── ASX — healthcare ─────────────────────────────────────────────────
+    "CSL.AX", "RMD.AX", "COH.AX", "SHL.AX", "MPL.AX", "PME.AX", "NHF.AX",
+    # ── ASX — tech ───────────────────────────────────────────────────────
+    "XRO.AX", "WTC.AX", "REA.AX", "SEK.AX", "CAR.AX",
+    "NXT.AX", "IEL.AX", "CTD.AX", "MP1.AX", "ALU.AX",
+    # ── ASX — REITs & property ───────────────────────────────────────────
+    "GMG.AX", "CHC.AX", "GPT.AX", "SCG.AX", "SGP.AX", "MGR.AX", "BWP.AX",
+    # ── ASX — infrastructure & transport ─────────────────────────────────
+    "TCL.AX", "ALX.AX", "QAN.AX",
+    # ── ASX — telecoms ───────────────────────────────────────────────────
+    "TLS.AX", "CPU.AX",
+    # ── ASX — other ──────────────────────────────────────────────────────
+    "EBO.AX", "GNC.AX", "NEC.AX", "MTS.AX", "BAP.AX",
 ]
 FEATURES        = [
     "rsi", "macd_diff", "bb_width", "atr",
