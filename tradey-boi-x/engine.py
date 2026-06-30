@@ -1803,18 +1803,19 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame",
         if not vix_safe():                  return None
         if not earnings_safe(ticker):       return None
 
-        # AI model gate — must be ≥ 75% confident to alert
+        # AI model gate — top-tier signals only (≥ 35% puts a ticker well above the
+        # daily baseline of 17–31%; genuine setups historically reach 38–41%)
         ai_prob = 0.0
         if model is not None:
             try:
                 ai_prob = float(model.predict_proba(
                     pd.DataFrame([row[FEATURES]]))[0][1])
-                if ai_prob < 0.75:
-                    return None   # below 75% confidence threshold
+                if ai_prob < 0.35:
+                    return None   # below top-tier threshold
             except Exception:
                 pass
         else:
-            return None   # no model available — don't alert without AI confirmation
+            return None   # no model — don't alert without AI confirmation
 
         cd_key = f"SETUP__{ticker}"
         if not _mover_cd_ok(cd_key, 48):
@@ -1858,16 +1859,16 @@ def _breakout_setup_check(ticker: str, df: "pd.DataFrame",
         elif pct_to_high < 0.06:
             score += 1; evidence.append(f"Near 52-week high ({pct_to_high*100:.1f}% away)")
 
-        # AI model scoring — all reach here with ai_prob ≥ 0.75
-        if ai_prob >= 0.90:
+        # AI model scoring — all reach here with ai_prob ≥ 0.35
+        if ai_prob >= 0.50:
             score += 3
-            evidence.append(f"🤖 AI model {ai_prob*100:.0f}% confident — very high conviction")
-        elif ai_prob >= 0.82:
+            evidence.append(f"🤖 AI model {ai_prob*100:.0f}% — top-tier conviction")
+        elif ai_prob >= 0.42:
             score += 2
-            evidence.append(f"🤖 AI model {ai_prob*100:.0f}% confident — high conviction")
+            evidence.append(f"🤖 AI model {ai_prob*100:.0f}% — high conviction")
         else:
             score += 1
-            evidence.append(f"🤖 AI model {ai_prob*100:.0f}% confident — above threshold")
+            evidence.append(f"🤖 AI model {ai_prob*100:.0f}% — above baseline")
 
         # Minimum quality bar — must score ≥ 8 to fire (raised from 7 now AI adds up to 3 pts)
         if score < 8:
@@ -2003,18 +2004,18 @@ def _large_move_check(ticker: str, df: "pd.DataFrame") -> dict | None:
         if rsi < 65:
             score += 1; evidence.append(f"RSI {rsi:.0f} — not overbought, move has room")
 
-        # AI model gate — must be ≥ 75% confident to alert
+        # AI model gate — top-tier signals only (≥ 35%)
         ai_prob = 0.0
         if model is not None:
             try:
                 ai_prob = float(model.predict_proba(
                     pd.DataFrame([row[FEATURES]]))[0][1])
-                if ai_prob < 0.75:
-                    return None   # below 75% confidence threshold
+                if ai_prob < 0.35:
+                    return None   # below top-tier threshold
             except Exception:
                 pass
         else:
-            return None   # no model available — don't alert without AI confirmation
+            return None   # no model — don't alert without AI confirmation
 
         # Minimum quality bar — must score ≥ 7
         if score < 7:
