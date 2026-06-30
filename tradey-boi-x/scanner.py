@@ -111,7 +111,7 @@ def run_scan(model) -> int:
                 # to reject false positives before sending a Discord alert.
                 mover = big_mover_check(ticker, df, model=model)
                 if mover:
-                    sent = send_mover_alert(ticker, mover)
+                    sent = send_mover_alert(ticker, mover, df=df)
                     tier = mover["tier"]
                     if tier == "ACTIVE":
                         detail = f"+{mover['daily_ret']*100:.1f}% | {mover['vol_r']:.1f}× vol"
