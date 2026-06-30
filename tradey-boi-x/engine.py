@@ -1580,7 +1580,7 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
 
     lines += [
         divider,
-        f"_{now_aest.strftime('%a %d %b %Y %I:%M %p AEST')}_",
+        f"_{_now_aest.strftime('%a %d %b %Y %I:%M %p AEST')}_",
     ]
 
     try:
