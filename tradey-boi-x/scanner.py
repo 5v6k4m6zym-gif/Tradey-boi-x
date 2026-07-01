@@ -185,7 +185,7 @@ def main():
                 _brief_sent_date = today
                 print(f"  Morning brief {'sent ✅' if ok else 'failed ⚠️  (Discord unreachable)'}")
 
-            run_scan(model)
+            wrap_run_scan(run_scan)(model)
             print(f"Next scan in {SCAN_INTERVAL_SECONDS // 60} min.\n")
             time.sleep(SCAN_INTERVAL_SECONDS)
         else:
