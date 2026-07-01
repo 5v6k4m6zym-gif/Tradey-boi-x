@@ -13,6 +13,7 @@ from engine import (
     get_data, train_model, decide, send_alert,
     log_signal, mark_alerted, update_ticker_performance,
     big_mover_check, send_mover_alert, resolve_outcomes,
+    send_morning_brief,
 )
 
 SCAN_INTERVAL_SECONDS = 3600   # scan every hour while markets are open
@@ -155,8 +156,19 @@ def main():
     model = train_model()
     print("Model ready.\n")
 
+    _brief_sent_date: str | None = None   # tracks which calendar date brief was sent
+
     while True:
         if markets_open():
+            # ── Morning brief — once per calendar day when ASX is open ──
+            asx_open, _ = _market_open(ASX_TZ, 10, 0, 16, 0)
+            today = datetime.now(ASX_TZ).strftime("%Y-%m-%d")
+            if asx_open and _brief_sent_date != today:
+                print(f"[{datetime.now().strftime('%H:%M')}] Sending morning brief…")
+                ok = send_morning_brief()
+                _brief_sent_date = today
+                print(f"  Morning brief {'sent ✅' if ok else 'failed ⚠️  (Discord unreachable)'}")
+
             run_scan(model)
             print(f"Next scan in {SCAN_INTERVAL_SECONDS // 60} min.\n")
             time.sleep(SCAN_INTERVAL_SECONDS)
