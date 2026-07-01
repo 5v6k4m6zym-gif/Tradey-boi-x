@@ -1802,5 +1802,247 @@ class TestActiveTierAiProbInDict(unittest.TestCase):
             "SETUP return dict must still contain 'ai_prob'")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 20. MORNING MARKET BRIEF
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestMorningBrief(unittest.TestCase):
+    """
+    Tests for send_morning_brief() and its helper functions.
+    All network calls are mocked — no live data, no Discord messages sent.
+    """
+
+    def _make_hist(self, closes: list[float]) -> pd.DataFrame:
+        """Minimal history DataFrame with Close column matching yf.Ticker().history()."""
+        return pd.DataFrame({"Close": closes})
+
+    # ── _brief_day_return ────────────────────────────────────────────────────
+
+    def test_brief_day_return_correct_calculation(self):
+        """_brief_day_return must return (last - prev) / prev."""
+        hist = self._make_hist([100.0, 110.0])
+        mock_t = MagicMock()
+        mock_t.history.return_value = hist
+        with patch("engine.yf.Ticker", return_value=mock_t):
+            result = engine._brief_day_return("BHP.AX")
+        self.assertAlmostEqual(result, 0.10, places=5)
+
+    def test_brief_day_return_negative(self):
+        """Negative return is signed correctly."""
+        hist = self._make_hist([100.0, 90.0])
+        mock_t = MagicMock()
+        mock_t.history.return_value = hist
+        with patch("engine.yf.Ticker", return_value=mock_t):
+            result = engine._brief_day_return("BHP.AX")
+        self.assertAlmostEqual(result, -0.10, places=5)
+
+    def test_brief_day_return_insufficient_data_returns_none(self):
+        """Returns None when fewer than 2 rows available."""
+        hist = self._make_hist([100.0])
+        mock_t = MagicMock()
+        mock_t.history.return_value = hist
+        with patch("engine.yf.Ticker", return_value=mock_t):
+            result = engine._brief_day_return("BHP.AX")
+        self.assertIsNone(result)
+
+    def test_brief_day_return_empty_returns_none(self):
+        """Returns None on empty DataFrame — e.g. delisted ticker."""
+        mock_t = MagicMock()
+        mock_t.history.return_value = pd.DataFrame()
+        with patch("engine.yf.Ticker", return_value=mock_t):
+            result = engine._brief_day_return("GONE.AX")
+        self.assertIsNone(result)
+
+    def test_brief_day_return_exception_returns_none(self):
+        """Returns None gracefully when yfinance raises."""
+        mock_t = MagicMock()
+        mock_t.history.side_effect = RuntimeError("network")
+        with patch("engine.yf.Ticker", return_value=mock_t):
+            result = engine._brief_day_return("BHP.AX")
+        self.assertIsNone(result)
+
+    # ── _brief_indicator ─────────────────────────────────────────────────────
+
+    def test_brief_indicator_returns_ret_and_close(self):
+        """_brief_indicator returns (return, close) tuple."""
+        hist = self._make_hist([7800.0, 7900.0])
+        mock_t = MagicMock()
+        mock_t.history.return_value = hist
+        with patch("engine.yf.Ticker", return_value=mock_t):
+            ret, close = engine._brief_indicator("^AXJO")
+        self.assertAlmostEqual(ret, 7900 / 7800 - 1, places=5)
+        self.assertAlmostEqual(close, 7900.0, places=2)
+
+    def test_brief_indicator_insufficient_data(self):
+        """Returns (None, None) when fewer than 2 rows."""
+        mock_t = MagicMock()
+        mock_t.history.return_value = self._make_hist([7800.0])
+        with patch("engine.yf.Ticker", return_value=mock_t):
+            ret, close = engine._brief_indicator("^AXJO")
+        self.assertIsNone(ret)
+        self.assertIsNone(close)
+
+    def test_brief_indicator_exception(self):
+        """Returns (None, None) on network error."""
+        mock_t = MagicMock()
+        mock_t.history.side_effect = RuntimeError("timeout")
+        with patch("engine.yf.Ticker", return_value=mock_t):
+            ret, close = engine._brief_indicator("^AXJO")
+        self.assertIsNone(ret)
+        self.assertIsNone(close)
+
+    # ── _sector_emoji ────────────────────────────────────────────────────────
+
+    def test_sector_emoji_bullish(self):
+        self.assertEqual(engine._sector_emoji(0.01), "🟢")
+
+    def test_sector_emoji_bearish(self):
+        self.assertEqual(engine._sector_emoji(-0.01), "🔴")
+
+    def test_sector_emoji_neutral_positive(self):
+        self.assertEqual(engine._sector_emoji(0.003), "🟡")
+
+    def test_sector_emoji_neutral_negative(self):
+        self.assertEqual(engine._sector_emoji(-0.003), "🟡")
+
+    def test_sector_emoji_boundary_bullish(self):
+        """Exactly +0.5% is green."""
+        self.assertEqual(engine._sector_emoji(0.005), "🟢")
+
+    def test_sector_emoji_boundary_bearish(self):
+        """Exactly -0.5% is red."""
+        self.assertEqual(engine._sector_emoji(-0.005), "🔴")
+
+    # ── _morning_verdict ─────────────────────────────────────────────────────
+
+    def test_verdict_no_data(self):
+        result = engine._morning_verdict(None, 0, 0)
+        self.assertIn("Insufficient", result)
+
+    def test_verdict_risk_off(self):
+        """ASX down >1% forces RISK-OFF regardless of sector counts."""
+        result = engine._morning_verdict(-0.015, 8, 2)
+        self.assertIn("RISK-OFF", result)
+
+    def test_verdict_bullish_rising_market(self):
+        """ASX up >1% with majority bull sectors → BULLISH."""
+        result = engine._morning_verdict(0.012, 7, 3)
+        self.assertIn("BULLISH", result)
+
+    def test_verdict_bullish_broad_sectors(self):
+        """≥65% bull sectors → BULLISH even without strong ASX move."""
+        result = engine._morning_verdict(0.005, 8, 2)
+        self.assertIn("BULLISH", result)
+
+    def test_verdict_caution_broad_weakness(self):
+        """≤35% bull sectors → CAUTION."""
+        result = engine._morning_verdict(0.0, 2, 8)
+        self.assertIn("CAUTION", result)
+
+    def test_verdict_mixed(self):
+        """Balanced sectors with moderate ASX → MIXED."""
+        result = engine._morning_verdict(0.005, 5, 5)
+        self.assertIn("MIXED", result)
+
+    # ── send_morning_brief ───────────────────────────────────────────────────
+
+    def test_send_morning_brief_no_discord_returns_false(self):
+        """Returns False immediately when DISCORD env var is not set."""
+        with patch.object(engine, "DISCORD", ""):
+            result = engine.send_morning_brief()
+        self.assertFalse(result)
+
+    def test_send_morning_brief_posts_to_discord(self):
+        """Posts a message to Discord and returns True on 204."""
+        hist2 = self._make_hist([100.0, 102.0])
+        mock_t = MagicMock()
+        mock_t.history.return_value = hist2
+        mock_resp = MagicMock()
+        mock_resp.status_code = 204
+
+        with patch.object(engine, "DISCORD", "https://discord.test/webhook"), \
+             patch("engine.yf.Ticker", return_value=mock_t), \
+             patch("engine.requests.post", return_value=mock_resp) as mock_post:
+            result = engine.send_morning_brief()
+
+        self.assertTrue(result)
+        mock_post.assert_called_once()
+        payload = mock_post.call_args[1]["json"]["content"]
+        self.assertIn("MORNING BRIEF", payload)
+        self.assertIn("OVERNIGHT INDICATORS", payload)
+        self.assertIn("SECTOR OUTLOOK", payload)
+        self.assertIn("VERDICT", payload)
+
+    def test_send_morning_brief_returns_false_on_http_error(self):
+        """Returns False when Discord returns a non-200/204 status."""
+        hist2 = self._make_hist([100.0, 102.0])
+        mock_t = MagicMock()
+        mock_t.history.return_value = hist2
+        mock_resp = MagicMock()
+        mock_resp.status_code = 429
+
+        with patch.object(engine, "DISCORD", "https://discord.test/webhook"), \
+             patch("engine.yf.Ticker", return_value=mock_t), \
+             patch("engine.requests.post", return_value=mock_resp):
+            result = engine.send_morning_brief()
+
+        self.assertFalse(result)
+
+    def test_send_morning_brief_handles_missing_data_gracefully(self):
+        """All tickers returning None data still produces a valid message."""
+        mock_t = MagicMock()
+        mock_t.history.return_value = pd.DataFrame()   # empty — no data
+        mock_resp = MagicMock()
+        mock_resp.status_code = 204
+
+        with patch.object(engine, "DISCORD", "https://discord.test/webhook"), \
+             patch("engine.yf.Ticker", return_value=mock_t), \
+             patch("engine.requests.post", return_value=mock_resp) as mock_post:
+            result = engine.send_morning_brief()
+
+        self.assertTrue(result)
+        payload = mock_post.call_args[1]["json"]["content"]
+        self.assertIn("n/a", payload)
+
+    def test_send_morning_brief_message_under_2000_chars(self):
+        """Discord has a 2000-character limit — message must not exceed it."""
+        hist2 = self._make_hist([100.0, 102.0])
+        mock_t = MagicMock()
+        mock_t.history.return_value = hist2
+        mock_resp = MagicMock()
+        mock_resp.status_code = 204
+
+        with patch.object(engine, "DISCORD", "https://discord.test/webhook"), \
+             patch("engine.yf.Ticker", return_value=mock_t), \
+             patch("engine.requests.post", return_value=mock_resp) as mock_post:
+            engine.send_morning_brief()
+
+        payload = mock_post.call_args[1]["json"]["content"]
+        self.assertLessEqual(len(payload), 2000)
+
+    def test_send_morning_brief_network_exception_returns_false(self):
+        """Returns False gracefully when requests.post raises."""
+        hist2 = self._make_hist([100.0, 102.0])
+        mock_t = MagicMock()
+        mock_t.history.return_value = hist2
+
+        with patch.object(engine, "DISCORD", "https://discord.test/webhook"), \
+             patch("engine.yf.Ticker", return_value=mock_t), \
+             patch("engine.requests.post", side_effect=OSError("timeout")):
+            result = engine.send_morning_brief()
+
+        self.assertFalse(result)
+
+    def test_morning_sectors_constant_all_tickers_in_watchlist(self):
+        """Every ticker in _MORNING_SECTORS must exist in WATCHLIST."""
+        watchlist_set = set(engine.WATCHLIST)
+        for sector, tickers in engine._MORNING_SECTORS.items():
+            for ticker in tickers:
+                self.assertIn(
+                    ticker, watchlist_set,
+                    f"{ticker} in _MORNING_SECTORS['{sector}'] is not on WATCHLIST"
+                )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
