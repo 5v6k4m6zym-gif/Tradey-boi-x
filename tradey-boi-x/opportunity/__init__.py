@@ -1,6 +1,6 @@
 """
-Tradey Boi X — Opportunity Optimisation Engine
-===============================================
+Tradey Boi X — Opportunity Optimisation Engine (3.0)
+=====================================================
 All features are optional and controlled by feature flags in config.py.
 When all flags are False (the default), this package is a complete no-op
 and the existing strategy operates exactly as it does today.
@@ -11,13 +11,26 @@ run_opportunity_pass(scan_data)   — second-pass analysis on collected scan dat
 get_regime()                      — cached regime classification
 refresh_regime()                  — force-refresh regime cache
 regime_label(regime_dict)         — one-line Discord-friendly regime string
+run_backtest(mode, ...)           — Phase 4: walk-forward / out-of-sample etc.
+run_performance_analytics()       — Phase 5: calibration + weekly Discord report
+run_challenger(candidate_weights) — Phase 6: shadow strategy comparison
+run_health_check()                — Phase 7: memory + log summary
+wrap_run_scan(fn)                 — Phase 7: wraps scanner with health monitoring
 """
 from __future__ import annotations
 import pandas as pd
-from opportunity.config import ENABLE_OPPORTUNITY_ENGINE, ENABLE_ENHANCED_ALERTS
+
+from opportunity.config  import (
+    ENABLE_OPPORTUNITY_ENGINE,
+    ENABLE_ENHANCED_ALERTS,
+    ENABLE_ADVANCED_BACKTESTS,
+    ENABLE_PERFORMANCE_ANALYTICS,
+    ENABLE_STRATEGY_CHALLENGER,
+    ENABLE_SYSTEM_HEALTH,
+)
 from opportunity.regime  import detect_regime, regime_label
 from opportunity.scoring import score_opportunity
-from opportunity.alerts  import send_opportunity_alert
+from opportunity.alerts  import send_opportunity_alert, send_outcome_alert
 
 _cached_regime: dict | None = None
 
@@ -83,11 +96,68 @@ def run_opportunity_pass(
     return sent
 
 
+# ── Lazy imports for heavy optional modules (avoid cost when flags are off) ───
+
+def run_backtest(mode: str = "walk_forward", **kwargs):
+    """Phase 4 — Backtesting Expansion. Returns None when flag is off."""
+    from opportunity.backtester import run_backtest as _rb
+    return _rb(mode=mode, **kwargs)
+
+
+def run_performance_analytics(lookback_days: int = 7):
+    """Phase 5 — Performance Learning. Returns None when flag is off."""
+    from opportunity.performance import run_performance_analytics as _rpa
+    return _rpa(lookback_days=lookback_days)
+
+
+def send_weekly_performance_report(lookback_days: int = 7) -> bool:
+    """Phase 5 — Weekly Discord performance report."""
+    from opportunity.performance import send_weekly_performance_report as _swpr
+    return _swpr(lookback_days=lookback_days)
+
+
+def run_challenger(candidate_weights=None, **kwargs):
+    """Phase 6 — Strategy Challenger Sandbox. Returns None when flag is off."""
+    from opportunity.challenger import run_challenger as _rc
+    return _rc(candidate_weights=candidate_weights, **kwargs)
+
+
+def run_health_check():
+    """Phase 7 — One-off health check. Returns None when flag is off."""
+    from opportunity.health import run_health_check as _rhc
+    return _rhc()
+
+
+def wrap_run_scan(run_scan_fn):
+    """Phase 7 — Wrap scanner with health monitoring."""
+    from opportunity.health import wrap_run_scan as _wrs
+    return _wrs(run_scan_fn)
+
+
+def send_weekly_health_report(lookback_days: int = 7) -> bool:
+    """Phase 7 — Weekly Discord health summary."""
+    from opportunity.health import send_weekly_health_report as _swhr
+    return _swhr(lookback_days=lookback_days)
+
+
 __all__ = [
+    # Core
     "run_opportunity_pass",
     "get_regime",
     "refresh_regime",
     "regime_label",
     "score_opportunity",
     "send_opportunity_alert",
+    "send_outcome_alert",
+    # Phase 4
+    "run_backtest",
+    # Phase 5
+    "run_performance_analytics",
+    "send_weekly_performance_report",
+    # Phase 6
+    "run_challenger",
+    # Phase 7
+    "run_health_check",
+    "wrap_run_scan",
+    "send_weekly_health_report",
 ]
