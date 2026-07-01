@@ -2531,3 +2531,152 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
         return False
     except Exception:
         return False
+
+
+# ─── MORNING MARKET BRIEF ────────────────────────────────────────────────────
+
+_MORNING_SECTORS: dict[str, list[str]] = {
+    "⛏️ Iron Ore / Mining":  ["BHP.AX", "FMG.AX", "RIO.AX", "S32.AX", "MIN.AX"],
+    "🥇 Gold":               ["NST.AX", "EVN.AX", "RRL.AX", "WAF.AX", "CMM.AX"],
+    "🔋 Lithium":            ["PLS.AX", "LTR.AX", "IGO.AX", "CXO.AX"],
+    "☢️ Uranium":            ["PDN.AX", "BOE.AX", "DYL.AX", "LOT.AX"],
+    "🛢️ Oil & Gas":          ["WDS.AX", "STO.AX", "ORG.AX", "BPT.AX"],
+    "🔩 Copper & Metals":    ["SFR.AX", "CTM.AX", "AIS.AX"],
+    "🏦 Banks & Financials": ["CBA.AX", "WBC.AX", "ANZ.AX", "NAB.AX", "MQG.AX"],
+    "💊 Healthcare":         ["CSL.AX", "RMD.AX", "COH.AX", "SHL.AX"],
+    "💻 Technology":         ["XRO.AX", "WTC.AX", "REA.AX", "TNE.AX"],
+    "🏬 Consumer & Retail":  ["WES.AX", "WOW.AX", "JBH.AX", "HVN.AX"],
+    "🏗️ REITs & Property":   ["GMG.AX", "GPT.AX", "SCG.AX", "MGR.AX"],
+}
+
+
+def _brief_day_return(ticker: str) -> float | None:
+    """Previous trading day % return for one ticker. No side effects."""
+    try:
+        hist = yf.Ticker(ticker).history(period="5d")
+        if len(hist) >= 2:
+            return float(
+                (hist["Close"].iloc[-1] - hist["Close"].iloc[-2])
+                / hist["Close"].iloc[-2]
+            )
+    except Exception:
+        pass
+    return None
+
+
+def _brief_indicator(symbol: str) -> tuple[float | None, float | None]:
+    """(prev_day_return, latest_close) for an index / commodity / FX pair."""
+    try:
+        hist = yf.Ticker(symbol).history(period="5d")
+        if len(hist) >= 2:
+            close = float(hist["Close"].iloc[-1])
+            ret   = float(
+                (hist["Close"].iloc[-1] - hist["Close"].iloc[-2])
+                / hist["Close"].iloc[-2]
+            )
+            return ret, close
+    except Exception:
+        pass
+    return None, None
+
+
+def _sector_emoji(avg_ret: float) -> str:
+    if avg_ret >=  0.005: return "🟢"
+    if avg_ret <= -0.005: return "🔴"
+    return "🟡"
+
+
+def _morning_verdict(asx_ret: float | None, bull: int, bear: int) -> str:
+    total = bull + bear
+    if total == 0:
+        return "⚠️ Insufficient data — trade carefully today."
+    bull_pct = bull / total
+    if asx_ret is not None and asx_ret < -0.01:
+        return "🔴 RISK-OFF — ASX falling broadly. Reduce exposure, tighten stops."
+    if asx_ret is not None and asx_ret > 0.01 and bull_pct >= 0.5:
+        return "🟢 BULLISH — Rising market with broad sector support. Good conditions for breakout plays."
+    if bull_pct >= 0.65:
+        return "🟢 BULLISH — Broad advance. Look for breakouts across sectors."
+    if bull_pct <= 0.35:
+        return "🔴 CAUTION — Broad weakness. Trade selectively, tighten stops on all plays."
+    return "🟡 MIXED — Selective opportunities. Favour the strongest sectors only."
+
+
+def send_morning_brief() -> bool:
+    """Send a sector-by-sector morning market evaluation to Discord.
+
+    Fires once per day at ASX open (called by scanner.py).
+    Read-only market data — no side effects on the signal log or watchlist.
+    Returns True if the message was delivered successfully.
+    """
+    if not DISCORD:
+        return False
+
+    _aest_now = datetime.now(_pytz.timezone("Australia/Sydney"))
+    date_str  = _aest_now.strftime("%a %-d %b %Y")
+
+    lines: list[str] = [
+        f"🌅 **ASX MORNING BRIEF — {date_str}**",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "📊 **OVERNIGHT INDICATORS**",
+    ]
+
+    asx_ret,  asx_lvl  = _brief_indicator("^AXJO")
+    sp_ret,   sp_lvl   = _brief_indicator("^GSPC")
+    gold_ret, gold_lvl = _brief_indicator("GC=F")
+    fx_ret,   fx_lvl   = _brief_indicator("AUDUSD=X")
+
+    def _fmt(label: str, ret, lvl, prefix: str = "") -> str:
+        if ret is None:
+            return f"`{label}`: n/a"
+        arrow = "▲" if ret >= 0 else "▼"
+        sign  = "+" if ret >= 0 else ""
+        lvl_s = f"  |  {prefix}{lvl:,.0f}" if lvl is not None else ""
+        return f"`{label}`:  {arrow} {sign}{ret * 100:.2f}%{lvl_s}"
+
+    lines += [
+        _fmt("ASX 200  ", asx_ret,  asx_lvl),
+        _fmt("S&P 500  ", sp_ret,   sp_lvl),
+        _fmt("Gold     ", gold_ret, gold_lvl, "$"),
+        _fmt("AUD/USD  ", fx_ret,   fx_lvl),
+        "",
+        "📈 **SECTOR OUTLOOK** _(previous close)_",
+    ]
+
+    bull, bear = 0, 0
+    for sector, reps in _MORNING_SECTORS.items():
+        returns = [r for t in reps if (r := _brief_day_return(t)) is not None]
+        if not returns:
+            lines.append(f"➖ **{sector}**  n/a")
+            continue
+        avg  = sum(returns) / len(returns)
+        sign = "+" if avg >= 0 else ""
+        em   = _sector_emoji(avg)
+        pairs = [(t, _brief_day_return(t) or 0.0) for t in reps]
+        lead  = max(pairs, key=lambda x: x[1])
+        lead_sign = "+" if lead[1] >= 0 else ""
+        lines.append(
+            f"{em} **{sector}**  {sign}{avg * 100:.2f}%"
+            f"  _(lead: {lead[0].replace('.AX', '')} {lead_sign}{lead[1] * 100:.1f}%)_"
+        )
+        if avg >=  0.003: bull += 1
+        elif avg <= -0.003: bear += 1
+
+    verdict = _morning_verdict(asx_ret, bull, bear)
+    lines += [
+        "",
+        "🎯 **TODAY'S VERDICT**",
+        verdict,
+        f"_{_aest_now.strftime('%H:%M AEST')}_",
+    ]
+
+    try:
+        r = requests.post(
+            DISCORD,
+            json={"content": "\n".join(lines)[:2000]},
+            timeout=10,
+        )
+        return r.status_code in (200, 204)
+    except Exception:
+        return False
