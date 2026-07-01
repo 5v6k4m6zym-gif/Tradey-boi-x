@@ -1,0 +1,521 @@
+# Tradey Boi X 3.0 – Opportunity Optimisation Engine
+## SAFE ADDITIVE UPGRADE PROMPT
+
+You are modifying an existing, working trading bot called Tradey Boi.
+
+YOUR PRIMARY OBJECTIVE IS TO IMPROVE THE BOT WITHOUT BREAKING ANY EXISTING FUNCTIONALITY.
+
+This is an additive upgrade only.
+
+========================================================================
+NON-NEGOTIABLE RULES
+========================================================================
+
+DO NOT:
+
+• Remove existing code.
+• Rewrite the existing strategy.
+• Replace existing trading logic.
+• Break Discord alerts.
+• Break existing APIs.
+• Change current alert formats unless only adding extra information.
+• Remove any existing indicators.
+• Remove existing filters.
+• Remove existing files.
+• Reduce existing prediction accuracy.
+• Change existing behaviour unless controlled by a feature flag.
+
+The existing Tradey Boi strategy must continue operating exactly as it currently does.
+
+Everything new must exist alongside the current system.
+
+========================================================================
+PRIMARY GOAL
+========================================================================
+
+Create a completely new OPTIONAL module called:
+
+OpportunityOptimisationEngine
+
+This engine should work alongside the existing Tradey Boi strategy.
+
+It should search for higher-conviction trades with significantly larger expected upside while maintaining disciplined risk management.
+
+The goal is to identify fewer, higher-quality opportunities rather than generating more trades.
+
+This engine must never interfere with or replace the existing strategy.
+
+========================================================================
+HIGH UPSIDE MODE
+========================================================================
+
+The new engine should prioritise stocks with larger expected price movements.
+
+Instead of targeting only shorter-term gains, allow the system to identify opportunities expected to produce larger moves over longer holding periods.
+
+Examples include:
+
+20% expected move
+
+30% expected move
+
+50% expected move
+
+100%+ expected move
+
+Holding periods may range from several days to several months if supported by the data.
+
+The engine should still provide buy and sell alerts.
+
+========================================================================
+MULTI-FACTOR OPPORTUNITY SCORING
+========================================================================
+
+Create a configurable weighted scoring model.
+
+Suggested weighting:
+
+Expected Return.....................35%
+
+Technical Strength..................20%
+
+Volume Expansion....................15%
+
+Momentum............................10%
+
+News/Catalyst Strength..............10%
+
+Institutional Buying................5%
+
+Risk/Reward.........................5%
+
+Allow these weights to be changed through configuration.
+
+Generate an overall Opportunity Score for every candidate.
+
+========================================================================
+REQUIRED FILTERS
+========================================================================
+
+Every candidate should pass configurable minimum requirements.
+
+Examples:
+
+Minimum Confidence
+
+Minimum Expected Upside
+
+Minimum Average Daily Volume
+
+Minimum Liquidity
+
+Maximum Spread
+
+Maximum Acceptable Downside
+
+Minimum Risk/Reward Ratio
+
+Maximum Position Risk
+
+Sector Strength
+
+Market Strength
+
+Reject opportunities that fail minimum thresholds.
+
+========================================================================
+AI ANALYSIS LAYER
+========================================================================
+
+For every trade candidate calculate:
+
+Expected upside
+
+Expected downside
+
+Estimated holding period
+
+Probability of target being reached
+
+Probability of stop loss being triggered
+
+Risk level
+
+Confidence score
+
+Opportunity score
+
+Suggested entry zone
+
+Suggested stop loss
+
+Suggested take profit levels
+
+Suggested trailing stop
+
+Risk/reward ratio
+
+Catalyst explanation
+
+Technical explanation
+
+Momentum explanation
+
+Reasons supporting the trade
+
+Reasons against the trade
+
+========================================================================
+BUY ALERTS
+========================================================================
+
+Continue sending Discord alerts exactly as before.
+
+Enhance alerts by including:
+
+Opportunity Score
+
+Confidence %
+
+Expected Return
+
+Risk Level
+
+Risk/Reward
+
+Suggested Entry
+
+Suggested Stop
+
+Take Profit 1
+
+Take Profit 2
+
+Take Profit 3
+
+Estimated Holding Period
+
+Summary of why the trade was selected
+
+========================================================================
+SELL ALERTS
+========================================================================
+
+Continue existing sell alerts.
+
+Also include:
+
+Profit achieved
+
+Percentage gain/loss
+
+Original prediction
+
+Whether target was reached
+
+Whether stop loss triggered
+
+Whether catalyst changed
+
+Suggested next action
+
+========================================================================
+MARKET REGIME DETECTION
+========================================================================
+
+Add a Market Regime Detector.
+
+Automatically classify markets as:
+
+Bullish
+
+Bearish
+
+Sideways
+
+High Volatility
+
+Low Volatility
+
+Allow OpportunityOptimisationEngine to adjust scoring depending on market regime.
+
+This behaviour must be optional.
+
+========================================================================
+STRATEGY CHALLENGER
+========================================================================
+
+Create a completely isolated sandbox environment.
+
+Purpose:
+
+Allow the AI to experiment with improved scoring models.
+
+IMPORTANT:
+
+The sandbox may NEVER modify the production strategy.
+
+Instead it should:
+
+Generate candidate improvements
+
+Backtest them
+
+Paper trade them
+
+Compare against production
+
+Generate reports
+
+Only recommend improvements.
+
+Never automatically deploy improvements.
+
+========================================================================
+BACKTESTING
+========================================================================
+
+Expand the backtesting system.
+
+Support:
+
+Walk-forward testing
+
+Out-of-sample testing
+
+Historical simulation
+
+Paper trading
+
+Performance benchmarking
+
+Generate reports including:
+
+Win Rate
+
+Loss Rate
+
+Average Gain
+
+Average Loss
+
+Profit Factor
+
+Maximum Drawdown
+
+Sharpe Ratio
+
+Sortino Ratio
+
+Expectancy
+
+Average Holding Time
+
+Winning Streak
+
+Losing Streak
+
+Annualised Return
+
+False Positive Rate
+
+False Negative Rate
+
+========================================================================
+PERFORMANCE LEARNING
+========================================================================
+
+Track every recommendation.
+
+Store:
+
+Entry
+
+Exit
+
+Profit/Loss
+
+Confidence
+
+Opportunity Score
+
+Holding Time
+
+Sector
+
+Market Regime
+
+Catalyst
+
+Prediction Accuracy
+
+Create periodic reports comparing:
+
+Expected outcome
+
+Actual outcome
+
+Use this to calibrate future confidence scores.
+
+========================================================================
+SYSTEM HEALTH
+========================================================================
+
+Automatically monitor:
+
+Memory usage
+
+CPU usage
+
+API latency
+
+Failed requests
+
+Duplicate alerts
+
+Missed alerts
+
+Unexpected behaviour
+
+Log all important events.
+
+========================================================================
+SELF-OPTIMISATION
+========================================================================
+
+Without changing strategy behaviour:
+
+Reduce duplicate code
+
+Improve readability
+
+Improve modularity
+
+Improve efficiency
+
+Reduce unnecessary API calls
+
+Improve caching
+
+Improve logging
+
+Improve documentation
+
+Improve error handling
+
+Refactor only where behaviour remains identical.
+
+========================================================================
+FEATURE FLAGS
+========================================================================
+
+Everything must be optional.
+
+Example:
+
+ENABLE_OPPORTUNITY_ENGINE=true
+
+ENABLE_AI_SCORING=true
+
+ENABLE_MARKET_REGIME=true
+
+ENABLE_STRATEGY_CHALLENGER=false
+
+ENABLE_DYNAMIC_SCORING=false
+
+ENABLE_ADVANCED_BACKTESTS=true
+
+ENABLE_PERFORMANCE_ANALYTICS=true
+
+Turning these off must restore identical behaviour to the current Tradey Boi system.
+
+========================================================================
+CODE QUALITY
+========================================================================
+
+Before completion automatically perform:
+
+Linting
+
+Formatting
+
+Static analysis
+
+Dependency validation
+
+Unit tests
+
+Integration tests
+
+Performance profiling
+
+Repair any issues found.
+
+========================================================================
+FINAL VALIDATION
+========================================================================
+
+Compare:
+
+Current Tradey Boi
+
+vs
+
+Tradey Boi with Opportunity Optimisation Engine
+
+Verify:
+
+✔ Existing strategy unchanged
+
+✔ Existing alerts unchanged
+
+✔ Existing APIs unchanged
+
+✔ Existing files preserved
+
+✔ Backwards compatibility maintained
+
+✔ New engine isolated
+
+✔ Tests passing
+
+✔ No major performance regression
+
+✔ Documentation generated
+
+========================================================================
+FINAL DELIVERABLE
+========================================================================
+
+Deliver a fully integrated upgrade consisting of:
+
+1. Opportunity Optimisation Engine
+
+2. AI Opportunity Scoring Engine
+
+3. Enhanced Buy/Sell Alert System
+
+4. Market Regime Detector
+
+5. Strategy Challenger Sandbox
+
+6. Advanced Backtesting Suite
+
+7. Performance Analytics Dashboard
+
+8. Prediction Calibration System
+
+9. System Health Monitoring
+
+10. Self-Optimisation Utilities
+
+11. Full Technical Documentation
+
+12. Configuration Guide
+
+13. Feature Flag Controls
+
+The finished upgrade must preserve every existing Tradey Boi capability while adding an optional high-upside trading engine that focuses on identifying larger market moves with disciplined risk management, comprehensive testing, and continuous performance evaluation.
+
+IMPORTANT:
+Before making any code changes, analyse the existing project architecture and produce a detailed implementation plan showing exactly how the new modules will integrate without modifying existing trading logic. After implementation, run all tests and provide a summary of what was added, what remained unchanged, and any recommendations for future optional improvements.
