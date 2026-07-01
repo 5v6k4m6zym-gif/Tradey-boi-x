@@ -16,10 +16,11 @@ from engine import (
     send_morning_brief,
 )
 try:
-    from opportunity import run_opportunity_pass, refresh_regime
+    from opportunity import run_opportunity_pass, refresh_regime, wrap_run_scan
     _OPP_AVAILABLE = True
 except ImportError:
     _OPP_AVAILABLE = False
+    def wrap_run_scan(fn): return fn   # no-op shim when package unavailable
 
 SCAN_INTERVAL_SECONDS = 3600   # scan every hour while markets are open
 
