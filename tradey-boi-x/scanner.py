@@ -15,6 +15,11 @@ from engine import (
     big_mover_check, send_mover_alert, resolve_outcomes,
     send_morning_brief,
 )
+try:
+    from opportunity import run_opportunity_pass, refresh_regime
+    _OPP_AVAILABLE = True
+except ImportError:
+    _OPP_AVAILABLE = False
 
 SCAN_INTERVAL_SECONDS = 3600   # scan every hour while markets are open
 
@@ -90,12 +95,14 @@ def run_scan(model) -> int:
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Scanning {len(WATCHLIST)} tickers…")
     fired          = 0
     alerted_groups: set = set()   # correlation guard — one alert per group per scan
+    _scan_data: list = []          # collected for opportunity second-pass (no extra API calls)
 
     for ticker in WATCHLIST:
         try:
             df  = get_data(ticker, "6mo")
             if df.empty:
                 continue
+            _scan_data.append((ticker, df))
             res = decide(ticker, df, model)
 
             if res["alert"] and fired < MAX_ALERTS:
@@ -141,6 +148,14 @@ def run_scan(model) -> int:
 
     update_ticker_performance()
     print(f"Scan done. {fired} alert(s) sent.")
+
+    # ── Opportunity Engine second pass (additive — never replaces existing alerts) ──
+    if _OPP_AVAILABLE:
+        try:
+            run_opportunity_pass(_scan_data)
+        except Exception as _e:
+            print(f"  ⚠️  Opportunity engine error: {_e}")
+
     return fired
 
 # ─── MAIN LOOP ───────────────────────────────────────────────────────────────
