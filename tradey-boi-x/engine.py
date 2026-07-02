@@ -941,7 +941,7 @@ def multitimeframe_signal(ticker: str) -> tuple:
             ema50     = close.ewm(span=50, adjust=False).mean()
             macd_line = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
             if ema20.iloc[-1] > ema50.iloc[-1] and macd_line.iloc[-1] > 0:
-                result = (+1, "Intraday trend aligned (1h EMA + MACD bullish)")
+                result = (+1, "1-hour trend aligned with daily signal (EMA + MACD bullish)")
             else:
                 result = (0, "")
     except Exception:
@@ -1154,7 +1154,7 @@ def vwap_signal(ticker: str) -> tuple:
         if crossed_above and vol_surge:
             result = (+2, f"VWAP cross-above on volume surge — institutional repositioning long (VWAP ${last_vwap:.2f})")
         elif above:
-            result = (+1, f"Trading above VWAP ${last_vwap:.2f} — bullish intraday positioning")
+            result = (+1, f"Trading above VWAP ${last_vwap:.2f} — bullish positioning")
         elif not above:
             result = (-1, f"Below VWAP ${last_vwap:.2f} — institutional average cost above current price")
         else:
