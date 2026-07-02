@@ -1778,9 +1778,11 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
                          f"└─────────────────────────────────┘")
     elif _is_intraday and not _mkt_open:
         # Intraday signal but market is closed — cannot defer
-        entry_note   += " — market closed; skip unless signal recurs at next open"
-        _entry_banner = ("⚠️  **INTRADAY SIGNAL — MARKET CLOSED**\n"
-                         "_This VWAP/gap setup expires at close. Skip it unless the same signal fires at next open._")
+        _next_open_str  = "10:00am AEST" if _is_asx else "11:30pm AEST"
+        _next_open_date = buy_date.strftime("%a %d %b")
+        entry_note   += f" — market closed; check back {_next_open_date} at {_next_open_str} for a fresh signal"
+        _entry_banner = (f"⚠️  **INTRADAY SIGNAL — MARKET CLOSED**\n"
+                         f"_This VWAP/gap setup expires at close. Check back {_next_open_date} at {_next_open_str} for a fresh signal._")
     elif not _mkt_open and _is_swing:
         # Swing setup — thesis still valid at next open
         _open_str    = "10:00am AEST tomorrow" if _is_asx else "11:30pm AEST tonight"
@@ -1803,7 +1805,9 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         _open_label = "ASX open" if _is_asx else "US open"
         timing_line = f"⚡ **BUY NOW** — {_open_label.upper()}  ·  tightest spreads right now"
     elif _is_intraday and not _mkt_open:
-        timing_line = "⚠️ **INTRADAY signal — market closed**  ·  skip unless signal recurs at next open"
+        _open_str   = "10:00am AEST" if _is_asx else "11:30pm AEST"
+        _open_date  = buy_date.strftime("%a %d %b")
+        timing_line = f"⚠️ **INTRADAY signal — market closed**  ·  check back {_open_date} · {_open_str}"
     elif not _mkt_open and _is_swing:
         _open_str   = "10:00am AEST" if _is_asx else "11:30pm AEST"
         _open_date  = buy_date.strftime("%a %d %b")
