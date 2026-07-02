@@ -1,0 +1,3 @@
+- [ASX watchlist delisted tickers](tradey-boi-x-watchlist.md) — scanner logs "possibly delisted" warnings; cross-check against WATCHLIST before removing, don't guess.
+- [Historical backtest methodology](tradey-boi-x-backtest.md) — must use time-split train/test or results are worthless (100% win rate = red flag, not success).
+- [Artifact port conflicts](artifact-port-conflicts.md) — unrelated scaffold artifacts can hardcode the same localPort as the real app; check for conflicts before assuming code is broken.

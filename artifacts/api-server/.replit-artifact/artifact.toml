@@ -5,12 +5,12 @@ version = "1.0.0"
 id = "3B4_FFSkEVBkAeYMFRJ2e"
 
 [[services]]
-localPort = 5000
+localPort = 5050
 name = "Tradey Boi X"
 paths = ["/"]
 
 [services.development]
-run = "cd tradey-boi-x && streamlit run dashboard.py"
+run = "pnpm --filter @workspace/api-server run dev"
 
 [services.production]
 
@@ -18,4 +18,4 @@ run = "cd tradey-boi-x && streamlit run dashboard.py"
 args = ["python", "main.py"]
 
 [services.production.run.env]
-PORT = "5000"
+PORT = "5050"
