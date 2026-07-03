@@ -1,0 +1,337 @@
+Tradey Boi X v3.0 – Profit Factor Optimisation & Full Validation Prompt
+
+You are modifying Tradey Boi X.
+
+Your objective is to improve the system’s long-term performance by increasing the Profit Factor from approximately 1.21 toward 1.40+, while maintaining or improving overall expectancy, robustness, and stability.
+
+This is a performance optimisation only.
+
+NON-NEGOTIABLE RULES
+
+Do NOT redesign the bot.
+
+Do NOT remove any existing functionality.
+
+Do NOT change the overall trading philosophy.
+
+Do NOT alter user workflows.
+
+Do NOT reduce system reliability.
+
+Maintain full backwards compatibility.
+
+If any optimisation introduces instability, bugs, or degraded performance, automatically reject or roll back that optimisation.
+
+⸻
+
+PRESERVE ALL EXISTING FEATURES
+
+The following must continue working exactly as intended:
+
+* Morning Market Evaluation
+* Buy Alerts
+* Sell Alerts
+* AI prediction engine
+* Risk management
+* Position sizing
+* Alert scheduling
+* Watchlists
+* Notification system
+* Logging
+* Historical backtesting
+* Forward validation
+* Tradey Boi X 2.0 instrumentation
+* Outcome tracking
+* Confidence calibration
+* Regime reporting
+* Performance reporting
+* Configuration loading
+* API integrations
+* Error handling
+
+No existing functionality may be removed or broken.
+
+⸻
+
+PERFORMANCE OPTIMISATION
+
+Optimise only where statistical evidence shows improvement.
+
+Improve Trade Filtering
+
+Reduce low-quality trades by rejecting setups with:
+
+* Weak momentum
+* Weak volume confirmation
+* Poor reward-to-risk ratio
+* Conflicting indicators
+* Excessive volatility
+* Low historical expectancy
+* Poor AI confidence
+
+Focus on increasing average trade quality rather than trade quantity.
+
+⸻
+
+Improve AI Confidence Scoring
+
+Build a stronger confidence model using:
+
+* Trend quality
+* Momentum strength
+* Volume confirmation
+* Historical pattern similarity
+* Sector strength
+* Market regime
+* Volatility regime
+* Prediction certainty
+* Historical outcome probability
+
+Confidence should prioritise higher-quality trades rather than increase trade frequency.
+
+⸻
+
+Improve Expectancy
+
+Increase:
+
+* Average Winning Trade
+
+Maintain or reduce:
+
+* Average Losing Trade
+
+Optimise overall expectancy rather than simply increasing win rate.
+
+⸻
+
+Adaptive Entry Optimisation
+
+Improve entries using statistically validated confirmation including:
+
+* Breakout confirmation
+* Pullback confirmation
+* Candle confirmation
+* Volume confirmation
+* Trend continuation confirmation
+* Multi-timeframe agreement
+
+Only adopt changes that outperform existing logic.
+
+⸻
+
+Adaptive Exit Optimisation
+
+Test and implement only if beneficial:
+
+* ATR trailing stops
+* Volatility-adjusted exits
+* Momentum deterioration exits
+* Trend exhaustion exits
+* Partial profit locking
+* Dynamic profit targets
+* Time-based exits when appropriate
+
+Reject any exit logic that reduces expectancy.
+
+⸻
+
+AI Learning Improvements
+
+Expand learning using historical outcomes.
+
+Allow the AI to identify:
+
+* Highest expectancy setups
+* Lowest expectancy setups
+* Best market conditions
+* Best volatility environments
+* Best sectors
+* Best confidence thresholds
+* Best holding periods
+
+Learning must remain passive, statistically valid and resistant to overfitting.
+
+⸻
+
+Market Regime Detection
+
+Improve regime classification:
+
+* Strong Bull Trend
+* Bull Trend
+* Sideways
+* Bear Trend
+* High Volatility
+* Low Volatility
+* Risk-On
+* Risk-Off
+
+Allow thresholds to adapt according to regime.
+
+⸻
+
+Duplicate Alert Prevention
+
+Investigate and permanently resolve duplicate Morning Market Evaluations.
+
+Ensure:
+
+* Only one evaluation runs per scheduled session.
+* Duplicate alerts cannot occur.
+* Scheduler integrity is maintained.
+* Existing alert timing remains unchanged.
+
+⸻
+
+OVERFITTING PROTECTION
+
+Reject any optimisation that only improves historical data.
+
+Every improvement must pass:
+
+* Walk-forward validation
+* Out-of-sample testing
+* Cross-validation
+* Monte Carlo simulations
+* Bull markets
+* Bear markets
+* Sideways markets
+* High-volatility periods
+* Low-volatility periods
+
+Only retain improvements that demonstrate consistent statistical robustness.
+
+⸻
+
+CODE QUALITY
+
+Perform a complete code audit.
+
+Automatically identify and repair:
+
+* Dead code
+* Duplicate logic
+* Unused variables
+* Inefficient calculations
+* Excessive API calls
+* Race conditions
+* Scheduler conflicts
+* Memory leaks
+* Performance bottlenecks
+* Error handling weaknesses
+
+Do not alter behaviour unless improvement is validated.
+
+⸻
+
+SYSTEM SAFETY
+
+Before accepting any optimisation verify:
+
+* No broken alerts
+* No broken notifications
+* No API failures
+* No scheduler failures
+* No duplicate executions
+* No performance degradation
+* No increased latency
+* No memory issues
+* No crashes
+* No loss of existing functionality
+
+Automatically rollback any failed optimisation.
+
+⸻
+
+FULL VALIDATION
+
+After installation perform a complete validation.
+
+Functional Tests
+
+Test every major system including:
+
+* Morning Market Evaluation
+* Buy Alerts
+* Sell Alerts
+* Watchlists
+* Notifications
+* AI Prediction Engine
+* Risk calculations
+* Position sizing
+* Scheduler
+* Logging
+* Backtesting
+* Forward validation
+* Instrumentation
+* Configuration loading
+* API connectivity
+
+Every test must pass before deployment.
+
+⸻
+
+Historical Testing
+
+Run a minimum of 20 independent historical simulations covering:
+
+* Bull markets
+* Bear markets
+* Sideways markets
+* High volatility
+* Low volatility
+* Multiple sectors
+* Multiple market-cap categories
+
+Measure and compare:
+
+* Win Rate
+* Profit Factor
+* Maximum Drawdown
+* CAGR
+* Sharpe Ratio
+* Sortino Ratio
+* Recovery Factor
+* Average Win
+* Average Loss
+* Trade Frequency
+* Expectancy
+
+Compare all results against the previous version.
+
+⸻
+
+Forward Validation
+
+Run forward simulation to verify:
+
+* Stable AI predictions
+* Correct alert generation
+* No duplicate Morning Market Evaluations
+* Correct scheduling
+* Notification reliability
+* API stability
+* Logging accuracy
+
+⸻
+
+FINAL REPORT
+
+Produce a comprehensive report including:
+
+* Previous system metrics
+* Updated system metrics
+* Profit Factor comparison
+* Win Rate comparison
+* Expectancy comparison
+* Drawdown comparison
+* Trade Frequency comparison
+* Risk comparison
+* Statistical significance of every improvement
+* List of accepted optimisations
+* List of rejected optimisations with reasons
+* Confirmation that all existing functionality remains fully operational
+* Confirmation that all validation tests passed successfully
+
+Do not deploy any optimisation unless every validation, safety check, functional test, and performance test passes successfully. Prioritise long-term robustness and genuine trading edge over short-term improvements or historical optimisation.
