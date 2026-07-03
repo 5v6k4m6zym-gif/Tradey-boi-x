@@ -48,6 +48,14 @@ except ImportError:
     _AUDIT_ENGINE_AVAILABLE = False
     ENABLE_AUDIT_ENGINE = False
 
+try:
+    from opportunity.strategy_optimizer import process_trade_signal as process_strategy_signal
+    from opportunity.config import ENABLE_STRATEGY_OPTIMIZER
+    _STRATEGY_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    _STRATEGY_OPTIMIZER_AVAILABLE = False
+    ENABLE_STRATEGY_OPTIMIZER = False
+
 SCAN_INTERVAL_SECONDS = 3600   # scan every hour while markets are open
 
 # ─── MARKET HOURS ────────────────────────────────────────────────────────────
@@ -193,6 +201,35 @@ def run_scan(model) -> int:
                             continue
                     except Exception as _ac:
                         print(f"  ⚠️  {ticker}: adaptive core error ({_ac}) — proceeding unaffected")
+
+                # ── Self-Optimising Strategy Engine (SAFE MODE) ───────────
+                # Purely additive: tags the trade with an inferred strategy
+                # type, checks it against the regime-strategy map and its own
+                # bounded weight/expectancy track record. Logs to
+                # logs/strategy_optimizer_decisions.jsonl. Shares the same
+                # SHADOW_MODE switch as the other layers — off by default via
+                # ENABLE_STRATEGY_OPTIMIZER, so this is a strict no-op today.
+                if ENABLE_STRATEGY_OPTIMIZER:
+                    try:
+                        params = engine._trade_params(ticker, res, price, df)
+                        trade  = {
+                            "ticker":      ticker,
+                            "direction":   "LONG",
+                            "entry":       price,
+                            "stop_loss":   params["stop_loss"],
+                            "take_profit": params["target_price"],
+                            "probability": res.get("prob", 0.0),
+                            "expected_r":  res.get("expected_r"),
+                            "why":         res.get("why", []),
+                            "rsi":         res.get("rsi"),
+                            "edge_score":  res.get("prob", 0.0),
+                        }
+                        strategy_approved = process_strategy_signal(trade, df)
+                        if not SHADOW_MODE and strategy_approved is None:
+                            print(f"  🧭 {ticker}: rejected by strategy optimiser (see logs/strategy_optimizer_decisions.jsonl)")
+                            continue
+                    except Exception as _so:
+                        print(f"  ⚠️  {ticker}: strategy optimiser error ({_so}) — proceeding unaffected")
 
                 # ── Full System Audit Suite — logging-only, never gates ───
                 # Purely additive observability: joins TradeEvaluator's edge/

@@ -229,6 +229,34 @@ def generate_comparison_report():
     return _gcr()
 
 
+def process_strategy_signal(trade, market_data):
+    """Self-Optimising Strategy Engine (SAFE MODE) — tags each trade with an
+    inferred strategy_type, tracks per-(strategy, regime) performance, and
+    gates/weights trades by that strategy's own track record. Stacked above
+    the Phase 8 evaluator and Adaptive Core v4. Returns `trade` unchanged
+    when ENABLE_STRATEGY_OPTIMIZER is off (complete no-op), or on any
+    internal failure (fail-safe passthrough)."""
+    from opportunity.strategy_optimizer import process_trade_signal as _pss
+    return _pss(trade, market_data)
+
+
+def get_strategy_performance_matrix():
+    """Self-Optimising Strategy Engine — Strategy x Regime performance
+    matrix (win_rate, expectancy, avg_r, drawdown_contribution). Always
+    available (read-only reporting)."""
+    from opportunity.strategy_optimizer import StrategyPerformanceMatrix as _SPM
+    return _SPM().build_matrix()
+
+
+def run_strategy_weight_update():
+    """Self-Optimising Strategy Engine — manually trigger a bounded strategy
+    weight update cycle (normally runs automatically every N resolved
+    trades via process_strategy_signal). Returns None if no update was due
+    or the flag is off."""
+    from opportunity.strategy_optimizer import StrategyWeightingEngine as _SWE
+    return _SWE().maybe_update()
+
+
 __all__ = [
     # Core
     "run_opportunity_pass",
@@ -267,4 +295,8 @@ __all__ = [
     "run_performance_analytics_v2",
     "run_forward_validation_summary",
     "generate_comparison_report",
+    # Self-Optimising Strategy Engine (SAFE MODE)
+    "process_strategy_signal",
+    "get_strategy_performance_matrix",
+    "run_strategy_weight_update",
 ]

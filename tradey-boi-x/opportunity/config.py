@@ -180,6 +180,58 @@ AUDIT_EDGE_SCORE_BUCKETS: list[tuple[str, float, float]] = [
     ("0.6-0.8", 0.6, 0.8), ("0.8-1.0", 0.8, 1.01),
 ]
 
+# ── Self-Optimising Strategy Engine (SAFE MODE) ───────────────────────────────
+# A third, independent additive wrapper layer stacked between the Phase 8
+# evaluator/Adaptive Core and execution: tags each trade with an inferred
+# strategy_type, tracks per-(strategy, regime) performance, and gates/weights
+# trades by that strategy's own track record. NEVER modifies the prediction
+# model, signal generation, or execution logic — only gates/weights the
+# existing decision. Off by default (complete no-op) via
+# ENABLE_STRATEGY_OPTIMIZER. Reuses opportunity.adaptive_core.RegimeDetector
+# for regime classification and opportunity.performance_tracker-style
+# signal_log joins rather than duplicating them.
+ENABLE_STRATEGY_OPTIMIZER = _flag("ENABLE_STRATEGY_OPTIMIZER")
+
+STRATEGY_LOG_PATH         = os.getenv("STRATEGY_LOG_PATH",         "logs/strategy_optimizer_decisions.jsonl")
+STRATEGY_WEIGHTS_PATH     = os.getenv("STRATEGY_WEIGHTS_PATH",     "logs/strategy_weights.json")
+STRATEGY_WEIGHT_STATE_PATH = os.getenv("STRATEGY_WEIGHT_STATE_PATH", "logs/strategy_weight_state.json")
+
+STRATEGY_TYPES: tuple[str, ...] = (
+    "BREAKOUT", "PULLBACK", "TREND_CONTINUATION",
+    "MEAN_REVERSION", "VOLATILITY_EXPANSION",
+)
+
+# Strategy Weighting Engine — bounded, gradual-only adjustments (Part 3/6).
+# Every strategy starts at weight 1.0. Weights can NEVER leave [FLOOR, CAP]
+# and can move by at most WEIGHT_MAX_STEP_PCT (5-10%) per update cycle.
+STRATEGY_WEIGHT_FLOOR       = float(os.getenv("STRATEGY_WEIGHT_FLOOR", "0.2"))
+STRATEGY_WEIGHT_CAP         = float(os.getenv("STRATEGY_WEIGHT_CAP",   "1.5"))
+STRATEGY_WEIGHT_MAX_STEP_PCT = float(os.getenv("STRATEGY_WEIGHT_MAX_STEP_PCT", "0.08"))
+STRATEGY_WEIGHT_UPDATE_INTERVAL_TRADES = int(os.getenv("STRATEGY_WEIGHT_UPDATE_INTERVAL_TRADES", "50"))
+
+# Gating System (Part 4) — a strategy below this weight is treated as
+# "disabled" for new trades (existing floor still applies so it can recover).
+STRATEGY_MIN_ACTIVE_WEIGHT = float(os.getenv("STRATEGY_MIN_ACTIVE_WEIGHT", "0.3"))
+
+# Minimum resolved trades for a strategy before its recent expectancy is
+# allowed to gate new trades — fails OPEN (passes) below this, same
+# cold-start-safe pattern as ADAPTIVE_EXPECTANCY_MIN_TRADES.
+STRATEGY_MIN_EXPECTANCY_TRADES = int(os.getenv("STRATEGY_MIN_EXPECTANCY_TRADES", "20"))
+STRATEGY_EXPECTANCY_WINDOW     = int(os.getenv("STRATEGY_EXPECTANCY_WINDOW", "100"))
+
+# Regime → Allowed Strategies map (Part 5). LOW_LIQUIDITY is an explicit
+# hard block of ALL strategies by design (mirrors the existing hard
+# liquidity filter in adaptive_core) — this is the one deliberate exception
+# to the "always keep >=1 active strategy per regime" rule, which otherwise
+# governs weight-based disabling, not this explicit regime block.
+REGIME_STRATEGY_MAP: dict[str, list[str]] = {
+    "TRENDING_UP":          ["BREAKOUT", "PULLBACK", "TREND_CONTINUATION"],
+    "TRENDING_DOWN":        ["PULLBACK", "MEAN_REVERSION"],
+    "CHOP":                 ["MEAN_REVERSION"],
+    "VOLATILITY_EXPANSION": ["BREAKOUT", "VOLATILITY_EXPANSION"],
+    "LOW_LIQUIDITY":        [],   # hard block — no strategy is allowed to trade
+}
+
 # ── Opportunity scoring weights (must sum to 1.0) ─────────────────────────────
 WEIGHTS: dict[str, float] = {
     "expected_return":    float(os.getenv("OPP_W_EXPECTED_RETURN",   "0.35")),

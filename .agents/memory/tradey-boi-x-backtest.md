@@ -227,10 +227,23 @@ idealized "graceful partial degradation" that the patch itself makes
 impossible to observe.
 
 **Feature-flag-off changes need no full-watchlist re-validation (recurring
-pattern, confirmed again at T014):** Any purely additive module that is (a)
-gated by a config flag defaulting to False and (b) never imported into the
-live decision path in engine.py, only needs pytest + an import/scanner-boot
-sanity check before being kept — not a full 407/408-ticker backtest
-re-validation, since default behavior is provably unchanged. Reserve full
-watchlist validation for changes that alter signal generation, gating, or
-values used in a default-on code path.
+pattern, confirmed again at T014 and T015):** Any purely additive module
+that is (a) gated by a config flag defaulting to False and (b) never
+imported into the live decision path in engine.py, only needs pytest + an
+import/scanner-boot sanity check before being kept — not a full 407/408-
+ticker backtest re-validation, since default behavior is provably
+unchanged. Reserve full watchlist validation for changes that alter signal
+generation, gating, or values used in a default-on code path.
+
+**Regime-scoped hard blocks are a deliberate exception to "never disable
+all strategies" (T015, 2026-07-03):** When a spec defines a regime→allowed-
+strategies map and one regime (e.g. LOW_LIQUIDITY) maps to an empty list,
+that's an intentional total block for that specific regime, not a violation
+of a general "don't let one gate turn off everything" safety principle.
+**Why:** the general principle guards against a single global weight/config
+bug silently killing all trading; a regime-scoped block only fires when
+that specific market condition is detected and is exactly what the spec
+asked for. **How to apply:** when implementing a regime/condition-gated
+map, treat an explicitly empty allow-list for one key as valid and
+intentional — don't add a fallback that force-allows at least one strategy,
+as that would contradict the spec.

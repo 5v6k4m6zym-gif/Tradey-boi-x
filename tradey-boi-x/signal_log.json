@@ -192,5 +192,20 @@
     "outcome": null,
     "exit_price": null,
     "actual_pct": null
+  },
+  {
+    "ticker": "MRK",
+    "tier": "STRONG BUY",
+    "score": 7,
+    "prob": 0.5037,
+    "entry_price": 129.56,
+    "stop_price": null,
+    "target_price": null,
+    "signal_date": "2026-07-03",
+    "target_pct": 0.03,
+    "pred_days": 10,
+    "outcome": null,
+    "exit_price": null,
+    "actual_pct": null
   }
 ]

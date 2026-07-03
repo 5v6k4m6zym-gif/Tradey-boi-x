@@ -1,0 +1,226 @@
+You are working on an existing trading bot system called “Tradey Boi X”.
+
+========================================================
+CRITICAL SAFETY RULES (NON-NEGOTIABLE)
+========================================================
+
+1. DO NOT modify, replace, or rewrite:
+   - prediction model
+   - signal generation logic
+   - execution engine
+
+2. DO NOT allow uncontrolled self-learning or self-modification.
+
+3. ALL changes must be:
+   - bounded
+   - reversible
+   - logged
+   - statistically validated
+
+4. SYSTEM MUST NEVER STOP TRADING OR BREAK EXISTING FLOW.
+
+========================================================
+OBJECTIVE
+========================================================
+
+Build a “Self-Optimising Strategy Engine (SAFE MODE)” that:
+
+- identifies which strategies work best
+- disables underperforming logic pathways
+- adjusts thresholds per regime
+- improves allocation of trades across setups
+- does NOT rewrite core logic, only gates and weights it
+
+========================================================
+ARCHITECTURE (WRAPPER ONLY)
+========================================================
+
+Existing Flow:
+    Model → Signal → Evaluation → Execution
+
+New Flow:
+    Model → Signal → Evaluation → Strategy Optimiser → Execution
+
+IMPORTANT:
+- NO direct model changes
+- NO execution modifications
+- ONLY strategy weighting, filtering, and gating
+
+========================================================
+PART 1: STRATEGY IDENTIFICATION SYSTEM
+
+Create StrategyProfiler that tags every trade with:
+
+- strategy_type (inferred from signal conditions):
+  - breakout
+  - pullback
+  - trend continuation
+  - mean reversion
+  - volatility expansion
+
+- regime at time of trade
+- edge score
+- outcome (win/loss)
+- R multiple
+
+Store all results in historical dataset.
+
+========================================================
+PART 2: STRATEGY PERFORMANCE MATRIX
+
+Build a matrix:
+
+Strategy × Regime → Performance Metrics
+
+For each cell compute:
+- win rate
+- expectancy
+- average R
+- drawdown contribution
+
+This is the core intelligence table.
+
+========================================================
+PART 3: STRATEGY WEIGHTING ENGINE
+
+Each strategy gets a dynamic weight:
+
+weight = function(expectancy, stability, drawdown_penalty)
+
+Rules:
+- high expectancy → increase weight gradually
+- negative expectancy → reduce weight gradually
+- high variance → penalise weight
+- unstable performance → reduce confidence
+
+IMPORTANT:
+- weight adjustments must be SMALL (max 5–10% per update cycle)
+- no abrupt changes allowed
+
+========================================================
+PART 4: STRATEGY GATING SYSTEM
+
+Before trade is allowed:
+
+- strategy must be active (weight above minimum threshold)
+- strategy must be valid in current regime
+- strategy must have positive recent expectancy
+
+If not:
+- reject trade
+- log reason: "strategy_disabled_or_low_edge"
+
+========================================================
+PART 5: REGIME-SPECIFIC STRATEGY MAP
+
+Maintain mapping:
+
+Regime → Allowed Strategies
+
+Example:
+- TRENDING_UP:
+    allow: breakout, pullback, trend continuation
+    block: mean reversion
+
+- CHOP:
+    allow: mean reversion
+    block: breakout
+
+- VOLATILITY_EXPANSION:
+    allow: breakout, momentum continuation
+    block: low-confidence setups
+
+- LOW_LIQUIDITY:
+    allow: NONE (hard block)
+
+========================================================
+PART 6: SAFE LEARNING RULES (CRITICAL)
+
+System MUST obey:
+
+- NEVER disable all strategies
+- ALWAYS keep at least 1 active strategy per regime
+- NEVER reduce weights below emergency floor (e.g. 0.2)
+- NEVER increase a strategy weight above cap (e.g. 1.5)
+
+========================================================
+PART 7: PERFORMANCE FEEDBACK LOOP
+
+After each trade:
+
+Update:
+- strategy performance stats
+- regime performance stats
+- rolling expectancy (last 50 / 100 trades)
+
+Use this to slowly adjust:
+- strategy weights
+- regime mappings (very conservatively)
+
+========================================================
+PART 8: LOGGING SYSTEM (MANDATORY)
+
+Log every trade:
+
+- timestamp
+- strategy_type
+- regime
+- weight_at_time
+- edge_score
+- outcome (win/loss)
+- R multiple
+- whether strategy was allowed or blocked
+- reason for decision
+
+Store in JSONL format.
+
+========================================================
+PART 9: WRAPPER FUNCTION
+
+Implement:
+
+process_trade_signal(trade, market_data)
+
+Must:
+1. Identify strategy type
+2. Check regime
+3. Apply strategy weight
+4. Decide allow/block
+5. Pass through existing evaluation system
+6. Return:
+   - None if rejected
+   - unchanged trade if allowed
+   - NEVER modify model output
+
+========================================================
+FAIL-SAFE REQUIREMENTS
+
+If ANY component fails:
+- DO NOT crash system
+- fallback = allow original evaluation system decision
+- log error only
+
+========================================================
+VALIDATION REQUIREMENTS
+
+Ensure:
+
+1. Bot continues trading even if optimiser fails
+2. No strategy is permanently disabled incorrectly
+3. Weights adjust gradually only
+4. Regime mapping does not lock system out
+5. System is fully reversible
+6. Logs are consistent and analyzable
+
+========================================================
+FINAL OUTPUT
+
+Implement:
+
+- StrategyProfiler
+- StrategyPerformanceMatrix
+- StrategyWeightingEngine
+- StrategyGatingSystem
+- RegimeStrategyMap
+- process_trade_signal wrapper
+- full JSONL logging system

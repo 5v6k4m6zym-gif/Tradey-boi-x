@@ -1,3 +1,5 @@
 {"timestamp": "2026-07-03T03:53:23.890379+00:00", "symbol": "TEST.AX", "error": "boom", "fail_safe_passthrough": true}
 {"timestamp": "2026-07-03T04:08:26.699704+00:00", "symbol": "TEST.AX", "error": "boom", "fail_safe_passthrough": true}
 {"timestamp": "2026-07-03T04:09:08.134588+00:00", "symbol": "TEST.AX", "error": "boom", "fail_safe_passthrough": true}
+{"timestamp": "2026-07-03T04:17:28.520697+00:00", "symbol": "TEST.AX", "error": "boom", "fail_safe_passthrough": true}
+{"timestamp": "2026-07-03T04:17:38.653386+00:00", "symbol": "TEST.AX", "error": "boom", "fail_safe_passthrough": true}
