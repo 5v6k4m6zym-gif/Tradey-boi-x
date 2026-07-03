@@ -159,11 +159,14 @@ def run_scan(model) -> int:
                 # Purely additive: computes Edge/Predictability/Noise/RR and
                 # logs the decision to logs/trade_evaluations.jsonl. Never
                 # touches the prediction model or send_alert() itself.
-                # SHADOW_MODE=True (default): logs only, existing alert flow
-                #   is completely unaffected — safe to leave on permanently.
-                # SHADOW_MODE=False: an alert is only skipped here if the
-                #   evaluator explicitly rejects it (score/RR/noise fail);
-                #   send_alert() itself is never modified.
+                # LIVE as of 2026-07-03 (SHADOW_MODE=False in config.py,
+                #   validated via full-pipeline replay — see
+                #   .agents/memory/tradey-boi-x-persistent-cache.md): an
+                #   alert is skipped here if the evaluator explicitly
+                #   rejects it (score/RR/noise fail); send_alert() itself
+                #   is never modified.
+                # SHADOW_MODE=True: logs only, existing alert flow is
+                #   completely unaffected — safe fallback if ever reverted.
                 if ENABLE_TRADE_EVALUATOR:
                     try:
                         params = engine._trade_params(ticker, res, price, df)
@@ -187,8 +190,10 @@ def run_scan(model) -> int:
                 # Purely additive: regime-aware thresholds, execution-quality
                 # filter, calibration, bounded dynamic sizing, expectancy
                 # gate. Logs to logs/adaptive_core_decisions.jsonl. Shares
-                # the same SHADOW_MODE switch as Phase 8 — off by default via
-                # ENABLE_ADAPTIVE_CORE, so this is a strict no-op today.
+                # the same SHADOW_MODE switch as Phase 8. LIVE as of
+                # 2026-07-03 (ENABLE_ADAPTIVE_CORE=True, SHADOW_MODE=False
+                # in config.py, validated via full-pipeline replay — see
+                # .agents/memory/tradey-boi-x-persistent-cache.md).
                 if ENABLE_ADAPTIVE_CORE:
                     try:
                         params = engine._trade_params(ticker, res, price, df)
@@ -213,8 +218,10 @@ def run_scan(model) -> int:
                 # type, checks it against the regime-strategy map and its own
                 # bounded weight/expectancy track record. Logs to
                 # logs/strategy_optimizer_decisions.jsonl. Shares the same
-                # SHADOW_MODE switch as the other layers — off by default via
-                # ENABLE_STRATEGY_OPTIMIZER, so this is a strict no-op today.
+                # SHADOW_MODE switch as the other layers. LIVE as of
+                # 2026-07-03 (ENABLE_STRATEGY_OPTIMIZER=True, SHADOW_MODE=
+                # False in config.py, validated via full-pipeline replay —
+                # see .agents/memory/tradey-boi-x-persistent-cache.md).
                 if ENABLE_STRATEGY_OPTIMIZER:
                     try:
                         params = engine._trade_params(ticker, res, price, df)
