@@ -6,7 +6,8 @@ Cursor position is saved to overnight_cursor.json between runs.
 """
 import json
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytz
@@ -176,20 +177,47 @@ def run_overnight_scan(model) -> int:
     return fired + alerted_count
 
 
-if __name__ == "__main__":
+BATCH_INTERVAL_SECONDS = 60 * 60  # one batch per hour while markets are closed
+
+
+def _seconds_until_markets_closed_again() -> int:
+    """When markets are open, sleep until the sooner of the two closes."""
+    def _next_close(tz, ch, cm):
+        now = datetime.now(tz)
+        c = now.replace(hour=ch, minute=cm, second=0, microsecond=0)
+        if c <= now:
+            c += timedelta(days=1)
+        return (c - now).total_seconds()
+    return int(min(_next_close(US_TZ, 16, 0), _next_close(ASX_TZ, 16, 0))) + 60
+
+
+def main():
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Overnight scanner starting…")
+    print(f"Universe: {len(OVERNIGHT_UNIVERSE)} tickers (not on the main WATCHLIST) | "
+          f"batch size {BATCH_SIZE} | runs once/hour while both markets are closed")
 
-    if not _markets_closed():
-        print("Markets still open — overnight scanner only runs when both markets are closed.")
-        sys.exit(0)
-
-    print("Training AI model…")
+    print("\nTraining AI model…")
     model = train_model()
     print("Model ready.\n")
 
-    try:
-        resolve_outcomes()
-    except Exception as e:
-        print(f"  ⚠️  resolve_outcomes: {e}")
+    while True:
+        if _markets_closed():
+            try:
+                resolve_outcomes()
+            except Exception as e:
+                print(f"  ⚠️  resolve_outcomes: {e}")
 
-    run_overnight_scan(model)
+            run_overnight_scan(model)
+            print(f"Next overnight batch in {BATCH_INTERVAL_SECONDS // 60} min.\n")
+            time.sleep(BATCH_INTERVAL_SECONDS)
+        else:
+            wait = _seconds_until_markets_closed_again()
+            wake = datetime.now() + timedelta(seconds=wait)
+            print(f"[{datetime.now().strftime('%H:%M')}] A market is open — overnight "
+                  f"scanner pauses until both are closed again "
+                  f"(~{wake.strftime('%Y-%m-%d %H:%M')}, {wait // 3600}h {(wait % 3600) // 60}m).")
+            time.sleep(wait)
+
+
+if __name__ == "__main__":
+    main()
