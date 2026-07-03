@@ -168,6 +168,23 @@ def run_auto_tuner(window: int | None = None):
     return _mt(window=window or AUTO_TUNER_INTERVAL_TRADES)
 
 
+def process_adaptive_trade_signal(trade, market_data):
+    """Adaptive Trading Core v4 — regime-aware thresholds, execution-quality
+    filtering, confidence calibration, bounded dynamic sizing, and an
+    expectancy gate, stacked above the Phase 8 trade evaluator. Returns
+    `trade` unchanged when ENABLE_ADAPTIVE_CORE is off (complete no-op)."""
+    from opportunity.adaptive_core import process_trade_signal as _pts
+    return _pts(trade, market_data)
+
+
+def classify_loss(resolved_entry, entry_context=None):
+    """Adaptive Trading Core v4 — post-trade loss classification (system
+    improvement only, never gates or blocks anything). Returns None for
+    winning trades, a label string for losses, or "UNCLASSIFIED"."""
+    from opportunity.adaptive_core import LossClassifier as _LC
+    return _LC().classify(resolved_entry, entry_context=entry_context)
+
+
 __all__ = [
     # Core
     "run_opportunity_pass",
@@ -196,4 +213,7 @@ __all__ = [
     # Trade Evaluation upgrade — PerformanceTracker + AutoThresholdTuner
     "get_performance_tracker",
     "run_auto_tuner",
+    # Adaptive Trading Core v4
+    "process_adaptive_trade_signal",
+    "classify_loss",
 ]

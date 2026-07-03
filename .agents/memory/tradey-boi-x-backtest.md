@@ -131,6 +131,40 @@ adjust a runtime threshold that another already-instantiated object reads
 rather than reassigning the module-level constant — reassignment breaks the
 reference for anything that captured the dict at construction time.
 
+**Stacking multiple additive wrapper layers with the same-named entry point
+(2026-07-03):** Two separate specs each asked for a `process_trade_signal(
+trade, market_data)` function. Resolved by giving each its own module
+(`trade_evaluator.py`, `adaptive_core.py`) and calling both independently
+from the scanner behind separate feature flags, rather than merging them
+into one function or letting the newer one silently shadow the older one.
+**Why:** each layer has its own on/off flag and its own JSONL log; merging
+them would make it impossible to disable one without the other, and a
+same-named import shadowing the older module would be a silent, hard-to-spot
+regression. **How to apply:** when a new spec's requested entry point name
+collides with an existing one, keep them as distinct functions in distinct
+modules, wire the call sites to invoke both in sequence, and give the second
+layer its own independent enable flag so either can be toggled alone.
+
+**Fail-safe direction differs from shadow-mode/reject-mode (2026-07-03):**
+A spec's "fail-safe" rule ("if any component fails, pass the trade through
+unchanged") is NOT the same behavior as SHADOW_MODE's "always return None".
+**Why:** shadow mode is intentional observation-only (block execution to
+gather data); an internal *bug/exception* in an optional add-on layer should
+never be able to block a trade that would otherwise have gone through —
+blocking on error would let an add-on layer silently suppress real signals.
+**How to apply:** in any wrapper's top-level try/except, return the original
+input object unchanged on exception (not `None`), even though the normal
+rejection path elsewhere in the same function returns `None`.
+
+**Reuse vs. build-new for regime/calibration layers (2026-07-03):** When a
+new spec's regime taxonomy or calibration inputs don't match an existing
+module's labels/scope (e.g. existing regime.py is macro-index-level with
+5 different labels; new spec wants per-ticker regime with a LOW_LIQUIDITY
+label), don't force-fit a mapping onto the old module — build a new,
+narrowly-scoped module for the new taxonomy while still reusing shared
+low-level computations (e.g. efficiency-ratio/noise-index math) from
+existing helpers so the underlying signal logic isn't duplicated.
+
 **Drift monitoring (T011) + compute_metrics() R-unit quirk (2026-07-03):**
 Added `opportunity/drift_monitor.py` comparing a recent rolling live window
 of resolved trades against the older resolved-trade baseline (both scored

@@ -32,6 +32,14 @@ except ImportError:
     ENABLE_TRADE_EVALUATOR = False
     SHADOW_MODE = True
 
+try:
+    from opportunity.adaptive_core import process_trade_signal as process_adaptive_trade_signal
+    from opportunity.config import ENABLE_ADAPTIVE_CORE
+    _ADAPTIVE_CORE_AVAILABLE = True
+except ImportError:
+    _ADAPTIVE_CORE_AVAILABLE = False
+    ENABLE_ADAPTIVE_CORE = False
+
 SCAN_INTERVAL_SECONDS = 3600   # scan every hour while markets are open
 
 # ─── MARKET HOURS ────────────────────────────────────────────────────────────
@@ -152,6 +160,31 @@ def run_scan(model) -> int:
                             continue
                     except Exception as _te:
                         print(f"  ⚠️  {ticker}: trade evaluator error ({_te}) — proceeding unaffected")
+
+                # ── Adaptive Trading Core v4 (stacked ABOVE Phase 8) ──────
+                # Purely additive: regime-aware thresholds, execution-quality
+                # filter, calibration, bounded dynamic sizing, expectancy
+                # gate. Logs to logs/adaptive_core_decisions.jsonl. Shares
+                # the same SHADOW_MODE switch as Phase 8 — off by default via
+                # ENABLE_ADAPTIVE_CORE, so this is a strict no-op today.
+                if ENABLE_ADAPTIVE_CORE:
+                    try:
+                        params = engine._trade_params(ticker, res, price, df)
+                        trade  = {
+                            "ticker":      ticker,
+                            "direction":   "LONG",
+                            "entry":       price,
+                            "stop_loss":   params["stop_loss"],
+                            "take_profit": params["target_price"],
+                            "probability": res.get("prob", 0.0),
+                            "expected_r":  res.get("expected_r"),
+                        }
+                        adaptive_approved = process_adaptive_trade_signal(trade, df)
+                        if not SHADOW_MODE and adaptive_approved is None:
+                            print(f"  🧬 {ticker}: rejected by adaptive core (see logs/adaptive_core_decisions.jsonl)")
+                            continue
+                    except Exception as _ac:
+                        print(f"  ⚠️  {ticker}: adaptive core error ({_ac}) — proceeding unaffected")
 
                 sent  = send_alert(ticker, res, price, df)
                 if sent:

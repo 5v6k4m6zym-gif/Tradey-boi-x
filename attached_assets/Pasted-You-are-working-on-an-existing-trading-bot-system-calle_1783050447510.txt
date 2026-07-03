@@ -1,0 +1,258 @@
+You are working on an existing trading bot system called “Tradey Boi”.
+
+========================================================
+CRITICAL SAFETY RULES (NON-NEGOTIABLE)
+========================================================
+
+1. DO NOT modify, replace, or rewrite:
+   - existing prediction model
+   - signal generation logic
+   - execution engine
+
+2. ALL upgrades must be implemented as ADDITIVE WRAPPER LAYERS ONLY.
+
+3. SYSTEM MUST NEVER BREAK EXISTING FUNCTIONALITY.
+
+4. If uncertain, choose SAFE MODE (fail closed or pass-through with logging).
+
+========================================================
+OBJECTIVE
+========================================================
+
+Build a “Full Adaptive Trading Core v4” system that improves profitability by:
+
+- detecting market regimes
+- adapting thresholds per regime
+- adjusting position sizing dynamically
+- filtering execution quality
+- classifying losses for continuous improvement
+
+This is NOT a new trading bot.
+This is an adaptive intelligence layer on top of the existing bot.
+
+========================================================
+ARCHITECTURE (WRAPPER ONLY)
+========================================================
+
+Existing Flow:
+    Model → Trade Signal → Execution
+
+New Flow:
+    Model → Trade Signal → Adaptive Core v4 → Execution
+
+Adaptive Core v4 includes:
+
+1. RegimeDetector
+2. ExecutionQualityFilter
+3. ConfidenceCalibrator
+4. PositionSizer
+5. LossClassifier
+6. ExpectancyEngine
+
+IMPORTANT:
+- NO modification of model
+- NO modification of execution logic
+- ONLY control pass/reject + sizing + logging metadata
+
+========================================================
+PART 1: REGIME DETECTOR (CRITICAL)
+
+Create RegimeDetector that classifies market into:
+
+- TRENDING_UP
+- TRENDING_DOWN
+- CHOP / SIDEWAYS
+- VOLATILITY_EXPANSION
+- LOW_LIQUIDITY / DEAD_MARKET
+
+Inputs:
+- volatility
+- price structure
+- trend strength
+- volume behaviour (if available)
+
+Output:
+- regime label
+- regime confidence score (0–1)
+
+========================================================
+PART 2: REGIME-AWARE THRESHOLDS
+
+Replace static thresholds with dynamic ones:
+
+Base thresholds:
+- edge_score
+- predictability_score
+- risk_reward
+- noise_index
+
+Adjust based on regime:
+
+TRENDING:
+- easier edge threshold
+- stricter noise filter relaxed slightly
+
+CHOP:
+- stricter edge threshold
+- stricter predictability requirement
+
+VOLATILITY_EXPANSION:
+- stricter noise filter
+- higher RR requirement
+
+LOW_LIQUIDITY:
+- DO NOT TRADE (hard filter)
+
+IMPORTANT:
+- adjustments must be small and bounded
+- system must NEVER go outside safe limits
+
+========================================================
+PART 3: EXECUTION QUALITY FILTER
+
+Before trade passes, evaluate:
+
+- spread cost impact
+- slippage risk proxy
+- entry timing quality (breakout confirmation strength)
+
+If execution cost > expected edge:
+    reject trade
+
+========================================================
+PART 4: POSITION SIZING ENGINE (MAJOR UPGRADE)
+
+Implement dynamic sizing:
+
+Base risk per trade adjusted by:
+
+- edge_score
+- regime confidence
+- predictability_score
+
+Rules:
+- high-quality trade → increased position size (max +50%)
+- medium quality → normal size
+- low-quality but passing → reduced size
+
+IMPORTANT:
+- NEVER increase risk beyond safe cap
+- MUST be bounded and predictable
+
+========================================================
+PART 5: LOSS CLASSIFICATION SYSTEM
+
+After trade closes, classify loss type:
+
+- FALSE_BREAKOUT
+- LATE_ENTRY
+- TREND_REVERSAL
+- NOISE_ENTRY
+- REGIME_MISMATCH
+
+Store in logs and track frequency.
+
+This is used for system improvement only.
+
+========================================================
+PART 6: CONFIDENCE CALIBRATION
+
+Calibrate model probability using historical performance buckets:
+
+- 0–50%
+- 50–60%
+- 60–70%
+- 70–80%
+- 80–100%
+
+Track actual win rate per bucket and adjust internal confidence mapping.
+
+DO NOT modify model output — only calibrate interpretation layer.
+
+========================================================
+PART 7: EXPECTANCY ENGINE (FINAL DECISION LAYER)
+
+Compute:
+
+Expectancy = (Win Rate × Avg Win) − (Loss Rate × Avg Loss)
+
+Trade must only pass if:
+- expectancy > 0
+- AND regime is valid
+- AND execution quality acceptable
+
+========================================================
+PART 8: WRAPPER FUNCTION (ENTRY POINT)
+
+Implement:
+
+process_trade_signal(trade, market_data)
+
+Must:
+
+1. Detect regime
+2. Apply regime-based thresholds
+3. Evaluate execution quality
+4. Apply position sizing
+5. Log full decision context
+6. Return:
+   - None if rejected
+   - modified trade WITH sizing metadata if approved
+   - NEVER mutate original model output
+
+========================================================
+PART 9: LOGGING SYSTEM (CRITICAL)
+
+Append-only JSONL logs must include:
+
+- timestamp
+- symbol
+- direction
+- model_probability
+- edge_score
+- regime_type
+- regime_confidence
+- predictability_score
+- noise_index
+- execution_quality_score
+- position_size_multiplier
+- passed (true/false)
+- rejection_reason(s)
+- loss_classification (if available later)
+
+Logging must NEVER break execution.
+
+========================================================
+FAIL-SAFE RULES (ABSOLUTE)
+
+If ANY component fails:
+- DO NOT crash bot
+- fallback = pass-through trade unchanged (safe mode)
+- log error internally
+
+========================================================
+VALIDATION REQUIREMENTS
+
+Before completion ensure:
+
+1. Bot runs unchanged if Adaptive Core is disabled
+2. Shadow mode works with full logging
+3. Regime detection does not block all trades accidentally
+4. Position sizing stays within safe limits
+5. Execution engine remains untouched
+6. System can be toggled on/off safely
+
+========================================================
+FINAL OUTPUT
+
+Implement:
+
+- RegimeDetector
+- ExecutionQualityFilter
+- ConfidenceCalibrator
+- PositionSizer
+- LossClassifier
+- ExpectancyEngine
+- process_trade_signal wrapper
+- Config system with safe bounds + toggles
+- Full JSONL logging system

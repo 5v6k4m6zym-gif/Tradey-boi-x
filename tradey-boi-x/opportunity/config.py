@@ -77,6 +77,55 @@ AUTO_TUNER_BOUNDS: dict[str, tuple[float, float]] = {
 AUTO_TUNER_STATE_PATH = os.getenv("AUTO_TUNER_STATE_PATH", "logs/auto_tuner_state.json")
 AUTO_TUNER_LOG_PATH   = os.getenv("AUTO_TUNER_LOG_PATH", "logs/auto_tuner_decisions.jsonl")
 
+# ── Adaptive Trading Core v4 (SAFE, constrained) ──────────────────────────────
+# A second, independent additive wrapper layer, stacked ABOVE the Phase 8
+# trade-evaluator: per-ticker regime detection, regime-aware threshold nudges,
+# execution-quality filtering, confidence calibration, bounded position
+# sizing, expectancy gating, and loss classification. Reuses TradeEvaluator's
+# edge/predictability/noise/RR computation and PerformanceTracker's rolling
+# stats rather than duplicating them. Off by default; when off, scanner.py's
+# existing flow (Phase 8 evaluator or none) is completely unaffected.
+ENABLE_ADAPTIVE_CORE = _flag("ENABLE_ADAPTIVE_CORE")
+
+ADAPTIVE_CORE_LOG_PATH = os.getenv("ADAPTIVE_CORE_LOG_PATH", "logs/adaptive_core_decisions.jsonl")
+
+# Per-ticker regime classification inputs (distinct from the macro
+# ASX-200-level regime.py detector — this one looks at the individual
+# ticker's own OHLCV window passed into process_trade_signal).
+ADAPTIVE_REGIME_LOOKBACK = int(os.getenv("ADAPTIVE_REGIME_LOOKBACK", "20"))
+ADAPTIVE_MIN_AVG_VOLUME  = float(os.getenv("ADAPTIVE_MIN_AVG_VOLUME", "50000"))
+
+# Regime-aware threshold nudges — small, bounded multipliers applied to the
+# SAME TRADE_EVAL_THRESHOLDS base values, clamped to AUTO_TUNER_BOUNDS so
+# they can never exceed the limits already established as "safe" for this
+# system. Never mutates TRADE_EVAL_THRESHOLDS itself — computed fresh
+# per-trade and discarded.
+ADAPTIVE_REGIME_ADJUSTMENTS: dict[str, dict[str, float]] = {
+    "TRENDING_UP":          {"min_edge_score": 0.95, "max_noise_index": 1.05},
+    "TRENDING_DOWN":        {"min_edge_score": 0.95, "max_noise_index": 1.05},
+    "CHOP":                 {"min_edge_score": 1.10, "min_predictability_score": 1.10},
+    "VOLATILITY_EXPANSION": {"max_noise_index": 0.90, "min_risk_reward": 1.15},
+    "LOW_LIQUIDITY":        {},   # hard-rejected before thresholds are even applied
+}
+
+# Execution Quality Filter — bounded 0-1 score; trade rejected if the score
+# falls below this floor OR estimated execution cost exceeds estimated edge.
+ADAPTIVE_MIN_EXECUTION_QUALITY = float(os.getenv("ADAPTIVE_MIN_EXECUTION_QUALITY", "0.40"))
+
+# Position Sizing Engine — hard caps, cannot be exceeded regardless of what
+# the quality-weighted multiplier computes to.
+ADAPTIVE_BASE_RISK_PCT       = float(os.getenv("ADAPTIVE_BASE_RISK_PCT", "1.0"))
+ADAPTIVE_MAX_SIZE_MULTIPLIER = float(os.getenv("ADAPTIVE_MAX_SIZE_MULTIPLIER", "1.5"))
+ADAPTIVE_MIN_SIZE_MULTIPLIER = float(os.getenv("ADAPTIVE_MIN_SIZE_MULTIPLIER", "0.5"))
+ADAPTIVE_MAX_RISK_PCT        = float(os.getenv("ADAPTIVE_MAX_RISK_PCT", "2.0"))
+
+# Expectancy Engine — system-wide (not per-trade) gate using PerformanceTracker's
+# rolling stats. Cold-start safe default: with too few resolved trades to judge,
+# the gate PASSES (fail-open on insufficient data) so the system can never
+# permanently lock itself out before it has any track record.
+ADAPTIVE_EXPECTANCY_MIN_TRADES = int(os.getenv("ADAPTIVE_EXPECTANCY_MIN_TRADES", "20"))
+ADAPTIVE_EXPECTANCY_WINDOW     = int(os.getenv("ADAPTIVE_EXPECTANCY_WINDOW", "100"))
+
 # ── Realistic Backtesting — Trading Costs (institutional upgrade T003) ────────
 # Applied only to backtest/report metrics (opportunity.backtester.compute_metrics)
 # so validation reflects real-world execution costs. Never touches signal
