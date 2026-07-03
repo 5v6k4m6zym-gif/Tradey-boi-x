@@ -36,3 +36,16 @@ merged/deduped (553 unique tickers) rather than just the OVERNIGHT_UNIVERSE
 extras — so the main 408-ticker watchlist itself now also gets scanned
 overnight, not just the separate extras list. Cycles fully every ~3 hourly
 cron runs at BATCH_SIZE=250.
+
+**Two entry points, one shared model — but NOT one shared decision pipeline.**
+`scanner.py` and `overnight_scanner.py` both call the same `engine.decide()`/
+`train_model()`, so the core prediction model is always identical. But any
+*additive gating layer* built under `opportunity/` (trade evaluator, adaptive
+core, strategy optimizer, audit engine, regime/opportunity second-pass) is
+wired individually into each entry point's per-ticker loop — it is NOT
+automatically inherited just because both scripts import `engine`. Check
+`overnight_scanner.py`'s per-ticker loop whenever a new opportunity-layer
+gate is added to `scanner.py`, or overnight alerts will silently skip it.
+As of 2026-07-03 both scripts call the same four gates (trade_evaluator,
+adaptive_core, strategy_optimizer, audit_engine) in the same order before
+`send_alert()`.

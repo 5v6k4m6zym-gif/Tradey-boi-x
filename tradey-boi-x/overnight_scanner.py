@@ -11,11 +11,44 @@ from pathlib import Path
 
 import pytz
 
+import engine
 from engine import (
     MAX_ALERTS, WATCHLIST, get_data, train_model, decide, send_alert,
     log_signal, mark_alerted, big_mover_check, send_mover_alert,
     resolve_outcomes,
 )
+try:
+    from opportunity.trade_evaluator import process_trade_signal
+    from opportunity.config import ENABLE_TRADE_EVALUATOR, SHADOW_MODE
+    _TRADE_EVAL_AVAILABLE = True
+except ImportError:
+    _TRADE_EVAL_AVAILABLE = False
+    ENABLE_TRADE_EVALUATOR = False
+    SHADOW_MODE = True
+
+try:
+    from opportunity.adaptive_core import process_trade_signal as process_adaptive_trade_signal
+    from opportunity.config import ENABLE_ADAPTIVE_CORE
+    _ADAPTIVE_CORE_AVAILABLE = True
+except ImportError:
+    _ADAPTIVE_CORE_AVAILABLE = False
+    ENABLE_ADAPTIVE_CORE = False
+
+try:
+    from opportunity.audit_engine import audit_trade
+    from opportunity.config import ENABLE_AUDIT_ENGINE
+    _AUDIT_ENGINE_AVAILABLE = True
+except ImportError:
+    _AUDIT_ENGINE_AVAILABLE = False
+    ENABLE_AUDIT_ENGINE = False
+
+try:
+    from opportunity.strategy_optimizer import process_trade_signal as process_strategy_signal
+    from opportunity.config import ENABLE_STRATEGY_OPTIMIZER
+    _STRATEGY_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    _STRATEGY_OPTIMIZER_AVAILABLE = False
+    ENABLE_STRATEGY_OPTIMIZER = False
 
 BASE_DIR    = Path(__file__).parent
 CURSOR_FILE = BASE_DIR / "overnight_cursor.json"
@@ -160,6 +193,89 @@ def run_overnight_scan(model) -> int:
 
             if res["alert"] and fired < MAX_ALERTS:
                 price = float(df.iloc[-1]["Close"])
+
+                # ── Trade Evaluation & Filtering Layer (Phase 8) ──────────
+                # Mirrors scanner.py — same shared gate, same SHADOW_MODE
+                # switch. Purely additive; never touches decide()/send_alert().
+                if ENABLE_TRADE_EVALUATOR:
+                    try:
+                        params = engine._trade_params(ticker, res, price, df)
+                        trade  = {
+                            "ticker":      ticker,
+                            "direction":   "LONG",
+                            "entry":       price,
+                            "stop_loss":   params["stop_loss"],
+                            "take_profit": params["target_price"],
+                            "probability": res.get("prob", 0.0),
+                            "expected_r":  res.get("expected_r"),
+                        }
+                        approved = process_trade_signal(trade, df)
+                        if not SHADOW_MODE and approved is None:
+                            print(f"  🧪 {ticker}: rejected by trade evaluator (see logs/trade_evaluations.jsonl)")
+                            continue
+                    except Exception as _te:
+                        print(f"  ⚠️  {ticker}: trade evaluator error ({_te}) — proceeding unaffected")
+
+                # ── Adaptive Trading Core v4 (stacked ABOVE Phase 8) ──────
+                if ENABLE_ADAPTIVE_CORE:
+                    try:
+                        params = engine._trade_params(ticker, res, price, df)
+                        trade  = {
+                            "ticker":      ticker,
+                            "direction":   "LONG",
+                            "entry":       price,
+                            "stop_loss":   params["stop_loss"],
+                            "take_profit": params["target_price"],
+                            "probability": res.get("prob", 0.0),
+                            "expected_r":  res.get("expected_r"),
+                        }
+                        adaptive_approved = process_adaptive_trade_signal(trade, df)
+                        if not SHADOW_MODE and adaptive_approved is None:
+                            print(f"  🧬 {ticker}: rejected by adaptive core (see logs/adaptive_core_decisions.jsonl)")
+                            continue
+                    except Exception as _ac:
+                        print(f"  ⚠️  {ticker}: adaptive core error ({_ac}) — proceeding unaffected")
+
+                # ── Self-Optimising Strategy Engine (SAFE MODE) ───────────
+                if ENABLE_STRATEGY_OPTIMIZER:
+                    try:
+                        params = engine._trade_params(ticker, res, price, df)
+                        trade  = {
+                            "ticker":      ticker,
+                            "direction":   "LONG",
+                            "entry":       price,
+                            "stop_loss":   params["stop_loss"],
+                            "take_profit": params["target_price"],
+                            "probability": res.get("prob", 0.0),
+                            "expected_r":  res.get("expected_r"),
+                            "why":         res.get("why", []),
+                            "rsi":         res.get("rsi"),
+                            "edge_score":  res.get("prob", 0.0),
+                        }
+                        strategy_approved = process_strategy_signal(trade, df)
+                        if not SHADOW_MODE and strategy_approved is None:
+                            print(f"  🧭 {ticker}: rejected by strategy optimiser (see logs/strategy_optimizer_decisions.jsonl)")
+                            continue
+                    except Exception as _so:
+                        print(f"  ⚠️  {ticker}: strategy optimiser error ({_so}) — proceeding unaffected")
+
+                # ── Full System Audit Suite — logging-only, never gates ───
+                if ENABLE_AUDIT_ENGINE:
+                    try:
+                        params = engine._trade_params(ticker, res, price, df)
+                        trade  = {
+                            "ticker":      ticker,
+                            "direction":   "LONG",
+                            "entry":       price,
+                            "stop_loss":   params["stop_loss"],
+                            "take_profit": params["target_price"],
+                            "probability": res.get("prob", 0.0),
+                            "expected_r":  res.get("expected_r"),
+                        }
+                        audit_trade(trade, df)
+                    except Exception as _ae:
+                        print(f"  ⚠️  {ticker}: audit engine error ({_ae}) — proceeding unaffected")
+
                 sent  = send_alert(ticker, res, price, df)
                 if sent:
                     mark_alerted(ticker)
