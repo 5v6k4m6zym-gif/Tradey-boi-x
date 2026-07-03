@@ -20,9 +20,19 @@ process was running, no log entry anywhere).
 
 **How to apply:** if a user reports an alert for a ticker that isn't in
 `engine.WATCHLIST`, check `overnight_scanner.py`'s `OVERNIGHT_UNIVERSE` next
-before assuming it's external — but also verify the workflow is actually
-registered and running (`ps aux`, check for `overnight_cursor.json`), since
-code existing in the repo does not mean it is wired up to run. Fixed
-2026-07-03 by adding a `main()` while-loop (mirroring `scanner.py`'s
-open/closed polling pattern) and registering it as its own workflow,
-`Tradey Boi X Overnight Scanner`, running `python overnight_scanner.py`.
+before assuming it's external — but also verify which execution path is
+actually live. This project's real overnight scanner is a **GitHub Actions
+cron job** (`.github/workflows/overnight_scan.yml`, hourly on weekdays, own
+Discord webhook secret, commits cursor/log state back to git), NOT a Replit
+workflow — a Replit process/workflow existing (or not) tells you nothing
+about whether GitHub Actions is running it. Do not add a second Replit
+workflow that also runs `overnight_scanner.py`: it duplicates alerts and, if
+it makes the script loop forever, breaks the GitHub Actions job (which
+expects one-shot-then-exit within its 45-min timeout so its "save state"
+commit step can run).
+
+As of 2026-07-03, `run_overnight_scan()` scans `WATCHLIST + OVERNIGHT_UNIVERSE`
+merged/deduped (553 unique tickers) rather than just the OVERNIGHT_UNIVERSE
+extras — so the main 408-ticker watchlist itself now also gets scanned
+overnight, not just the separate extras list. Cycles fully every ~3 hourly
+cron runs at BATCH_SIZE=250.

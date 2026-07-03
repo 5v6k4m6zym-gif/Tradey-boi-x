@@ -12,7 +12,7 @@ from pathlib import Path
 import pytz
 
 from engine import (
-    MAX_ALERTS, get_data, train_model, decide, send_alert,
+    MAX_ALERTS, WATCHLIST, get_data, train_model, decide, send_alert,
     log_signal, mark_alerted, big_mover_check, send_mover_alert,
     resolve_outcomes,
 )
@@ -24,8 +24,10 @@ BATCH_SIZE  = 250   # tickers per overnight run (~750 s at 3 s/ticker, fits 45 m
 US_TZ  = pytz.timezone("America/New_York")
 ASX_TZ = pytz.timezone("Australia/Sydney")
 
-# ─── OVERNIGHT UNIVERSE ───────────────────────────────────────────────────────
-# Stocks NOT already in the market-hours WATCHLIST.
+# ─── OVERNIGHT UNIVERSE (extras) ──────────────────────────────────────────────
+# Additional stocks beyond the market-hours WATCHLIST. At runtime these are
+# merged with WATCHLIST (see _full_overnight_universe) so the overnight scan
+# covers everything the bot tracks, not just this extra list.
 # Any delisted/invalid tickers are silently skipped (get_data returns empty df).
 OVERNIGHT_UNIVERSE = [
     # ── US — more tech & growth ───────────────────────────────────────────
@@ -120,8 +122,19 @@ def _save_cursor(pos: int):
     tmp.replace(CURSOR_FILE)
 
 
+def _full_overnight_universe() -> list:
+    """Main WATCHLIST + the overnight-only extras, deduplicated, order preserved."""
+    seen = set()
+    combined = []
+    for ticker in WATCHLIST + OVERNIGHT_UNIVERSE:
+        if ticker not in seen:
+            seen.add(ticker)
+            combined.append(ticker)
+    return combined
+
+
 def run_overnight_scan(model) -> int:
-    universe = OVERNIGHT_UNIVERSE
+    universe = _full_overnight_universe()
     total    = len(universe)
     pos      = _load_cursor()
 
