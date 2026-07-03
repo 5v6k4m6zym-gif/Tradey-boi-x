@@ -102,6 +102,88 @@ def score_row(row, prev, prob: float) -> tuple[str, int]:
     return "IGNORE", score
 
 
+def score_active_mover(df, i: int, prob: float) -> tuple[bool, int]:
+    """Replicates the deterministic gates + scoring of engine._large_move_check
+    (the ACTIVE 'big mover' tier). Excludes vix_safe()/earnings_safe() (live-only,
+    no historical point-in-time equivalent), the intraday hourly confirmation
+    (requires live 1h data, not available for arbitrary historical dates), and
+    the 12h cooldown (stateful, not meaningful for a batch historical scan)."""
+    row = df.iloc[i]
+    price = float(row["Close"])
+    open_ = float(row["Open"])
+    vol_r = float(row["vol_ratio"])
+    daily_ret = (price - open_) / open_
+    atr_now = float(row["atr"])
+    atr_avg = float(df["atr"].iloc[max(0, i - 19):i + 1].mean())
+    atr_exp = atr_now / atr_avg if atr_avg > 0 else 1.0
+    rsi = float(row["rsi"])
+
+    if vol_r < 4.0:            return False, 0
+    if daily_ret < 0.040:      return False, 0
+    if atr_exp < 1.8:          return False, 0
+    if not (38 <= rsi <= 76):  return False, 0
+    if prob < 0.38:            return False, 0
+
+    score = 0
+    score += 4 if vol_r >= 6.0 else 3 if vol_r >= 4.5 else 2
+    score += 4 if daily_ret >= 0.07 else 3 if daily_ret >= 0.05 else 2
+    score += 2 if atr_exp >= 2.5 else 1
+    if bool(row.get("breakout", 0)):   score += 2
+    if bool(row.get("bb_squeeze", 0)): score += 1
+    if rsi < 65:                       score += 1
+    # Intraday confirmation (+2) intentionally omitted — no historical equivalent.
+
+    return score >= 8, score
+
+
+def score_setup_mover(df, i: int, prob: float) -> tuple[bool, int]:
+    """Replicates the deterministic gates + scoring of engine._breakout_setup_check
+    (the SETUP 'big mover' tier). Same exclusions as score_active_mover (no
+    vix_safe/earnings_safe/cooldown; those are live/stateful checks)."""
+    if i < 4 or i < 126:
+        return False, 0
+    row = df.iloc[i]
+    price = float(row["Close"])
+    rsi = float(row["rsi"])
+    adx = float(row["adx"])
+    adx_3d = float(df["adx"].iloc[i - 4])
+    vol_r = float(row["vol_ratio"])
+    obv_r = float(row["obv_ratio"])
+    sq = bool(row["bb_squeeze"])
+    bb_mid = (float(row["bb_upper"]) + float(row["bb_lower"])) / 2
+    watch_level = float(row["bb_upper"]) * 1.005
+
+    if not sq:                          return False, 0
+    if obv_r < 2.0:                     return False, 0
+    if adx < 23:                        return False, 0
+    if adx <= adx_3d:                   return False, 0
+    if not (32 <= rsi <= 62):           return False, 0
+    if price < bb_mid:                  return False, 0
+    if not (0.8 <= vol_r <= 2.5):       return False, 0
+    if price >= watch_level:            return False, 0
+    if price < watch_level * 0.92:      return False, 0
+    if prob < 0.38:                     return False, 0
+
+    score = 0
+    bb_width_floor = float(df["bb_width"].iloc[max(0, i - 125):i + 1].quantile(0.20))
+    bb_pct = float(row["bb_width"]) / bb_width_floor if bb_width_floor > 0 else 1.0
+    score += 3 if bb_pct < 0.85 else 2
+    score += 3 if obv_r >= 3.0 else 2 if obv_r >= 2.2 else 1
+    adx_rise = adx - adx_3d
+    score += 2 if (adx >= 28 and adx_rise > 2) else 1
+    if 42 <= rsi <= 56:
+        score += 1
+    high_52w = float(df["Close"].iloc[max(0, i - 251):i + 1].max())
+    pct_to_high = (high_52w - price) / price
+    if pct_to_high < 0.03:
+        score += 2
+    elif pct_to_high < 0.06:
+        score += 1
+    score += 3 if prob >= 0.50 else 2 if prob >= 0.42 else 1
+
+    return score >= 9, score
+
+
 TRAIN_FRACTION = 0.70  # first 70% of each ticker's history = train, last 30% = held-out test
 
 
@@ -185,6 +267,8 @@ def main():
     trades: list[dict] = []
     all_evaluated: list[dict] = []  # every day, regardless of tier — for calibration check
     tier_counts: dict[str, int] = {"ELITE": 0, "STRONG BUY": 0, "WATCH": 0, "IGNORE": 0, "GATED": 0}
+    mover_trades: list[dict] = []
+    mover_counts: dict[str, int] = {"ACTIVE": 0, "SETUP": 0}
 
     for ticker, df in data.items():
         cutoff_idx = cutoffs[ticker]
@@ -229,11 +313,30 @@ def main():
                 "pred_days": engine.PREDICTION_DAYS,
             })
 
-            if signal not in ("ELITE", "STRONG BUY"):
-                continue
+            if signal in ("ELITE", "STRONG BUY"):
+                trades.append(all_evaluated[-1])
+                n_signals_ticker += 1
 
-            trades.append(all_evaluated[-1])
-            n_signals_ticker += 1
+            # ACTIVE takes priority over SETUP, mirroring engine.big_mover_check().
+            fired, mv_score = score_active_mover(df, i, prob)
+            mv_tier = "ACTIVE" if fired else None
+            if not fired:
+                fired, mv_score = score_setup_mover(df, i, prob)
+                mv_tier = "SETUP" if fired else None
+
+            if fired:
+                mover_counts[mv_tier] += 1
+                mover_trades.append({
+                    "ticker": ticker,
+                    "signal_date": str(df.index[i].date()),
+                    "tier": mv_tier,
+                    "score": mv_score,
+                    "prob": round(prob, 3),
+                    "entry_price": entry_price,
+                    "actual_pct": actual_pct,
+                    "outcome": outcome,
+                    "pred_days": engine.PREDICTION_DAYS,
+                })
 
         print(f"  {ticker:10s} {usable_end - test_start:4d} test-period bars "
               f"-> {n_signals_ticker} qualifying signals")
@@ -286,6 +389,34 @@ def main():
     print("increasing monotonically (or close to it) as probability increases.")
     print("If calibration is flat or inverted, the AI model has little genuine")
     print("out-of-sample predictive edge beyond the base rate for this sample.")
+
+    # ── Big Mover alert (engine.big_mover_check: ACTIVE + SETUP tiers) ──────────
+    print("\n" + "=" * 70)
+    print("BIG MOVER ALERT RESULTS (engine.big_mover_check: ACTIVE + SETUP)")
+    print("=" * 70)
+    print("NOTE: vix_safe()/earnings_safe() (live/network calls), the ACTIVE")
+    print("tier's intraday 1h confirmation, and the 12h/48h cooldowns are")
+    print("excluded — none have a meaningful historical point-in-time")
+    print("equivalent. Results below isolate the daily technical + AI gates.")
+    print(f"\nQualifying signals: ACTIVE={mover_counts['ACTIVE']}  SETUP={mover_counts['SETUP']}  "
+          f"(out of {len(all_evaluated)} evaluated days)")
+
+    if mover_trades:
+        mover_metrics = compute_metrics(mover_trades)
+        print("\nCombined mover metrics:")
+        for k, v in mover_metrics.items():
+            print(f"  {k:24s}: {v}")
+
+        for label in ("ACTIVE", "SETUP"):
+            subset = [t for t in mover_trades if t["tier"] == label]
+            if subset:
+                m = compute_metrics(subset)
+                print(f"\n  {label:8s}: n={m['trade_count']:4d}  win_rate={m['win_rate']*100:5.1f}%  "
+                      f"avg_gain={m['avg_gain_pct']:+.2f}%  avg_loss={m['avg_loss_pct']:.2f}%  "
+                      f"profit_factor={m['profit_factor']}")
+    else:
+        print("\nNo qualifying ACTIVE/SETUP mover signals in this sample/period —")
+        print("consistent with these being rare, high-conviction reactive alerts.")
 
     print("\nDone. This validates the model+scoring logic against real historical")
     print("outcomes; it does not touch signal_log.json or any production state.")
