@@ -95,7 +95,7 @@ def score_row(row, prev, prob: float) -> tuple[str, int]:
     ]
     score = sum(pts for pts, met in rules if met)
 
-    if score >= 8:
+    if score >= 8 and prob >= 0.50:
         return "ELITE", score
     elif score >= 6 and prob >= 0.50:
         return "STRONG BUY", score
