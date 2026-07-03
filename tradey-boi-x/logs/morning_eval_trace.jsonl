@@ -1,0 +1,2 @@
+{"timestamp": "2026-07-03T04:56:06.978250+00:00", "event": "morning_brief_check", "trigger_source": "scheduler_loop", "asx_open": true, "today": "2026-07-03", "brief_sent_date_before": null, "duplication_flag": false}
+{"timestamp": "2026-07-03T04:56:13.109138+00:00", "event": "morning_brief_sent", "trigger_source": "scheduler_loop", "success": true, "brief_sent_date_after": "2026-07-03", "duplication_flag": false}

@@ -166,9 +166,12 @@ class TestProcessTradeSignal(unittest.TestCase):
             "take_profit": float(df["Close"].iloc[-1]) * 1.05,
             "probability": 0.55, "expected_r": 0.1,
         }
+        original_log = te_mod.log_trade_decision
+        te_mod.log_trade_decision = lambda t, e: None
         try:
             out = process_trade_signal(bad_trade, df)
         finally:
+            te_mod.log_trade_decision = original_log
             te_mod.ENABLE_TRADE_EVALUATOR = False
             te_mod.SHADOW_MODE = True
         self.assertIsNone(out)

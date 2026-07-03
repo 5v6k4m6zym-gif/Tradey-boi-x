@@ -335,7 +335,8 @@ class TestProcessTradeSignal(unittest.TestCase):
         ac_mod.ENABLE_ADAPTIVE_CORE = True
         ac_mod.SHADOW_MODE = False
         trade = _sample_trade()
-        with patch.object(ac_mod, "_regime_detector") as mock_detector:
+        with patch.object(ac_mod, "_regime_detector") as mock_detector, \
+             patch.object(ac_mod, "_log_decision"):
             mock_detector.detect.side_effect = Exception("boom")
             result = process_trade_signal(trade, _make_ohlcv(trend="up"))
         self.assertIs(result, trade)

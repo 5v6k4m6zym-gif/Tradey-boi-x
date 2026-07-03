@@ -24,6 +24,12 @@ except ImportError:
     def wrap_run_scan(fn): return fn   # no-op shim when package unavailable
 
 try:
+    from diagnostics import trace_logger as _trace
+    _DIAGNOSTICS_AVAILABLE = True
+except ImportError:
+    _DIAGNOSTICS_AVAILABLE = False
+
+try:
     from opportunity.trade_evaluator import process_trade_signal
     from opportunity.config import ENABLE_TRADE_EVALUATOR, SHADOW_MODE
     _TRADE_EVAL_AVAILABLE = True
@@ -311,17 +317,39 @@ def main():
     model = train_model()
     print("Model ready.\n")
 
-    _brief_sent_date: str | None = None   # tracks which calendar date brief was sent
+    # ── Dedup state is persisted to disk (scanner_state.json) so a process
+    # restart mid-session does not defeat the once-per-calendar-day gate and
+    # re-send the morning brief. This is scheduling bookkeeping only — it does
+    # not touch the (read-only) morning-brief sender's internals or any
+    # trading/signal logic. See diagnostics/ for the audit that found this. ──
+    _brief_sent_date: str | None = None
+    if _DIAGNOSTICS_AVAILABLE:
+        _brief_sent_date = _trace.load_scanner_state().get("brief_sent_date")
 
     while True:
         if markets_open():
             # ── Morning brief — once per calendar day when ASX is open ──
             asx_open, _ = _market_open(ASX_TZ, 10, 0, 16, 0)
             today = datetime.now(ASX_TZ).strftime("%Y-%m-%d")
+            is_dup = asx_open and _brief_sent_date == today
+            if _DIAGNOSTICS_AVAILABLE:
+                _trace.log_trace(
+                    "morning_brief_check", trigger_source="scheduler_loop",
+                    asx_open=asx_open, today=today,
+                    brief_sent_date_before=_brief_sent_date,
+                    duplication_flag=is_dup,
+                )
             if asx_open and _brief_sent_date != today:
                 print(f"[{datetime.now().strftime('%H:%M')}] Sending morning brief…")
                 ok = send_morning_brief()
                 _brief_sent_date = today
+                if _DIAGNOSTICS_AVAILABLE:
+                    _trace.save_scanner_state({"brief_sent_date": _brief_sent_date})
+                    _trace.log_trace(
+                        "morning_brief_sent", trigger_source="scheduler_loop",
+                        success=ok, brief_sent_date_after=_brief_sent_date,
+                        duplication_flag=False,
+                    )
                 print(f"  Morning brief {'sent ✅' if ok else 'failed ⚠️  (Discord unreachable)'}")
 
             wrap_run_scan(run_scan)(model)

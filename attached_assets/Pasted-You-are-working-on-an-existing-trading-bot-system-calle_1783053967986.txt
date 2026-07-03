@@ -1,0 +1,177 @@
+You are working on an existing trading bot system called “Tradey Boi X” with multiple layers:
+- prediction model
+- signal generation
+- evaluation filters
+- regime detection
+- strategy optimiser
+- backtesting + forward validation
+
+========================================================
+CRITICAL OBJECTIVE
+========================================================
+
+Perform a FULL SYSTEM BEHAVIOUR AUDIT to:
+
+1. Ensure alerts are still generated as originally intended
+2. Detect if filtering layers are incorrectly suppressing or duplicating alerts
+3. Investigate a specific issue:
+   "Why are there multiple morning market evaluations being triggered today?"
+
+This is a DEBUG + BEHAVIOURAL VALIDATION SYSTEM (NOT performance tuning).
+
+========================================================
+PART 1: ALERT BEHAVIOUR VERIFICATION
+
+Create AlertBehaviourTester that captures:
+
+- original model signal output (pre-all filters)
+- final system output (post all layers)
+
+Classify each signal as:
+
+A) PASS THROUGH (expected)
+- original signal == final signal
+
+B) FILTERED OUT (expected or unexpected)
+- signal removed with valid reason
+
+C) DUPLICATED SIGNAL (CRITICAL ISSUE)
+- same signal triggered multiple times unintentionally
+
+D) LOST SIGNAL (CRITICAL ISSUE)
+- model generates signal but system drops it with no valid trace
+
+========================================================
+PART 2: MORNING MARKET EVALUATION DEBUG (NEW CORE TASK)
+
+Investigate why "multiple morning market evaluations" occurred.
+
+Specifically detect:
+
+1. Duplicate triggers:
+   - Is the evaluation function being called multiple times per cycle?
+   - Is there a scheduler/loop re-triggering morning session logic?
+
+2. Time-based duplication:
+   - Is "morning market evaluation" triggered by multiple overlapping conditions?
+   - Example: time window logic AND regime detection both triggering same event
+
+3. Regime re-entry loop:
+   - Is the system repeatedly detecting "market open / morning regime"?
+
+4. Forward/backtest overlap:
+   - Is both live forward validator AND backtest engine running morning evaluation simultaneously?
+
+5. Event handler duplication:
+   - Are multiple listeners/subscribers attached to same event?
+
+OUTPUT REQUIRED:
+- root cause hypothesis
+- exact pipeline stage causing duplication
+- confidence score of diagnosis (0–100)
+
+========================================================
+PART 3: FILTER IMPACT ANALYSIS
+
+For each layer:
+- evaluation filter
+- regime detector
+- strategy gate
+- execution filter
+
+Report:
+- number of activations
+- number of outputs
+- duplication rate
+- suppression rate
+
+Identify:
+- any layer triggering twice per signal cycle
+
+========================================================
+PART 4: SYSTEM TRACE LOGGING (MANDATORY)
+
+For every morning evaluation event:
+
+Log full trace:
+
+- timestamp
+- trigger source (scheduler / market event / regime switch / manual call)
+- signal id
+- regime state
+- evaluation layer stack trace
+- whether forward validator also triggered
+- duplication flag (true/false)
+
+========================================================
+PART 5: REGRESSION TEST (MORNING SCENARIO)
+
+Simulate:
+
+- market open event (morning session)
+- first 30–60 minutes of trading
+- regime transitions during open
+
+Check:
+- how many evaluations should occur (EXPECTED = 1 per cycle unless explicitly defined)
+- how many actually occur
+- where duplication begins
+
+========================================================
+PART 6: EVENT SYSTEM AUDIT
+
+Inspect event architecture for:
+
+- duplicate cron jobs / schedulers
+- multiple subscriptions to same market open event
+- overlapping triggers:
+   - time-based trigger
+   - market-data-trigger
+   - regime-trigger
+
+Flag any:
+- double registration
+- infinite loops
+- recursive evaluation calls
+
+========================================================
+PART 7: ALERT INTEGRITY TEST
+
+Ensure:
+
+- no signal duplication
+- no silent signal loss
+- no unintended repeated evaluations
+- no conflicting trigger paths
+
+========================================================
+PART 8: OUTPUT REPORT
+
+Generate:
+
+1. Morning Evaluation Duplication Root Cause
+2. Pipeline Stage Responsible
+3. Severity Level (Low / Medium / Critical)
+4. Fix Recommendation (safe, non-breaking)
+5. Alert Integrity Score (0–100)
+6. System Execution Trace Summary
+
+========================================================
+FAIL-SAFE RULES
+
+- DO NOT modify trading logic
+- DO NOT stop execution system
+- ONLY observe, trace, and report
+- If error occurs → log and continue
+
+========================================================
+FINAL OUTPUT
+
+Implement:
+
+- AlertBehaviourTester
+- MorningEvaluationDebugger
+- EventSystemAuditor
+- FilterImpactAnalyzer
+- Full Trace Logger
+- Diagnostic Report Generator
