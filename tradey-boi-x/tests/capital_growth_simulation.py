@@ -46,6 +46,15 @@ N_TRADES = 122
 WINDOW_START = date(2025, 12, 19)
 WINDOW_END = date(2026, 6, 19)
 
+# EXTRAPOLATION NOTE: only 2025-12-19 -> 2026-06-19 (6 months, 122 trades) has
+# actually been backtested/validated. A 12-month projection below assumes the
+# SAME trade rate/edge repeats for a second, not-yet-observed 6-month period
+# back-to-back — this is an assumption for illustration, not a second
+# validated data point. Treat the 1-year numbers with proportionally more
+# skepticism than the 6-month numbers.
+PROJECTION_MONTHS = 12
+N_TRADES_PROJECTED = round(N_TRADES * PROJECTION_MONTHS / 6)
+
 FORTNIGHT_CONTRIBUTION = 250.0
 CONTRIBUTION_INTERVAL_DAYS = 14
 RISK_PCT_PER_TRADE = 0.02   # 1R = 2% of current equity risked per trade
@@ -57,11 +66,11 @@ _check_pf = (WIN_RATE * AVG_WIN_R) / ((1 - WIN_RATE) * 1.0)
 assert abs(_check_pf - PROFIT_FACTOR) < 0.01, f"R-multiple solve inconsistent: {_check_pf}"
 
 
-def generate_trades(rng: random.Random) -> list[dict]:
-    total_days = (WINDOW_END - WINDOW_START).days
-    business_days = [WINDOW_START + timedelta(days=d) for d in range(total_days)
-                      if (WINDOW_START + timedelta(days=d)).weekday() < 5]
-    signal_dates = sorted(rng.sample(business_days, min(N_TRADES, len(business_days))))
+def generate_trades(rng: random.Random, window_start: date, window_end: date, n_trades: int) -> list[dict]:
+    total_days = (window_end - window_start).days
+    business_days = [window_start + timedelta(days=d) for d in range(total_days)
+                      if (window_start + timedelta(days=d)).weekday() < 5]
+    signal_dates = sorted(rng.sample(business_days, min(n_trades, len(business_days))))
 
     trades = []
     for d in signal_dates:
@@ -74,7 +83,7 @@ def generate_trades(rng: random.Random) -> list[dict]:
     return trades
 
 
-def simulate(trades: list[dict]) -> dict:
+def simulate(trades: list[dict], window_start: date, risk_pct_per_trade: float = RISK_PCT_PER_TRADE) -> dict:
     end = trades[-1]["signal_date"] + timedelta(days=PRED_DAYS_CALENDAR)
     by_date: dict[date, list[dict]] = {}
     for t in trades:
@@ -86,9 +95,9 @@ def simulate(trades: list[dict]) -> dict:
     n_trades_taken = 0
     n_trades_skipped = 0
     equity_curve: list[float] = []
-    next_contribution = WINDOW_START
+    next_contribution = window_start
 
-    d = WINDOW_START
+    d = window_start
     while d <= end:
         still_open = []
         for pos in open_positions:
@@ -105,7 +114,7 @@ def simulate(trades: list[dict]) -> dict:
 
         for t in by_date.get(d, []):
             equity = cash + sum(p["risked_amount"] for p in open_positions)
-            risked = min(RISK_PCT_PER_TRADE * equity, cash)
+            risked = min(risk_pct_per_trade * equity, cash)
             if risked < 5.0:
                 n_trades_skipped += 1
                 continue
@@ -131,9 +140,9 @@ def simulate(trades: list[dict]) -> dict:
     # Modified Dietz method: robust money-weighted return for periodic
     # contributions, no root-finding needed. weight_i = fraction of the
     # total period that contribution i was invested for.
-    total_period_days = (end - WINDOW_START).days
+    total_period_days = (end - window_start).days
     contribution_dates = []
-    cd = WINDOW_START
+    cd = window_start
     while cd <= end:
         contribution_dates.append(cd)
         cd += timedelta(days=CONTRIBUTION_INTERVAL_DAYS)
@@ -149,8 +158,8 @@ def simulate(trades: list[dict]) -> dict:
     annualized_return = (1 + dietz_return) ** (1 / years) - 1 if years > 0 else 0.0
 
     return {
-        "window": f"{WINDOW_START} -> {end}",
-        "years_simulated": round((end - WINDOW_START).days / 365.25, 2),
+        "window": f"{window_start} -> {end}",
+        "years_simulated": round((end - window_start).days / 365.25, 2),
         "total_contributed": round(total_contributed, 2),
         "final_balance": round(final_balance, 2),
         "net_gain": round(final_balance - total_contributed, 2),
@@ -161,37 +170,74 @@ def simulate(trades: list[dict]) -> dict:
     }
 
 
+N_RUNS = 20
+
+
+def run_batch(window_start: date, window_end: date, n_trades: int,
+              risk_pct_per_trade: float, n_runs: int = N_RUNS) -> list[dict]:
+    results = []
+    for seed in range(RNG_SEED, RNG_SEED + n_runs):
+        rng = random.Random(seed)
+        trades = generate_trades(rng, window_start, window_end, n_trades)
+        results.append(simulate(trades, window_start, risk_pct_per_trade))
+    return results
+
+
+def summarize(label: str, results: list[dict]) -> dict:
+    avg = lambda key: round(sum(r[key] for r in results) / len(results), 2)
+    n = len(results)
+    n_losing = sum(1 for r in results if r["net_gain"] < 0)
+    print(f"\n{label}")
+    print(f"  avg total_contributed  : {avg('total_contributed')}")
+    print(f"  avg final_balance      : {avg('final_balance')}")
+    print(f"  avg net_gain           : {avg('net_gain')}")
+    print(f"  best / worst net_gain  : {max(r['net_gain'] for r in results)} / "
+          f"{min(r['net_gain'] for r in results)}")
+    print(f"  avg max_drawdown_pct   : {avg('max_drawdown_pct')}")
+    print(f"  runs that lost money   : {n_losing}/{n} ({round(100*n_losing/n)}%)")
+    return {"label": label, "avg_final_balance": avg("final_balance"), "avg_net_gain": avg("net_gain"),
+            "avg_max_drawdown_pct": avg("max_drawdown_pct"), "loss_rate_pct": round(100 * n_losing / n)}
+
+
 def main():
     print(f"Calibration check: avg winning trade solved as {AVG_WIN_R:.2f}R "
           f"(losers fixed at -1R), reproducing win_rate={WIN_RATE}, "
           f"profit_factor={PROFIT_FACTOR} (got {_check_pf:.3f}), expectancy={EXPECTANCY_R}R")
-    print(f"Risk per trade: {RISK_PCT_PER_TRADE*100:.0f}% of current equity (1R)")
-    print()
+    print(f"{N_RUNS} runs per scenario (different random trade-outcome orderings)\n")
 
-    results = []
-    for seed in range(RNG_SEED, RNG_SEED + 5):
-        rng = random.Random(seed)
-        trades = generate_trades(rng)
-        results.append(simulate(trades))
-
+    # --- 1) 6-month window (the actually-validated period) at 2% risk/trade ---
     print("=" * 70)
-    print(f"CAPITAL SIMULATION — ${FORTNIGHT_CONTRIBUTION:.0f}/fortnight, "
-          f"{N_TRADES} trades over {WINDOW_START} -> {WINDOW_END}")
-    print("(5 runs with different random trade-outcome orderings/win magnitudes)")
+    print(f"6-MONTH RESULT (validated window {WINDOW_START} -> {WINDOW_END}, "
+          f"{N_TRADES} trades, 2% risk/trade)")
     print("=" * 70)
-    for i, r in enumerate(results):
-        print(f"\nRun {i+1}:")
-        for k, v in r.items():
-            print(f"  {k:38s}: {v}")
+    results_6mo = run_batch(WINDOW_START, WINDOW_END, N_TRADES, 0.02)
+    summarize("6-month", results_6mo)
 
-    avg = lambda key: round(sum(r[key] for r in results) / len(results), 2)
+    # --- 2) 12-month projection (EXTRAPOLATED, not independently validated) ---
+    projected_end = WINDOW_START + timedelta(days=365)
+    print("\n" + "=" * 70)
+    print(f"12-MONTH PROJECTION (EXTRAPOLATED — assumes the same edge/trade rate "
+          f"repeats for a second, unobserved 6-month stretch, {N_TRADES_PROJECTED} trades, "
+          f"2% risk/trade)")
+    print("=" * 70)
+    results_12mo = run_batch(WINDOW_START, projected_end, N_TRADES_PROJECTED, 0.02)
+    summarize("12-month (extrapolated)", results_12mo)
+
+    # --- 3) Risk-per-trade sensitivity, over the 12-month projection ---
+    print("\n" + "=" * 70)
+    print("RISK-PER-TRADE SENSITIVITY (12-month extrapolated window)")
+    print("=" * 70)
+    sensitivity = []
+    for risk_pct in (0.01, 0.02, 0.03, 0.05):
+        results = run_batch(WINDOW_START, projected_end, N_TRADES_PROJECTED, risk_pct)
+        sensitivity.append(summarize(f"{risk_pct*100:.0f}% risk/trade", results))
+
     print("\n" + "-" * 70)
-    print("AVERAGE ACROSS RUNS:")
-    print(f"  total_contributed                    : {avg('total_contributed')}")
-    print(f"  final_balance                         : {avg('final_balance')}")
-    print(f"  net_gain                              : {avg('net_gain')}")
-    print(f"  max_drawdown_pct                       : {avg('max_drawdown_pct')}")
-    print(f"  money_weighted_annualized_return_pct   : {avg('money_weighted_annualized_return_pct')}")
+    print("SENSITIVITY SUMMARY (12-month, contributing $250/fortnight = $6,500 total):")
+    print(f"  {'risk/trade':12s} {'avg final $':>12s} {'avg net gain':>14s} {'avg max DD':>12s} {'loss rate':>10s}")
+    for s in sensitivity:
+        print(f"  {s['label']:12s} {s['avg_final_balance']:>12.0f} {s['avg_net_gain']:>14.0f} "
+              f"{s['avg_max_drawdown_pct']:>11.1f}% {s['loss_rate_pct']:>9}%")
 
 
 if __name__ == "__main__":
