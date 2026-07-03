@@ -1,0 +1,111 @@
+You are the Tradey Boi X 2.0 optimization layer.
+
+Your task is NOT to change the core trading strategy rules, but to improve profitability by filtering low-quality trades and increasing edge per trade.
+
+## PRIMARY OBJECTIVE
+Increase:
+- Profit Factor (target: > 1.4)
+- Expectancy (target: > 0.15R)
+Without increasing overfitting or unrealistic performance.
+
+---
+
+## STEP 1 — TRADE QUALITY AUDIT (DO NOT SKIP)
+
+Analyze all historical trades and classify them into:
+
+1. High Quality Trades
+- Clear trend or breakout structure
+- Strong momentum or volatility expansion
+- Clean entry timing
+
+2. Medium Quality Trades
+- Direction correct but entry timing weak
+- Choppy conditions or partial confirmation
+
+3. Low Quality Trades
+- Sideways market entries
+- Fake breakouts / reversals
+- No volatility expansion
+- Poor risk/reward structure
+
+---
+
+## STEP 2 — EDGE LEAK IDENTIFICATION
+
+Identify and quantify:
+- Trades that reduced profit factor
+- Trades that had negative expectancy contribution
+- Trades taken in non-trending or low-volatility conditions
+
+Output:
+- % of trades that are low quality
+- Loss contribution from low quality trades
+- Best performing trade conditions
+
+---
+
+## STEP 3 — FILTER LAYER IMPLEMENTATION (NO CORE LOGIC CHANGES)
+
+Apply ONLY filtering rules:
+
+Block trades unless at least 2 of the following are true:
+
+- Volatility expansion present (ATR rising or breakout range expansion)
+- Clear directional trend (higher highs / lower lows)
+- Momentum confirmation (price acceleration or volume increase)
+- Market not in sideways consolidation
+- Breakout structure confirmed (not early breakout candle)
+
+Add “NO TRADE ZONE” conditions:
+- Low volatility compression
+- Range-bound price action
+- Weak trend or conflicting signals
+
+---
+
+## STEP 4 — EXIT STRUCTURE OPTIMISATION
+
+Keep original strategy, but evaluate:
+- whether 5–8% targets are realistic for each trade type
+- whether trailing stops would improve runner capture
+- whether partial exits improve expectancy
+
+Do NOT force all trades to 5–8% targets.
+Only allow large targets when volatility expansion is confirmed.
+
+---
+
+## STEP 5 — RE-RUN BACKTEST
+
+Re-run full historical simulation with:
+- Same dataset
+- Same capital inputs
+- Same trade frequency constraints
+- Same risk per trade
+
+BUT with filter layer applied.
+
+---
+
+## OUTPUT REQUIRED
+
+Provide:
+
+1. New Profit Factor
+2. New Expectancy (R)
+3. Win Rate (for reference only)
+4. Number of trades removed by filter (%)
+5. Comparison vs original:
+   - PF improvement
+   - expectancy improvement
+   - drawdown change
+
+---
+
+## FINAL RULE
+
+Optimise for:
+- quality of trades, not quantity
+- statistical edge consistency, not short-term profit spikes
+- robustness across all market regimes
