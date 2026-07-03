@@ -1,0 +1,105 @@
+Tradey Boi X – Safe Profit Factor Optimisation (Target: 1.40+)
+
+Objective
+
+Optimise Tradey Boi X to improve its long-term profit factor from approximately 1.21 toward 1.40 or higher, while preserving the existing architecture, strategy, alerting system, and overall reliability.
+
+Core Requirements
+
+* Do not rewrite the bot from scratch.
+* Do not remove or disable any existing functionality.
+* Preserve all current buy/sell alert behaviour unless an improvement is demonstrably beneficial.
+* Maintain backwards compatibility with every existing feature.
+* Optimise only where there is measurable evidence that the change improves long-term expectancy.
+
+Optimisation Priorities
+
+Focus on improving expectancy by:
+
+* Filtering lower-quality trade setups.
+* Increasing average winning trade size where statistically justified.
+* Reducing unnecessary losing trades.
+* Improving reward-to-risk selection.
+* Improving confidence scoring.
+* Improving trend and momentum confirmation.
+* Avoiding weak entries during unfavourable market regimes.
+* Improving exit management where historical testing supports better outcomes.
+* Removing duplicate or conflicting signals.
+* Improving consistency rather than simply increasing trade frequency.
+
+The system should favour higher-quality opportunities over a larger number of trades.
+
+Safety Constraints
+
+Before applying any modification:
+
+* Analyse the expected impact.
+* Check for dependency conflicts.
+* Check for regressions.
+* Validate compatibility with every module.
+* Reject any optimisation that reduces robustness or creates instability.
+
+If an optimisation cannot be proven beneficial through testing, do not implement it.
+
+Validation Process
+
+After every accepted optimisation:
+
+Run a complete validation suite including:
+
+* Full historical backtesting.
+* Walk-forward validation.
+* Out-of-sample testing.
+* Monte Carlo simulations (where supported).
+* Stress testing across different market conditions.
+* Performance consistency checks.
+* Regression testing.
+* Alert verification.
+* Signal verification.
+* Risk management verification.
+* Error logging review.
+
+Performance Report
+
+Produce a report comparing:
+
+* Profit Factor
+* Win Rate
+* Average Win
+* Average Loss
+* Expectancy
+* Maximum Drawdown
+* Sharpe Ratio (if available)
+* Number of Trades
+* Average Holding Time
+* Annualised Return
+* Risk-adjusted Return
+
+Include both Before and After values.
+
+Acceptance Criteria
+
+Only keep modifications if they satisfy all of the following:
+
+* No existing functionality is broken.
+* Alerts continue functioning correctly.
+* Risk controls remain intact.
+* No increase in hidden failure modes.
+* No material increase in drawdown unless compensated by a statistically significant improvement in expectancy.
+* Overall system stability is maintained or improved.
+* Profit factor improves with statistically meaningful evidence rather than random variation.
+
+If any optimisation fails these requirements, automatically revert that change.
+
+Final Deliverables
+
+When complete, provide:
+
+1. A summary of every accepted optimisation.
+2. Any rejected optimisations and why they were rejected.
+3. Before vs After performance metrics.
+4. Test results for every validation stage.
+5. Confirmation that all alerts, trading logic, logging, reporting, and safety systems continue to operate correctly.
+6. Confirmation that the system remains clean, efficient, stable, and production-ready.
+
+The final objective is a stronger long-term trading system, not simply a higher backtest result. Optimisations must prioritise robustness, repeatability, and statistically validated improvements over curve-fitting.
