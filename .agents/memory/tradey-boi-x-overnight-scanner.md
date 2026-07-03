@@ -49,3 +49,24 @@ gate is added to `scanner.py`, or overnight alerts will silently skip it.
 As of 2026-07-03 both scripts call the same four gates (trade_evaluator,
 adaptive_core, strategy_optimizer, audit_engine) in the same order before
 `send_alert()`.
+
+**Duplicate-alert root cause, confirmed 2026-07-03 (e.g. BIIB firing twice):**
+this workspace's git remote (`gitsafe-backup`) is Replit's internal backup
+only — it was never connected to the actual GitHub repo that the Actions
+crons (`scanner.yml`, `overnight_scan.yml`, etc.) run against. A Replit
+workflow running `scanner.py` continuously and GitHub Actions' `scanner.yml`
+(hourly) were therefore two fully independent live copies of the exact same
+scanner, each with its own local `cooldowns.json`/`signal_log.json` state —
+neither could see the other's cooldown, so the same ticker could clear both
+independently and alert twice. The scanner's own market-hours gating
+(`markets_open()` vs `_markets_closed()`) is correct and mutually exclusive
+— this was never a scheduling-logic bug, it was two live deployments of the
+same code with no shared state.
+
+**Resolution:** user chose GitHub Actions as the single source of truth
+(it already has the fuller cron schedule — premarket/open/hourly/evening/
+overnight/weekly). The local `Tradey Boi X Scanner` Replit workflow was
+removed so only GitHub Actions sends live alerts. If a user ever reports
+duplicate alerts again, check for **any** Replit workflow independently
+running `scanner.py` or `overnight_scanner.py` before assuming it's a code
+bug — a second live deployment is the more likely cause.
