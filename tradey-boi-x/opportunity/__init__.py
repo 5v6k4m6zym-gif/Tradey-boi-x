@@ -185,6 +185,50 @@ def classify_loss(resolved_entry, entry_context=None):
     return _LC().classify(resolved_entry, entry_context=entry_context)
 
 
+def audit_trade(trade, market_data, outcome_data=None):
+    """Full System Audit Suite — Part 8 wrapper. Read-only: never blocks
+    execution, never mutates `trade`, never raises. Returns {} (no-op) when
+    ENABLE_AUDIT_ENGINE is off."""
+    from opportunity.audit_engine import audit_trade as _at
+    return _at(trade, market_data, outcome_data=outcome_data)
+
+
+def run_system_audit():
+    """Full System Audit Suite — logic/performance/data anomaly detection.
+    Advisory only; never stops the system. Returns None when flag is off."""
+    from opportunity.audit_engine import run_system_audit as _rsa
+    return _rsa()
+
+
+def run_bug_detector():
+    """Full System Audit Suite — structural/runtime issue scan. Report +
+    suggest only, never auto-applies a fix. Returns None when flag is off."""
+    from opportunity.audit_engine import run_bug_detector as _rbd
+    return _rbd()
+
+
+def run_performance_analytics_v2():
+    """Full System Audit Suite — rolling windows, regime/setup-type/edge-
+    score breakdowns, and full drawdown curve. Returns None when flag is off."""
+    from opportunity.audit_engine import run_performance_analytics_v2 as _rpa2
+    return _rpa2()
+
+
+def run_forward_validation_summary():
+    """Full System Audit Suite — predicted-vs-actual deviation summary.
+    Returns None when flag is off."""
+    from opportunity.audit_engine import run_forward_validation_summary as _rfvs
+    return _rfvs()
+
+
+def generate_comparison_report():
+    """Full System Audit Suite — old baseline vs new-filtered-system
+    comparison, with regime-specific breakdown. Always available (read-only);
+    writes a JSON report to reports/audit/."""
+    from opportunity.audit_engine import generate_comparison_report as _gcr
+    return _gcr()
+
+
 __all__ = [
     # Core
     "run_opportunity_pass",
@@ -216,4 +260,11 @@ __all__ = [
     # Adaptive Trading Core v4
     "process_adaptive_trade_signal",
     "classify_loss",
+    # Full System Audit Suite
+    "audit_trade",
+    "run_system_audit",
+    "run_bug_detector",
+    "run_performance_analytics_v2",
+    "run_forward_validation_summary",
+    "generate_comparison_report",
 ]

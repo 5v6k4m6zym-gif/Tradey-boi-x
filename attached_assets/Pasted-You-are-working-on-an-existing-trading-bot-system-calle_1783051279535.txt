@@ -1,0 +1,242 @@
+You are working on an existing trading bot system called “Tradey Boi X”.
+
+========================================================
+CRITICAL SAFETY RULES (NON-NEGOTIABLE)
+========================================================
+
+1. DO NOT modify, rewrite, or replace:
+   - prediction model
+   - signal generation logic
+   - execution engine
+
+2. ALL additions must be non-invasive analysis layers.
+
+3. SYSTEM MUST NEVER BREAK OR BLOCK LIVE TRADING.
+
+4. If unsure, default to PASS-THROUGH + LOGGING ONLY.
+
+========================================================
+OBJECTIVE
+========================================================
+
+Build a complete:
+
+1. Historical Backtesting Engine
+2. Forward Validation (Paper/Shadow Trading Analyzer)
+3. Performance Analytics System
+4. Full System Audit Tool
+5. Automated Bug/Anomaly Detection Layer
+
+This system must evaluate the TRUE performance of Tradey Boi X
+without interfering with its normal operation.
+
+========================================================
+ARCHITECTURE (NON-INTRUSIVE)
+========================================================
+
+Existing Flow:
+    Model → Signal → Execution
+
+New Flow (parallel system only):
+    Model → Signal → Execution
+                 ↘
+              Audit Engine (NEW)
+                 ↘
+        Backtest + Forward Validator + Analytics
+
+IMPORTANT:
+- Audit system MUST NOT affect execution
+- It only observes, logs, and evaluates
+
+========================================================
+PART 1: BACKTESTING ENGINE (HISTORICAL SIMULATION)
+
+Create BacktestEngine that:
+
+Inputs:
+- historical price data
+- recorded trade signals OR replayed signals
+- strategy parameters (from current bot outputs)
+
+Must simulate:
+
+- entry execution
+- stop loss hit
+- take profit hit
+- time-based exits (if applicable)
+- slippage model (simple configurable approximation)
+
+Outputs per trade:
+- win/loss
+- PnL in R multiple
+- max favorable excursion (MFE)
+- max adverse excursion (MAE)
+- duration
+- setup type (if available)
+
+Must support:
+- batch backtesting over full dataset
+- rolling window backtests
+
+========================================================
+PART 2: FORWARD VALIDATION ENGINE (SHADOW MODE)
+
+Create ForwardValidator that:
+
+- runs alongside live bot
+- records every trade signal decision
+- tracks what actually happens after entry
+- compares predicted edge vs real outcome
+
+Must log:
+
+- predicted probability
+- edge score
+- regime type
+- actual outcome
+- deviation from expectation
+
+IMPORTANT:
+- NO live trading changes allowed
+- purely observational system
+
+========================================================
+PART 3: PERFORMANCE ANALYTICS ENGINE
+
+Create PerformanceAnalytics that calculates:
+
+- win rate overall
+- win rate by regime
+- expectancy per setup type
+- average R per trade
+- drawdown curve
+- profit factor
+- streak analysis (win/loss clusters)
+
+Must support:
+
+- rolling windows (50, 100, 200 trades)
+- regime-based breakdown
+- signal-quality segmentation (edge score buckets)
+
+========================================================
+PART 4: SYSTEM AUDIT ENGINE (CRITICAL)
+
+Create SystemAudit that detects:
+
+A) Logic anomalies:
+- unusually high rejection rates
+- sudden drop in trade frequency
+- inconsistent signal structures
+
+B) Performance anomalies:
+- regime mismatch performance drops
+- edge score not correlating with outcomes
+- calibration drift (probability vs reality mismatch)
+
+C) Data issues:
+- missing fields in trades
+- NaN or invalid values
+- malformed signals
+
+When detected:
+- log warning
+- do NOT stop system
+- suggest likely cause
+
+========================================================
+PART 5: BUG DETECTION + SAFE FIX LAYER
+
+Create BugDetector that:
+
+- identifies runtime issues in logs
+- detects inconsistent trade objects
+- flags broken evaluation outputs
+
+If fix is possible safely:
+- suggest patch (DO NOT auto-apply to core system)
+- otherwise log only
+
+IMPORTANT:
+- NEVER modify production trading logic
+- ONLY report + suggest fixes
+
+========================================================
+PART 6: DATA STORAGE FORMAT
+
+All systems must log to JSONL with:
+
+- timestamp
+- symbol
+- trade_id
+- regime_type
+- edge_score
+- predicted_probability
+- actual_outcome
+- pnl_R
+- mfe
+- mae
+- pass/fail status
+- reason (if any)
+- system flags (audit warnings)
+
+========================================================
+PART 7: COMPARISON ENGINE (KEY FEATURE)
+
+Must compare:
+
+1. Old system performance (baseline)
+2. New filtered system performance
+3. Regime-specific performance differences
+
+Output:
+
+- which system performs better overall
+- which regimes improve / degrade
+- where filters help or hurt performance
+
+========================================================
+PART 8: WRAPPER DESIGN REQUIREMENT
+
+All components must be callable via:
+
+audit_trade(trade, market_data, outcome_data)
+
+But MUST NOT:
+- block execution
+- modify trade objects
+- interfere with signal pipeline
+
+========================================================
+FAIL-SAFE REQUIREMENTS
+
+If ANY component fails:
+- system continues running normally
+- logs error internally
+- returns safe empty result
+
+========================================================
+VALIDATION REQUIREMENTS
+
+Before completion ensure:
+
+1. Backtest runs independently
+2. Forward validation runs in shadow mode
+3. Analytics produce consistent metrics
+4. Audit system does not interfere with execution
+5. No performance degradation in live bot
+6. All logs are consistent and readable
+
+========================================================
+FINAL OUTPUT EXPECTATION
+
+Implement:
+
+- BacktestEngine
+- ForwardValidator
+- PerformanceAnalytics
+- SystemAudit
+- BugDetector
+- audit_trade wrapper function
+- JSONL logging system
+- comparison report generator

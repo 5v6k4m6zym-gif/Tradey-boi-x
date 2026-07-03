@@ -40,6 +40,14 @@ except ImportError:
     _ADAPTIVE_CORE_AVAILABLE = False
     ENABLE_ADAPTIVE_CORE = False
 
+try:
+    from opportunity.audit_engine import audit_trade
+    from opportunity.config import ENABLE_AUDIT_ENGINE
+    _AUDIT_ENGINE_AVAILABLE = True
+except ImportError:
+    _AUDIT_ENGINE_AVAILABLE = False
+    ENABLE_AUDIT_ENGINE = False
+
 SCAN_INTERVAL_SECONDS = 3600   # scan every hour while markets are open
 
 # ─── MARKET HOURS ────────────────────────────────────────────────────────────
@@ -185,6 +193,28 @@ def run_scan(model) -> int:
                             continue
                     except Exception as _ac:
                         print(f"  ⚠️  {ticker}: adaptive core error ({_ac}) — proceeding unaffected")
+
+                # ── Full System Audit Suite — logging-only, never gates ───
+                # Purely additive observability: joins TradeEvaluator's edge/
+                # predictability/noise/RR with regime detection and writes a
+                # single unified JSONL record. The return value is never used
+                # to skip/alter the alert below — a failure here is fully
+                # contained and cannot affect the existing flow.
+                if ENABLE_AUDIT_ENGINE:
+                    try:
+                        params = engine._trade_params(ticker, res, price, df)
+                        trade  = {
+                            "ticker":      ticker,
+                            "direction":   "LONG",
+                            "entry":       price,
+                            "stop_loss":   params["stop_loss"],
+                            "take_profit": params["target_price"],
+                            "probability": res.get("prob", 0.0),
+                            "expected_r":  res.get("expected_r"),
+                        }
+                        audit_trade(trade, df)
+                    except Exception as _ae:
+                        print(f"  \u26a0\ufe0f  {ticker}: audit engine error ({_ae}) — proceeding unaffected")
 
                 sent  = send_alert(ticker, res, price, df)
                 if sent:

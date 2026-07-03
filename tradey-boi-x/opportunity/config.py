@@ -144,6 +144,42 @@ TRADING_COSTS: dict[str, float] = {
     "spread_pct_asx":     float(os.getenv("COST_SPREAD_PCT_ASX",     "0.0015")),
 }
 
+# ── Full System Audit Suite (BacktestEngine/ForwardValidator/PerformanceAnalytics/
+#    SystemAudit/BugDetector) ───────────────────────────────────────────────────
+# A read-only, parallel observability layer alongside the live bot. NEVER
+# modifies the prediction model, signal generation, or execution logic — it
+# only observes, logs, and evaluates. The `audit_trade()` wrapper never blocks
+# execution, never mutates the trade object, and on ANY internal failure logs
+# the error and returns a safe empty result rather than raising. Off by
+# default (complete no-op) via ENABLE_AUDIT_ENGINE.
+ENABLE_AUDIT_ENGINE = _flag("ENABLE_AUDIT_ENGINE")
+
+AUDIT_LOG_PATH     = os.getenv("AUDIT_LOG_PATH", "logs/audit_trades.jsonl")
+AUDIT_REPORTS_DIR  = os.getenv("AUDIT_REPORTS_DIR", "reports/audit")
+AUDIT_STATE_PATH   = os.getenv("AUDIT_STATE_PATH", "logs/audit_state.json")
+
+# BacktestEngine — bar-by-bar historical simulation (entry/stop/target/
+# time-exit against real OHLCV bars), independent of the already-resolved
+# signal_log outcomes computed by engine.resolve_outcomes(). Reuses the same
+# slippage/commission/spread cost model as opportunity.costs.
+AUDIT_BACKTEST_MAX_HOLD_DAYS = int(os.getenv("AUDIT_BACKTEST_MAX_HOLD_DAYS", "14"))
+
+# SystemAudit anomaly-detection thresholds — advisory only, never block/stop
+# the system; a detected anomaly is logged with a suggested likely cause.
+AUDIT_REJECTION_RATE_SPIKE_DELTA = float(os.getenv("AUDIT_REJECTION_RATE_SPIKE_DELTA", "0.25"))
+AUDIT_FREQUENCY_DROP_PCT         = float(os.getenv("AUDIT_FREQUENCY_DROP_PCT",         "0.50"))
+AUDIT_CALIBRATION_DRIFT_DELTA    = float(os.getenv("AUDIT_CALIBRATION_DRIFT_DELTA",    "0.15"))
+AUDIT_MIN_TRADES_FOR_CHECKS      = int(os.getenv("AUDIT_MIN_TRADES_FOR_CHECKS",        "20"))
+AUDIT_RECENT_WINDOW_TRADES       = int(os.getenv("AUDIT_RECENT_WINDOW_TRADES",         "50"))
+
+# PerformanceAnalytics rolling windows + signal-quality (edge-score) buckets
+AUDIT_ROLLING_WINDOWS: tuple[int, ...] = (50, 100, 200)
+
+AUDIT_EDGE_SCORE_BUCKETS: list[tuple[str, float, float]] = [
+    ("0.0-0.4", 0.0, 0.4), ("0.4-0.6", 0.4, 0.6),
+    ("0.6-0.8", 0.6, 0.8), ("0.8-1.0", 0.8, 1.01),
+]
+
 # ── Opportunity scoring weights (must sum to 1.0) ─────────────────────────────
 WEIGHTS: dict[str, float] = {
     "expected_return":    float(os.getenv("OPP_W_EXPECTED_RETURN",   "0.35")),

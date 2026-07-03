@@ -210,3 +210,27 @@ itself changes — a fixed-horizon "did forward return clear the target" test
 is not comparable to "was the blended adaptive-exit P&L positive." Never
 compare win_rate across a methodology change; only compare cost-adjusted
 profit_factor/expectancy_r, and call out the methodology shift explicitly.
+
+**`patch.object` bypasses a method's own decorator (2026-07-03):** A test
+using `patch.object(SomeClass, "some_method", side_effect=RuntimeError)` to
+simulate an internal failure replaces the ENTIRE bound method, including any
+`@_safe`-style fail-safe decorator wrapping it — so the raised exception is
+not caught by that method's own guard, it propagates to whatever calls the
+method. **Why this matters:** if the caller (e.g. `run_audit()`) has its own
+outer `@_safe` wrapper, the realistic result is the caller's fallback value
+(e.g. `{}`), not a partial report as if only the one check had silently
+failed — the individual check's decorator provides zero protection once
+`patch.object` has replaced it. **How to apply:** when writing "never raises"
+tests for a fail-safe-decorated method by patching a sub-call, assert on
+what the OUTER wrapper actually returns on total failure, not on an
+idealized "graceful partial degradation" that the patch itself makes
+impossible to observe.
+
+**Feature-flag-off changes need no full-watchlist re-validation (recurring
+pattern, confirmed again at T014):** Any purely additive module that is (a)
+gated by a config flag defaulting to False and (b) never imported into the
+live decision path in engine.py, only needs pytest + an import/scanner-boot
+sanity check before being kept — not a full 407/408-ticker backtest
+re-validation, since default behavior is provably unchanged. Reserve full
+watchlist validation for changes that alter signal generation, gating, or
+values used in a default-on code path.
