@@ -28,7 +28,10 @@ import pandas as pd
 
 import engine
 from opportunity.backtester import compute_metrics
-from manual_historical_backtest import score_row, score_active_mover, score_setup_mover
+from manual_historical_backtest import (
+    score_row, score_active_mover, score_setup_mover,
+    load_regime_series, regime_for,
+)
 
 CACHE_DIR = Path("/tmp/full_ticker_cache")
 CKPT_DIR = Path("/tmp/full_backtest_checkpoint")
@@ -186,6 +189,19 @@ def main():
     eval_dir = CKPT_DIR / "eval"
     eval_dir.mkdir(exist_ok=True)
 
+    regime_ckpt = CKPT_DIR / "regime.pkl"
+    if regime_ckpt.exists():
+        with open(regime_ckpt, "rb") as f:
+            regime_series_by_index = pickle.load(f)
+    else:
+        print("  Precomputing point-in-time market regime series (^AXJO, SPY)...")
+        regime_series_by_index = {
+            "^AXJO": load_regime_series("^AXJO"),
+            "SPY":   load_regime_series("SPY"),
+        }
+        with open(regime_ckpt, "wb") as f:
+            pickle.dump(regime_series_by_index, f)
+
     tickers_to_eval = [t for t in data.keys() if not (eval_dir / f"{t.replace('.', '_')}.pkl").exists()]
     print(f"  {len(data) - len(tickers_to_eval)} tickers already evaluated (cached), "
           f"{len(tickers_to_eval)} remaining")
@@ -216,8 +232,9 @@ def main():
         for i in range(test_start, usable_end):
             row, prev = df.iloc[i], df.iloc[i - 1]
             prob = float(all_probs[i])
+            regime = regime_for(regime_series_by_index, ticker, df.index[i])
 
-            signal, score = score_row(row, prev, prob)
+            signal, score = score_row(row, prev, prob, regime)
 
             entry_price = float(row["Close"])
             exit_price = float(df["Close"].iloc[i + engine.PREDICTION_DAYS])

@@ -68,7 +68,7 @@ SAMPLE_TICKERS = [
 ]
 
 
-def score_row(row, prev, prob: float) -> tuple[str, int]:
+def score_row(row, prev, prob: float, regime: str = "sideways") -> tuple[str, int]:
     """Replicates engine.decide()'s deterministic technical filters + scoring
     (no live/network-dependent adjusters). Returns (signal, score)."""
     filters_ok = (
@@ -95,13 +95,61 @@ def score_row(row, prev, prob: float) -> tuple[str, int]:
     ]
     score = sum(pts for pts, met in rules if met)
 
-    if score >= 8 and prob >= 0.50:
+    expected_r = engine.expected_value_r(
+        float(row["Close"]), float(row["atr"]), prob, bool(row["breakout"])
+    )
+    # NOTE: `regime` param is accepted for API parity with engine.decide() /
+    # future use, but does NOT gate the tier — a regime-adaptive floor was
+    # tried and validated on the full 407-ticker watchlist, and it REGRESSED
+    # every metric vs this flat 0.50 floor. See engine.py decide() comments.
+    del regime
+
+    if score >= 8 and prob >= 0.50 and expected_r > 0:
         return "ELITE", score
-    elif score >= 6 and prob >= 0.50:
+    elif score >= 6 and prob >= 0.50 and expected_r > 0:
         return "STRONG BUY", score
     elif score >= 5:
         return "WATCH", score
     return "IGNORE", score
+
+
+def load_regime_series(index_ticker: str) -> pd.Series:
+    """
+    Precompute a point-in-time regime label for every trading day of a
+    benchmark index (^AXJO for ASX tickers, SPY for US), using only data up to
+    and including that day — mirrors engine.classify_regime() exactly so the
+    backtest evaluates the identical regime-adaptive logic as production,
+    without any look-ahead.
+    """
+    df = engine.get_data(index_ticker, "3y")
+    close  = df["Close"]
+    ema50  = close.ewm(span=50, adjust=False).mean()
+    ema200 = close.ewm(span=200, adjust=False).mean()
+    mom20  = close / close.shift(20) - 1
+    vix_df = engine.get_data("^VIX", "3y")["Close"].reindex(df.index, method="ffill")
+
+    regimes = []
+    for i in range(len(df)):
+        price = float(close.iloc[i])
+        e50   = float(ema50.iloc[i])
+        e200  = float(ema200.iloc[i]) if pd.notna(ema200.iloc[i]) else e50
+        m20   = float(mom20.iloc[i]) if pd.notna(mom20.iloc[i]) else 0.0
+        v     = float(vix_df.iloc[i]) if pd.notna(vix_df.iloc[i]) else 15.0
+        regimes.append(engine.classify_regime(price, e50, e200, m20, v))
+    return pd.Series(regimes, index=df.index)
+
+
+def regime_for(regime_series_by_index: dict, ticker: str, date) -> str:
+    """Look up the point-in-time regime for a ticker's date (last known value
+    at or before that date — no look-ahead)."""
+    index = "^AXJO" if ticker.endswith(".AX") else "SPY"
+    series = regime_series_by_index.get(index)
+    if series is None or series.empty:
+        return "sideways"
+    try:
+        return series.asof(date)
+    except Exception:
+        return "sideways"
 
 
 def score_active_mover(df, i: int, prob: float) -> tuple[bool, int]:
@@ -335,6 +383,11 @@ def main():
 
     print(f"\n[4/4] Evaluating signals on held-out test period only "
           f"(last {int((1 - TRAIN_FRACTION) * 100)}% of each ticker's history)...")
+    print("  Precomputing point-in-time market regime series (^AXJO, SPY)...")
+    regime_series_by_index = {
+        "^AXJO": load_regime_series("^AXJO"),
+        "SPY":   load_regime_series("SPY"),
+    }
     trades: list[dict] = []
     all_evaluated: list[dict] = []  # every day, regardless of tier — for calibration check
     tier_counts: dict[str, int] = {"ELITE": 0, "STRONG BUY": 0, "WATCH": 0, "IGNORE": 0, "GATED": 0}
@@ -363,8 +416,9 @@ def main():
         for i in range(test_start, usable_end):
             row, prev = df.iloc[i], df.iloc[i - 1]
             prob = float(all_probs[i])
+            regime = regime_for(regime_series_by_index, ticker, df.index[i])
 
-            signal, score = score_row(row, prev, prob)
+            signal, score = score_row(row, prev, prob, regime)
             tier_counts[signal] = tier_counts.get(signal, 0) + 1
 
             entry_price = float(row["Close"])

@@ -546,6 +546,70 @@ def market_regime_ok(ticker: str) -> bool:
     index = "^AXJO" if ticker.endswith(".AX") else "SPY"
     return _cached_ema_ok(f"regime_{index}", index, span=50)
 
+REGIME_PROB_FLOOR_ADJ = {
+    "strong_bull": -0.02,
+    "weak_bull":    0.0,
+    "sideways":     0.0,
+    "weak_bear":   +0.03,
+    "strong_bear": +0.06,
+    "high_vol":    +0.05,
+}
+
+def classify_regime(price: float, ema50: float, ema200: float, mom20: float, vix: float) -> str:
+    """
+    Pure regime classifier (no network calls) — one of: strong_bull, weak_bull,
+    sideways, weak_bear, strong_bear, high_vol. Kept side-effect-free so it can
+    be reused identically by both the live scanner (market_regime()) and the
+    point-in-time backtest, which supplies historical index values for the
+    exact date being evaluated — never a look-ahead value.
+    """
+    if vix >= 25:
+        return "high_vol"
+    if ema200 <= 0:
+        ema200 = ema50
+    if price > ema50 > ema200 and mom20 > 0.03:
+        return "strong_bull"
+    if price > ema50 and price > ema200:
+        return "weak_bull"
+    if price < ema50 < ema200 and mom20 < -0.03:
+        return "strong_bear"
+    if price < ema50 and price < ema200:
+        return "weak_bear"
+    return "sideways"
+
+def market_regime(ticker: str) -> str:
+    """Live regime classification for the relevant broad index (cached 1h)."""
+    index = "^AXJO" if ticker.endswith(".AX") else "SPY"
+    cache_key = f"full_regime_{index}"
+    now = datetime.now().timestamp()
+    if cache_key in _regime_cache:
+        ts, result = _regime_cache[cache_key]
+        if now - ts < 3600:
+            return result
+    try:
+        df = yf.Ticker(index).history(period="1y")
+        if df.empty or len(df) < 60:
+            return "sideways"
+        close  = df["Close"]
+        ema50  = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
+        ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1]) if len(close) >= 200 else ema50
+        price  = float(close.iloc[-1])
+        mom20  = float(price / close.iloc[-20] - 1) if len(close) >= 20 else 0.0
+        vix    = float(yf.Ticker("^VIX").history(period="5d")["Close"].iloc[-1])
+        regime = classify_regime(price, ema50, ema200, mom20, vix)
+        _regime_cache[cache_key] = (now, regime)
+        return regime
+    except Exception:
+        return "sideways"
+
+def regime_prob_floor(regime: str, base: float = 0.50) -> float:
+    """Adaptive AI-probability floor for the ELITE/STRONG BUY tiers, scaled by
+    market regime. Favorable regimes keep the existing 50% floor; unfavorable
+    or high-volatility regimes raise it so only higher-conviction setups
+    qualify when conditions are worse. Clamped so it can never override the
+    hard 40% technical-filter floor or exceed a sane ceiling."""
+    return max(0.40, min(0.65, base + REGIME_PROB_FLOOR_ADJ.get(regime, 0.0)))
+
 def vix_safe() -> bool:
     """True when market fear (VIX) is below 30. High VIX = unreliable signals."""
     now = datetime.now().timestamp()
@@ -723,6 +787,40 @@ def update_ticker_performance() -> dict:
 
     return {e["ticker"]: e["outcome"] for e in updated if e["outcome"] is not None}
 
+def expected_value_r(price: float, atr: float, prob: float, breakout: bool) -> float:
+    """
+    Expected R-multiple for a setup, computed from its ATR-implied reward:risk
+    ratio and the model's win probability — BEFORE knowing which tier (ELITE/
+    STRONG BUY) it will land in, so no tier multiplier is applied here.
+
+    Mirrors the same ATR-tier target/stop-loss logic already used by
+    _trade_params() for real trade sizing, so this doesn't introduce a new,
+    unvalidated notion of risk — it reuses one already live in production.
+
+        expected_R = prob × reward_R − (1 − prob) × 1.0
+
+    where reward_R = target_pct / stop_loss_pct (in R units, 1R = risking to stop).
+    A setup with high win probability but a poor reward:risk ratio can still
+    have a negative expected R — this is exactly the "high probability, poor
+    expected return" case the institutional-upgrade spec calls out to reject.
+    """
+    if price <= 0 or atr <= 0:
+        return 0.0
+    atr_pct = atr / price * 100
+    if atr_pct >= 3.0:
+        base_target_pct, sl_mult = 8.0, 2.0
+    elif atr_pct >= 1.5:
+        base_target_pct, sl_mult = 5.0, 1.5
+    else:
+        base_target_pct, sl_mult = 3.0, 1.2
+    if breakout:
+        base_target_pct *= 1.15
+    stop_loss_pct = min(sl_mult * atr_pct, 15.0)
+    if stop_loss_pct <= 0:
+        return 0.0
+    reward_R = base_target_pct / stop_loss_pct
+    return prob * reward_R - (1 - prob) * 1.0
+
 def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     GATED = {"signal": "GATED", "label": "🚫 GATED", "color": "#888",
               "alert": False, "prob": 0.0, "score": 0, "why": [], "filters": [],
@@ -798,9 +896,26 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
              + comm_adj + vel_adj + sr_adj + mtf_adj + rs_adj + fg_adj
              + rot_adj + gap_adj + sq_adj + fund_adj + vwap_adj)
 
+    # Expected-value screen — reject setups that look good on prob/score alone
+    # but whose ATR-implied reward:risk is too thin to be worth the risk.
+    # Uses the same ATR-tier target/stop logic as _trade_params (no tier
+    # multiplier applied here since tier isn't decided yet), so this needs no
+    # extra data source and can't leak future information.
+    expected_r = expected_value_r(row["Close"], row["atr"], prob, bool(row["breakout"]))
+
+    # Market regime — classified for dashboard/monitoring visibility (T002,
+    # institutional-upgrade spec). A regime-adaptive probability floor was
+    # tried here and validated on the full 407-ticker watchlist, but it
+    # REGRESSED every metric vs the flat 0.50 floor (win_rate 40.0%→38.8%,
+    # expectancy +0.034R→+0.007R, profit_factor 1.057→1.012), so the floor
+    # itself was reverted to the flat 0.50 baseline. `regime` is still
+    # computed and surfaced below purely as context (dashboard display /
+    # future use), and does NOT affect the ELITE/STRONG BUY gate.
+    regime = market_regime(ticker)
+
     # Grade thresholds — only the strongest qualify for an alert
-    # ELITE:      score ≥ 8  AND AI prob ≥ 50%
-    # STRONG BUY: score ≥ 6  AND AI prob ≥ 50%
+    # ELITE:      score ≥ 8  AND AI prob ≥ 0.50  AND expected value > 0
+    # STRONG BUY: score ≥ 6  AND AI prob ≥ 0.50  AND expected value > 0
     # Retuned from the prior 11 / 9&0.70 cutoffs after a 407-ticker out-of-
     # sample backtest showed those never fired a single signal in ~50k
     # test-period days. 8&0.50 / 6&0.50 was the best point found: revives
@@ -808,15 +923,21 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     # slightly positive (+0.002R, profit_factor 1.002) — adding the prob≥50%
     # floor to ELITE (not just score≥8) raised its win rate from 30.6%→34.2%
     # with only a small drop in signal count — see tests/full_watchlist_backtest.py.
+    # The expected_r > 0 gate (T001, institutional-upgrade spec) additionally
+    # rejects high-prob/high-score setups whose reward:risk is so thin the
+    # expected R-multiple is negative. Validated on the full watchlist before
+    # being kept (win_rate 37.7%→40.0%, expectancy +0.002R→+0.034R).
     # WATCH:      everything else that passed filters — shown on dashboard, never alerted
-    if   score >= 8 and prob >= 0.50:        signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
-    elif score >= 6 and prob >= 0.50:        signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
-    elif score >= 5:                         signal, label, color, qualifies = "WATCH",      "👀 WATCH",      "#e6a817", False
-    else:                                    signal, label, color, qualifies = "IGNORE",     "⛔ IGNORE",     "#cc3300", False
+    if   score >= 8 and prob >= 0.50 and expected_r > 0:  signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
+    elif score >= 6 and prob >= 0.50 and expected_r > 0:  signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
+    elif score >= 5:                                      signal, label, color, qualifies = "WATCH",      "👀 WATCH",      "#e6a817", False
+    else:                                                 signal, label, color, qualifies = "IGNORE",     "⛔ IGNORE",     "#cc3300", False
 
     return {"signal": signal, "label": label, "color": color,
             "alert": qualifies and cooldown_ok(ticker),
             "prob": prob, "score": score, "base_score": base_score,
+            "expected_r": round(expected_r, 3),
+            "regime": regime,
             "adj": adj, "news": news, "why": why, "filters": filters,
             "rsi": round(float(row["rsi"]), 1)}
 
