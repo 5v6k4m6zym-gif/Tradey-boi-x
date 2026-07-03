@@ -11,14 +11,14 @@ def _flag(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default)).lower() in ("1", "true", "yes")
 
 
-ENABLE_MARKET_REGIME         = _flag("ENABLE_MARKET_REGIME")
-ENABLE_OPPORTUNITY_ENGINE    = _flag("ENABLE_OPPORTUNITY_ENGINE")
-ENABLE_ENHANCED_ALERTS       = _flag("ENABLE_ENHANCED_ALERTS")
-ENABLE_ADVANCED_BACKTESTS    = _flag("ENABLE_ADVANCED_BACKTESTS")
-ENABLE_PERFORMANCE_ANALYTICS = _flag("ENABLE_PERFORMANCE_ANALYTICS")
-ENABLE_STRATEGY_CHALLENGER   = _flag("ENABLE_STRATEGY_CHALLENGER")
-ENABLE_SYSTEM_HEALTH         = _flag("ENABLE_SYSTEM_HEALTH")
-ENABLE_DRIFT_MONITORING      = _flag("ENABLE_DRIFT_MONITORING")
+ENABLE_MARKET_REGIME         = _flag("ENABLE_MARKET_REGIME", default=True)
+ENABLE_OPPORTUNITY_ENGINE    = _flag("ENABLE_OPPORTUNITY_ENGINE", default=True)
+ENABLE_ENHANCED_ALERTS       = _flag("ENABLE_ENHANCED_ALERTS", default=True)
+ENABLE_ADVANCED_BACKTESTS    = _flag("ENABLE_ADVANCED_BACKTESTS", default=True)
+ENABLE_PERFORMANCE_ANALYTICS = _flag("ENABLE_PERFORMANCE_ANALYTICS", default=True)
+ENABLE_STRATEGY_CHALLENGER   = _flag("ENABLE_STRATEGY_CHALLENGER", default=True)
+ENABLE_SYSTEM_HEALTH         = _flag("ENABLE_SYSTEM_HEALTH", default=True)
+ENABLE_DRIFT_MONITORING      = _flag("ENABLE_DRIFT_MONITORING", default=True)
 
 # ── Live vs backtest drift monitoring (institutional upgrade T011) ───────────
 # Compares a recent rolling window of resolved live/paper trades against the
@@ -41,8 +41,8 @@ DRIFT_THRESHOLDS: dict[str, float] = {
 # Purely additive instrumentation layer — never modifies the prediction model,
 # signal generation, or execution logic. Runs in SHADOW_MODE by default, which
 # means it only logs pass/fail decisions and never blocks an alert/trade.
-ENABLE_TRADE_EVALUATOR = _flag("ENABLE_TRADE_EVALUATOR")
-SHADOW_MODE            = _flag("SHADOW_MODE", default=True)
+ENABLE_TRADE_EVALUATOR = _flag("ENABLE_TRADE_EVALUATOR", default=True)
+SHADOW_MODE            = _flag("SHADOW_MODE", default=False)
 
 TRADE_EVAL_THRESHOLDS: dict[str, float] = {
     "min_edge_score":          float(os.getenv("TE_MIN_EDGE_SCORE",          "0.65")),
@@ -59,7 +59,7 @@ TRADE_EVAL_LOG_PATH = os.getenv("TE_LOG_PATH", "logs/trade_evaluations.jsonl")
 # clamped to the safe bounds below, and only ONE threshold family per cycle.
 # Never runs while SHADOW_MODE is True (observation-only phase) or when
 # ENABLE_AUTO_TUNER is False (default) — complete no-op otherwise.
-ENABLE_AUTO_TUNER = _flag("ENABLE_AUTO_TUNER")
+ENABLE_AUTO_TUNER = _flag("ENABLE_AUTO_TUNER", default=True)
 
 AUTO_TUNER_INTERVAL_TRADES = int(os.getenv("AUTO_TUNER_INTERVAL_TRADES", "50"))
 AUTO_TUNER_MAX_STEP_PCT    = float(os.getenv("AUTO_TUNER_MAX_STEP_PCT", "0.05"))
@@ -85,7 +85,7 @@ AUTO_TUNER_LOG_PATH   = os.getenv("AUTO_TUNER_LOG_PATH", "logs/auto_tuner_decisi
 # edge/predictability/noise/RR computation and PerformanceTracker's rolling
 # stats rather than duplicating them. Off by default; when off, scanner.py's
 # existing flow (Phase 8 evaluator or none) is completely unaffected.
-ENABLE_ADAPTIVE_CORE = _flag("ENABLE_ADAPTIVE_CORE")
+ENABLE_ADAPTIVE_CORE = _flag("ENABLE_ADAPTIVE_CORE", default=True)
 
 ADAPTIVE_CORE_LOG_PATH = os.getenv("ADAPTIVE_CORE_LOG_PATH", "logs/adaptive_core_decisions.jsonl")
 
@@ -152,7 +152,7 @@ TRADING_COSTS: dict[str, float] = {
 # execution, never mutates the trade object, and on ANY internal failure logs
 # the error and returns a safe empty result rather than raising. Off by
 # default (complete no-op) via ENABLE_AUDIT_ENGINE.
-ENABLE_AUDIT_ENGINE = _flag("ENABLE_AUDIT_ENGINE")
+ENABLE_AUDIT_ENGINE = _flag("ENABLE_AUDIT_ENGINE", default=True)
 
 AUDIT_LOG_PATH     = os.getenv("AUDIT_LOG_PATH", "logs/audit_trades.jsonl")
 AUDIT_REPORTS_DIR  = os.getenv("AUDIT_REPORTS_DIR", "reports/audit")
@@ -190,7 +190,7 @@ AUDIT_EDGE_SCORE_BUCKETS: list[tuple[str, float, float]] = [
 # ENABLE_STRATEGY_OPTIMIZER. Reuses opportunity.adaptive_core.RegimeDetector
 # for regime classification and opportunity.performance_tracker-style
 # signal_log joins rather than duplicating them.
-ENABLE_STRATEGY_OPTIMIZER = _flag("ENABLE_STRATEGY_OPTIMIZER")
+ENABLE_STRATEGY_OPTIMIZER = _flag("ENABLE_STRATEGY_OPTIMIZER", default=True)
 
 STRATEGY_LOG_PATH         = os.getenv("STRATEGY_LOG_PATH",         "logs/strategy_optimizer_decisions.jsonl")
 STRATEGY_WEIGHTS_PATH     = os.getenv("STRATEGY_WEIGHTS_PATH",     "logs/strategy_weights.json")
