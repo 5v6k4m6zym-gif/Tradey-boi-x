@@ -48,21 +48,23 @@ from opportunity.backtester import compute_metrics
 # still-meaningful backtest (full 408-ticker run would take much longer).
 SAMPLE_TICKERS = [
     # US mega-cap tech / semis
-    "AAPL", "NVDA", "MSFT", "AMD", "TSLA",
+    "AAPL", "NVDA", "MSFT", "AMD", "TSLA", "META", "AMZN", "GOOGL", "AVGO", "INTC",
     # US finance / industrial
-    "JPM", "CAT",
+    "JPM", "CAT", "GS", "BA", "XOM",
     # ASX banks / miners
-    "CBA.AX", "BHP.AX", "FMG.AX", "RIO.AX",
+    "CBA.AX", "BHP.AX", "FMG.AX", "RIO.AX", "NAB.AX", "WBC.AX", "ANZ.AX", "S32.AX",
     # ASX gold
-    "NST.AX", "EVN.AX",
+    "NST.AX", "EVN.AX", "NEM.AX",
     # ASX lithium
-    "PLS.AX", "IGO.AX",
+    "PLS.AX", "IGO.AX", "MIN.AX", "LTR.AX",
     # ASX tech
-    "XRO.AX", "WTC.AX",
+    "XRO.AX", "WTC.AX", "APX.AX",
     # ASX healthcare
-    "CSL.AX", "RMD.AX",
+    "CSL.AX", "RMD.AX", "COH.AX",
     # ASX consumer/REIT
-    "WES.AX", "GMG.AX",
+    "WES.AX", "GMG.AX", "WOW.AX", "COL.AX",
+    # ASX energy
+    "WDS.AX", "STO.AX",
 ]
 
 
@@ -195,10 +197,15 @@ def main():
     print("=" * 70)
 
     print(f"\n[1/4] Fetching 2y history for {len(SAMPLE_TICKERS)} tickers...")
+    cache_dir = Path("/tmp/ticker_cache")
     data: dict[str, pd.DataFrame] = {}
     for ticker in SAMPLE_TICKERS:
+        cache_file = cache_dir / f"{ticker.replace('.', '_')}.pkl"
         try:
-            df = engine.get_data(ticker, "2y")
+            if cache_file.exists():
+                df = pd.read_pickle(cache_file)
+            else:
+                df = engine.get_data(ticker, "2y")
         except Exception as e:
             print(f"  ⚠️  {ticker}: failed to fetch data ({e})")
             continue
@@ -261,6 +268,70 @@ def main():
     rf_pipe.fit(X_train, y_train)
 
     model = engine.EnsembleModel(xgb_pipe, rf_pipe)
+
+    # ── Diagnostics: is the AI probability itself informative on held-out data? ──
+    # This answers "why isn't AI probability giving a clear edge" independent
+    # of the alert-tier gating logic, which can mask a model that's actually
+    # fine (or confirm a model that's genuinely weak).
+    print("\n" + "=" * 70)
+    print("AI MODEL DIAGNOSTICS (held-out test-period rows, all tickers combined)")
+    print("=" * 70)
+    test_frames = []
+    for ticker, df in data.items():
+        cutoff_idx = cutoffs[ticker]
+        test_df = df.iloc[cutoff_idx:].copy()
+        test_df["target"] = (
+            test_df["Close"].shift(-engine.PREDICTION_DAYS) / test_df["Close"] - 1
+            > engine.TARGET_RETURN
+        ).astype(int)
+        test_frames.append(test_df.dropna(subset=engine.FEATURES + ["target"]))
+    test_combined = pd.concat(test_frames, ignore_index=True) if test_frames else pd.DataFrame()
+
+    if len(test_combined):
+        from sklearn.metrics import roc_auc_score, log_loss, brier_score_loss
+
+        X_test = test_combined[engine.FEATURES]
+        y_test = test_combined["target"]
+        p_test = model.predict_proba(X_test)[:, 1]
+        base_rate = float(y_test.mean())
+
+        try:
+            auc = roc_auc_score(y_test, p_test)
+        except Exception:
+            auc = float("nan")
+        try:
+            ll = log_loss(y_test, p_test)
+            ll_baseline = log_loss(y_test, [base_rate] * len(y_test))
+        except Exception:
+            ll, ll_baseline = float("nan"), float("nan")
+        brier = brier_score_loss(y_test, p_test)
+
+        print(f"  Held-out rows: {len(test_combined):,}  |  base rate (actual buy%): {base_rate*100:.1f}%")
+        print(f"  ROC AUC:        {auc:.3f}   (0.50 = no better than a coin flip, 1.00 = perfect)")
+        print(f"  Log loss:       {ll:.4f}   (baseline constant-rate log loss: {ll_baseline:.4f})")
+        print(f"  Brier score:    {brier:.4f}   (lower is better; 0.25 ~= uninformative for ~50% base rate)")
+        print(f"  Predicted prob: min={p_test.min():.3f}  mean={p_test.mean():.3f}  "
+              f"max={p_test.max():.3f}  std={p_test.std():.3f}")
+        if auc < 0.55:
+            print("  -> AUC near 0.50 means the model has very little genuine ranking")
+            print("     power on unseen data for THIS sample — consistent with the flat")
+            print("     calibration buckets seen in the main backtest.")
+
+        # Feature importance — which inputs is the model actually leaning on?
+        try:
+            xgb_clf = xgb_pipe.named_steps["xgb"]
+            importances = sorted(
+                zip(engine.FEATURES, xgb_clf.feature_importances_),
+                key=lambda t: -t[1],
+            )
+            print("\n  XGBoost feature importances (train set):")
+            for feat, imp in importances:
+                bar = "█" * int(imp * 60)
+                print(f"    {feat:12s} {imp:.3f} {bar}")
+        except Exception as _e:
+            print(f"  ⚠️  Could not extract feature importances: {_e}")
+    else:
+        print("  ⚠️  No held-out rows available for diagnostics.")
 
     print(f"\n[4/4] Evaluating signals on held-out test period only "
           f"(last {int((1 - TRAIN_FRACTION) * 100)}% of each ticker's history)...")
