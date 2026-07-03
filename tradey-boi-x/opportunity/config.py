@@ -44,11 +44,20 @@ DRIFT_THRESHOLDS: dict[str, float] = {
 ENABLE_TRADE_EVALUATOR = _flag("ENABLE_TRADE_EVALUATOR", default=True)
 SHADOW_MODE            = _flag("SHADOW_MODE", default=False)
 
+# Recalibrated (2026-07-03) against the actual historical distribution of
+# this system's own ELITE/STRONG BUY signals (390 out-of-sample signals,
+# full 408-ticker watchlist, cached 2y history) rather than the original
+# theoretical defaults, which measured edge_score medians of ~0.14 and
+# risk_reward medians of ~1.1 against thresholds of 0.65 / 2.5 — i.e. they
+# rejected ~100% of real signals. These floors sit at the ~10th percentile
+# (90th for noise, which is inverted) of that real distribution, so the
+# layer still filters the bottom outlier tail (~30% combined) without
+# blocking the whole pipeline. See .agents/memory/tradey-boi-x-live-gating.md.
 TRADE_EVAL_THRESHOLDS: dict[str, float] = {
-    "min_edge_score":          float(os.getenv("TE_MIN_EDGE_SCORE",          "0.65")),
-    "min_predictability_score": float(os.getenv("TE_MIN_PREDICTABILITY_SCORE", "0.60")),
-    "min_risk_reward":         float(os.getenv("TE_MIN_RISK_REWARD",         "2.5")),
-    "max_noise_index":         float(os.getenv("TE_MAX_NOISE_INDEX",         "1.2")),
+    "min_edge_score":          float(os.getenv("TE_MIN_EDGE_SCORE",          "0.10")),
+    "min_predictability_score": float(os.getenv("TE_MIN_PREDICTABILITY_SCORE", "0.32")),
+    "min_risk_reward":         float(os.getenv("TE_MIN_RISK_REWARD",         "0.83")),
+    "max_noise_index":         float(os.getenv("TE_MAX_NOISE_INDEX",         "2.03")),
 }
 
 TRADE_EVAL_LOG_PATH = os.getenv("TE_LOG_PATH", "logs/trade_evaluations.jsonl")
@@ -66,12 +75,18 @@ AUTO_TUNER_MAX_STEP_PCT    = float(os.getenv("AUTO_TUNER_MAX_STEP_PCT", "0.05"))
 AUTO_TUNER_MIN_TRADES_FLOOR = int(os.getenv("AUTO_TUNER_MIN_TRADES_FLOOR", "5"))
 
 # (low, high) safe bounds — thresholds can never move outside this range,
-# regardless of what the adjustment rules compute.
+# regardless of what the adjustment rules compute (regime nudges, auto-tuner
+# steps). Recalibrated (2026-07-03) alongside TRADE_EVAL_THRESHOLDS to bracket
+# the actual historical distribution of this system's own signals (see note
+# above) — the previous bounds (e.g. min_edge_score 0.55-0.80) were centred on
+# the old unreachable defaults and would have silently clamped the new
+# realistic base thresholds right back up to an always-reject state the first
+# time a regime adjustment or auto-tuner step ran.
 AUTO_TUNER_BOUNDS: dict[str, tuple[float, float]] = {
-    "min_edge_score":          (0.55, 0.80),
-    "min_predictability_score": (0.50, 0.75),
-    "min_risk_reward":         (2.0, 4.0),
-    "max_noise_index":         (1.0, 1.5),
+    "min_edge_score":          (0.05, 0.25),
+    "min_predictability_score": (0.20, 0.55),
+    "min_risk_reward":         (0.50, 1.80),
+    "max_noise_index":         (1.50, 2.40),
 }
 
 AUTO_TUNER_STATE_PATH = os.getenv("AUTO_TUNER_STATE_PATH", "logs/auto_tuner_state.json")

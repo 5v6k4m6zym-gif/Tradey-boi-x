@@ -1,3 +1,3 @@
 - [ASX watchlist delisted tickers](tradey-boi-x-watchlist.md) — scanner logs "possibly delisted" warnings; cross-check against WATCHLIST before removing, don't guess.
-- [Historical backtest methodology](tradey-boi-x-backtest.md) — must use time-split train/test or results are worthless (100% win rate = red flag, not success); also covers why win_rate isn't comparable across an exit-mechanism/methodology change.
+- [Historical backtest methodology](tradey-boi-x-backtest.md) — must use time-split train/test or results are worthless (100% win rate = red flag, not success); also covers why win_rate isn't comparable across an exit-mechanism/methodology change; also: flipping SHADOW_MODE off needs a full-pipeline replay to validate real approval rate, not just pytest.
 - [Artifact port conflicts](artifact-port-conflicts.md) — unrelated scaffold artifacts can hardcode the same localPort as the real app; check for conflicts before assuming code is broken.

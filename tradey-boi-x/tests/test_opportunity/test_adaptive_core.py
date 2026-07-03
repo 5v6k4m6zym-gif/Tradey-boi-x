@@ -100,9 +100,11 @@ class TestRegimeDetector(unittest.TestCase):
 
 class TestRegimeAdjustedThresholds(unittest.TestCase):
     def _base(self):
+        # Mid-range values (within AUTO_TUNER_BOUNDS) so regime multipliers
+        # have room to move both stricter and easier without clamping.
         return {
-            "min_edge_score": 0.65, "min_predictability_score": 0.60,
-            "min_risk_reward": 2.5, "max_noise_index": 1.2,
+            "min_edge_score": 0.15, "min_predictability_score": 0.35,
+            "min_risk_reward": 1.0, "max_noise_index": 1.9,
         }
 
     def test_does_not_mutate_base(self):

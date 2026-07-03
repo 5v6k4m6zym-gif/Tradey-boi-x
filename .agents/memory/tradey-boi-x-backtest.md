@@ -247,3 +247,33 @@ asked for. **How to apply:** when implementing a regime/condition-gated
 map, treat an explicitly empty allow-list for one key as valid and
 intentional — don't add a fallback that force-allows at least one strategy,
 as that would contradict the spec.
+
+**Flipping SHADOW_MODE off requires validating actual approval rate, not just
+pytest (2026-07-03):** When every opportunity/* gate was switched to live
+mode (`SHADOW_MODE=False`, all `ENABLE_*=True`) as requested, pytest passed
+585/585 (tests patch flags directly, so they can't catch this), but a full-
+pipeline replay of real historical ELITE/STRONG BUY signals through the
+three-layer chain (trade_evaluator → adaptive_core → strategy_optimizer)
+found `trade_evaluator`'s shipped default thresholds (`min_edge_score=0.65`,
+`min_risk_reward=2.5`) rejected ~100% of this system's real signals — the
+system's actual edge_score/risk_reward distributions (median ~0.14 / ~1.1)
+never came close to those theoretical defaults. **Why this matters:** a
+threshold that looks reasonable in isolation can be silently incompatible
+with what upstream signal generation actually produces; unit tests that
+patch flags/inputs directly cannot catch this class of bug, only an
+end-to-end replay against real historical signal data can. **How to apply:**
+whenever a gate/threshold layer's SHADOW_MODE or enable-flag flips from
+observe-only to live (able to reject), before trusting it in production,
+replay real historical qualifying signals through the exact live code path
+and check the resulting approval rate is non-degenerate (neither ~0% nor
+~100%) — recalibrate thresholds against the actual observed metric
+distribution (e.g. 10th/90th percentile of the real data) rather than
+generic assumed values, and remember to also update any paired
+tuning-bounds table (e.g. `AUTO_TUNER_BOUNDS`) in lockstep, since stale
+bounds will silently clamp new realistic thresholds back to the old
+broken range the first time a regime adjustment or auto-tuner step runs.
+Recalibrated result on the full 408-ticker watchlist: baseline (gates off)
+win_rate 40.0%/profit_factor 0.925/expectancy_r -0.045 → live-gated (~31%
+approval rate) win_rate 45.1%/profit_factor 1.181/expectancy_r +0.10 —
+confirms the gates add real value once thresholds match the system's
+actual signal distribution.
