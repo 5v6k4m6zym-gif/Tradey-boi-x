@@ -11,12 +11,14 @@ from __future__ import annotations
 import json
 import math
 import os
+import random
 import statistics
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from opportunity.config import ENABLE_ADVANCED_BACKTESTS
+from opportunity.costs import apply_cost
 
 BASE_DIR    = Path(__file__).parent.parent
 LOG_FILE    = BASE_DIR / "signal_log.json"
@@ -24,7 +26,8 @@ REPORTS_DIR = BASE_DIR / "reports"
 
 WIN_OUTCOMES: tuple = ("WIN", "HIT_TARGET", "EXPIRED_GAIN")
 
-BACKTEST_MODES = ("walk_forward", "out_of_sample", "historical_sim", "paper")
+BACKTEST_MODES = ("walk_forward", "out_of_sample", "historical_sim", "paper",
+                   "monte_carlo")
 
 
 # ─── Signal log helpers ───────────────────────────────────────────────────────
@@ -69,8 +72,14 @@ def compute_metrics(trades: list[dict]) -> dict[str, Any]:
     loss_count  = len(losses)
     win_rate    = win_count / total if total else 0.0
 
-    gain_pcts = [t.get("actual_pct", 0.0) or 0.0 for t in wins]
-    loss_pcts = [abs(t.get("actual_pct", 0.0) or 0.0) for t in losses]
+    # Realistic backtesting (T003): net P&L-based metrics reflect commission +
+    # slippage + spread costs. Win/loss classification above stays based on
+    # whether price actually touched target/stop — that's a price-action
+    # fact, not a cost-dependent one.
+    net_pct = lambda t: apply_cost(t.get("actual_pct", 0.0) or 0.0, t.get("ticker", ""))
+
+    gain_pcts = [net_pct(t) for t in wins]
+    loss_pcts = [abs(net_pct(t)) for t in losses]
 
     avg_gain = statistics.mean(gain_pcts) if gain_pcts else 0.0
     avg_loss = statistics.mean(loss_pcts) if loss_pcts else 0.0
@@ -87,8 +96,8 @@ def compute_metrics(trades: list[dict]) -> dict[str, Any]:
     hold_days_list = _compute_hold_days(trades)
     avg_hold_days  = round(statistics.mean(hold_days_list), 1) if hold_days_list else 0.0
 
-    # Returns series for Sharpe / Sortino
-    returns = [t.get("actual_pct", 0.0) or 0.0 for t in trades]
+    # Returns series for Sharpe / Sortino (net of realistic trading costs)
+    returns = [net_pct(t) for t in trades]
     sharpe  = _sharpe(returns)
     sortino = _sortino(returns)
 
@@ -252,6 +261,75 @@ def _historical_simulation(entries: list[dict]) -> dict:
     return m
 
 
+def _monte_carlo(
+    entries: list[dict],
+    n_simulations: int = 1000,
+    seed: int | None = 42,
+) -> dict:
+    """
+    Monte Carlo resampling of trade outcomes: repeatedly draw
+    len(entries) trades WITH replacement from the resolved trade history
+    to build a distribution of plausible profit_factor/expectancy/drawdown
+    outcomes (and an empirical "risk of ruin" estimate), rather than relying
+    on the single realized ordering of trades.
+
+    This does not change signal generation or any live/backtest metric
+    already reported elsewhere — it is a separate, additive risk-estimation
+    report over the SAME resolved trade set used by the other modes.
+    """
+    if not entries:
+        return {**_empty_metrics(), "n_simulations": 0, "risk_of_ruin_pct": 0.0}
+
+    rng = random.Random(seed)
+    n = len(entries)
+
+    profit_factors: list[float] = []
+    expectancies:   list[float] = []
+    max_drawdowns:  list[float] = []
+    ruin_count = 0
+    # "Ruin" defined as: cumulative equity (compounding realized net-of-cost
+    # returns, in a random resampled order) ever falls below 50% of starting
+    # capital during the simulated sequence.
+    ruin_threshold = 0.50
+
+    for _ in range(n_simulations):
+        sample = [entries[rng.randrange(n)] for _ in range(n)]
+        m = compute_metrics(sample)
+        pf = m["profit_factor"]
+        if math.isfinite(pf):
+            profit_factors.append(pf)
+        expectancies.append(m["expectancy_r"])
+        max_drawdowns.append(m["max_drawdown_pct"])
+
+        equity = 1.0
+        for t in sample:
+            equity *= (1 + apply_cost(t.get("actual_pct", 0.0) or 0.0, t.get("ticker", "")))
+            if equity <= ruin_threshold:
+                ruin_count += 1
+                break
+
+    def _pctile(vals: list[float], p: float) -> float:
+        if not vals:
+            return 0.0
+        s = sorted(vals)
+        idx = min(len(s) - 1, max(0, int(round(p * (len(s) - 1)))))
+        return round(s[idx], 4)
+
+    return {
+        "n_simulations":        n_simulations,
+        "sample_size":          n,
+        "profit_factor_median": _pctile(profit_factors, 0.50),
+        "profit_factor_p5":     _pctile(profit_factors, 0.05),
+        "profit_factor_p95":    _pctile(profit_factors, 0.95),
+        "expectancy_r_median":  _pctile(expectancies, 0.50),
+        "expectancy_r_p5":      _pctile(expectancies, 0.05),
+        "expectancy_r_p95":     _pctile(expectancies, 0.95),
+        "max_drawdown_pct_median": _pctile(max_drawdowns, 0.50),
+        "max_drawdown_pct_p95":    _pctile(max_drawdowns, 0.95),
+        "risk_of_ruin_pct":     round(ruin_count / n_simulations * 100, 2),
+    }
+
+
 def _paper_trading_snapshot(entries: list[dict], days: int = 30) -> dict:
     """Metrics for the most recent `days` days of signals (live-track proxy)."""
     cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -320,6 +398,7 @@ def run_backtest(
     test_size:   int = 30,
     holdout_pct: float = 0.20,
     paper_days:  int = 30,
+    n_simulations: int = 1000,
     notify:      bool = True,
 ) -> dict | None:
     """
@@ -327,11 +406,13 @@ def run_backtest(
 
     Parameters
     ----------
-    mode         : one of 'walk_forward', 'out_of_sample', 'historical_sim', 'paper'
+    mode         : one of 'walk_forward', 'out_of_sample', 'historical_sim',
+                   'paper', 'monte_carlo'
     window_size  : (walk_forward) training window in trades
     test_size    : (walk_forward) test window in trades
     holdout_pct  : (out_of_sample) fraction held out as unseen test
     paper_days   : (paper) look-back window in calendar days
+    n_simulations: (monte_carlo) number of resampled trade sequences
     notify       : send Discord summary if True
 
     Returns None when flag is off or log is empty.
@@ -365,6 +446,9 @@ def run_backtest(
 
     elif mode == "paper":
         result = {"mode": mode, "summary": _paper_trading_snapshot(entries, paper_days)}
+
+    elif mode == "monte_carlo":
+        result = {"mode": mode, "summary": _monte_carlo(entries, n_simulations)}
 
     else:
         raise ValueError(f"Unknown backtest mode: {mode!r}. "

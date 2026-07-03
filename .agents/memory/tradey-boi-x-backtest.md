@@ -71,3 +71,88 @@ per-ticker probability threshold — it filters out real setups indiscriminately
 rather than just bad ones. If regime-based adaptation is revisited, prefer
 using it for position sizing or stop distance (impact on trade management)
 rather than gating whether a signal fires at all.
+
+**Multi-timeframe confirmation (T005) was already implemented (2026-07-03):**
+Before adding new higher-timeframe gating, check whether it already exists —
+this system already had `weekly_trend_ok()` (weekly EMA20>EMA50 hard gate) and
+`multitimeframe_signal()` (1h vs daily EMA/MACD agreement) wired into
+`decide()`. Always grep/read the target function fully before implementing a
+spec item; avoid duplicating logic that's already there.
+
+**Institutional liquidity gate (T007) result (2026-07-03):** Added a 20-day
+avg-dollar-volume gate (`dollar_vol` in `get_data()`, `MIN_DOLLAR_VOLUME` in
+`decide()`'s filters, fails open on NaN/insufficient history) to filter out
+thin/illiquid names. Tested $200k/$500k/$2M thresholds on the full 407-ticker
+backtest — all three were byte-identical to the pre-change baseline
+(profit_factor 0.931, expectancy_r -0.025). Confirmed via a direct
+`engine.get_data()` check that the column computes correctly (not a silent
+bug) — this ASX-primary 408-ticker watchlist is simply already curated to
+liquid names (e.g. BHP.AX ~$600M/day dollar volume), so every signal that
+already fires clears even a $2M bar. **Why this matters:** a liquidity/quality
+gate can be a legitimate no-op on a well-curated watchlist; don't mistake
+"identical backtest metrics" for "broken code" — verify the underlying data
+computes as expected before concluding a filter has no effect. Kept at $500k
+as a forward-looking safety net (guards against future watchlist expansion
+into thinner names) since it caused no regression.
+
+**Smart position sizing (T008) result (2026-07-03):** Added ATR-based fixed-
+fractional position sizing (`engine.position_size_pct()`, reuses the same
+ATR-tier stop-loss logic as `expected_value_r()`) as an informational field
+only (no gating change). On the full 407-ticker backtest, size-weighting
+trade returns by this sizing scheme produced a LOWER average return
+(+0.411%) than plain equal-weighting (+0.554%) — this system's tighter-stop
+setups (favoured with larger size by fixed-fractional sizing) performed
+slightly worse than its wider-stop setups historically. **Why this matters:**
+"smart" position sizing is a risk-management practice (protects equity from
+oversized bets on volatile names), not automatically a return-improving one
+— don't assume volatility-based sizing will lift backtest expectancy; it can
+legitimately do the opposite if low-vol setups underperform high-vol ones in
+the data. Keep it for the equity-protection rationale, but report the
+size-weighted vs plain comparison honestly rather than implying it "improved"
+results.
+
+**Drift monitoring (T011) + compute_metrics() R-unit quirk (2026-07-03):**
+Added `opportunity/drift_monitor.py` comparing a recent rolling live window
+of resolved trades against the older resolved-trade baseline (both scored
+via `compute_metrics()`), flagging win_rate/expectancy_r/profit_factor
+deltas beyond a threshold. **Why this matters:** `compute_metrics()`'s
+`expectancy_r` normalizes by that window's OWN avg_loss (the "R-unit"), so
+two windows with different loss compositions are not on the same scale —
+a 100%-win-rate window (avg_loss=0, R-unit falls back to 1.0) produces an
+expectancy_r that looks like a huge regression/improvement vs a window that
+has real losses, even though nothing about win quality actually changed.
+**How to apply:** any code comparing `expectancy_r` across two different
+trade samples (drift monitoring, A/B strategy comparison, before/after
+threshold sweeps) should sanity-check that both samples have a non-zero
+loss count, or prefer comparing profit_factor/win_rate instead when one
+side might be all-wins.
+
+**Validation framework (T009) result (2026-07-03):** Before implementing a
+"walk-forward validation" spec item, checked `opportunity/backtester.py` and
+found `_walk_forward()`/`_out_of_sample()`/`_historical_simulation()`/
+`_paper_trading_snapshot()` already existed and were wired into
+`run_backtest(mode=...)` behind `ENABLE_ADVANCED_BACKTESTS` (default off) —
+only the Monte Carlo resampling piece was missing, so only that was added
+(`_monte_carlo()`: resample resolved trades with replacement, report
+profit_factor/expectancy_r/max_drawdown percentile bands + empirical risk-
+of-ruin %). **Why this matters:** this is the second spec item (after T005)
+where reading the existing code first avoided duplicating already-built
+functionality — always check for pre-existing implementations of a spec
+item before writing new code, especially in a codebase that has already
+been iterated on across many tasks.
+
+**Realistic costs (T003) + adaptive exits (T004) results (2026-07-03):** Adding
+a round-trip commission+slippage+spread cost model to `compute_metrics()`
+(applied only to reported P&L, never to win/loss classification) revealed the
+model's raw statistical edge does NOT survive realistic execution costs on
+this ASX-heavy watchlist (profit_factor 1.057→0.925, expectancy_r flipped
+positive→-0.045) — a genuine finding, not a bug. Layering adaptive exits
+(partial profit-take at halfway-to-target + breakeven/trailing ATR stop,
+`engine.simulate_adaptive_exit()`) on top of that improved profit_factor
+(0.925→0.931) and expectancy_r (-0.045→-0.025) but did not close the gap to
+breakeven. **Why this matters for future work:** whenever the exit mechanism
+changes (fixed stop/target vs adaptive/trailing), the win/loss *definition*
+itself changes — a fixed-horizon "did forward return clear the target" test
+is not comparable to "was the blended adaptive-exit P&L positive." Never
+compare win_rate across a methodology change; only compare cost-adjusted
+profit_factor/expectancy_r, and call out the methodology shift explicitly.

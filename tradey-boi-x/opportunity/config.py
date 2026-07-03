@@ -18,6 +18,24 @@ ENABLE_ADVANCED_BACKTESTS    = _flag("ENABLE_ADVANCED_BACKTESTS")
 ENABLE_PERFORMANCE_ANALYTICS = _flag("ENABLE_PERFORMANCE_ANALYTICS")
 ENABLE_STRATEGY_CHALLENGER   = _flag("ENABLE_STRATEGY_CHALLENGER")
 ENABLE_SYSTEM_HEALTH         = _flag("ENABLE_SYSTEM_HEALTH")
+ENABLE_DRIFT_MONITORING      = _flag("ENABLE_DRIFT_MONITORING")
+
+# ── Live vs backtest drift monitoring (institutional upgrade T011) ───────────
+# Compares a recent rolling window of resolved live/paper trades against the
+# older resolved-trade history (acting as the "validation baseline") using
+# opportunity.backtester.compute_metrics(). Purely a reporting/alerting layer
+# — never touches signal generation. No-op unless ENABLE_DRIFT_MONITORING=true.
+DRIFT_LIVE_WINDOW_DAYS = int(os.getenv("DRIFT_LIVE_WINDOW_DAYS", "30"))
+DRIFT_MIN_LIVE_TRADES  = int(os.getenv("DRIFT_MIN_LIVE_TRADES", "10"))
+DRIFT_MIN_BASELINE_TRADES = int(os.getenv("DRIFT_MIN_BASELINE_TRADES", "20"))
+
+# Absolute-difference thresholds beyond which live performance is flagged as
+# having "drifted" from the baseline (either direction — better or worse).
+DRIFT_THRESHOLDS: dict[str, float] = {
+    "win_rate":       float(os.getenv("DRIFT_WIN_RATE_DELTA",       "0.15")),
+    "expectancy_r":   float(os.getenv("DRIFT_EXPECTANCY_R_DELTA",   "0.20")),
+    "profit_factor":  float(os.getenv("DRIFT_PROFIT_FACTOR_DELTA",  "0.30")),
+}
 
 # ── Trade Evaluation & Filtering Layer (Phase 8) ──────────────────────────────
 # Purely additive instrumentation layer — never modifies the prediction model,
@@ -34,6 +52,24 @@ TRADE_EVAL_THRESHOLDS: dict[str, float] = {
 }
 
 TRADE_EVAL_LOG_PATH = os.getenv("TE_LOG_PATH", "logs/trade_evaluations.jsonl")
+
+# ── Realistic Backtesting — Trading Costs (institutional upgrade T003) ────────
+# Applied only to backtest/report metrics (opportunity.backtester.compute_metrics)
+# so validation reflects real-world execution costs. Never touches signal
+# generation, decide(), or the live scanner/alert pipeline.
+ENABLE_REALISTIC_COSTS = _flag("ENABLE_REALISTIC_COSTS", default=True)
+
+# Per-side costs, expressed as a fraction of trade value. ASX (esp. small/mid
+# caps, the bulk of the 408-ticker watchlist) carries materially wider spreads
+# and slippage than large-cap US names.
+TRADING_COSTS: dict[str, float] = {
+    "commission_pct_us":  float(os.getenv("COST_COMMISSION_PCT_US",  "0.0005")),
+    "slippage_pct_us":    float(os.getenv("COST_SLIPPAGE_PCT_US",    "0.0008")),
+    "spread_pct_us":      float(os.getenv("COST_SPREAD_PCT_US",      "0.0005")),
+    "commission_pct_asx": float(os.getenv("COST_COMMISSION_PCT_ASX", "0.0005")),
+    "slippage_pct_asx":   float(os.getenv("COST_SLIPPAGE_PCT_ASX",   "0.0020")),
+    "spread_pct_asx":     float(os.getenv("COST_SPREAD_PCT_ASX",     "0.0015")),
+}
 
 # ── Opportunity scoring weights (must sum to 1.0) ─────────────────────────────
 WEIGHTS: dict[str, float] = {

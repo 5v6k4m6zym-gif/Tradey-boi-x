@@ -16,6 +16,7 @@ run_performance_analytics()       — Phase 5: calibration + weekly Discord repo
 run_challenger(candidate_weights) — Phase 6: shadow strategy comparison
 run_health_check()                — Phase 7: memory + log summary
 wrap_run_scan(fn)                 — Phase 7: wraps scanner with health monitoring
+run_drift_monitor()               — Phase 9: live vs backtest drift alerting
 """
 from __future__ import annotations
 import pandas as pd
@@ -141,6 +142,13 @@ def send_weekly_health_report(lookback_days: int = 7) -> bool:
     return _swhr(lookback_days=lookback_days)
 
 
+def run_drift_monitor(live_window_days: int | None = None, notify: bool = True):
+    """Phase 9 — Live vs backtest drift monitoring. Returns None when flag is off."""
+    from opportunity.drift_monitor import run_drift_monitor as _rdm
+    from opportunity.config import DRIFT_LIVE_WINDOW_DAYS
+    return _rdm(live_window_days=live_window_days or DRIFT_LIVE_WINDOW_DAYS, notify=notify)
+
+
 __all__ = [
     # Core
     "run_opportunity_pass",
@@ -164,4 +172,6 @@ __all__ = [
     # Phase 8
     "TradeEvaluator",
     "process_trade_signal",
+    # Phase 9
+    "run_drift_monitor",
 ]

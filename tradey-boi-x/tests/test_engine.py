@@ -285,8 +285,163 @@ class TestAccuracyStats(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 1b. ADAPTIVE RISK MANAGEMENT (T004) — simulate_adaptive_exit()
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestSimulateAdaptiveExit(unittest.TestCase):
+    """
+    simulate_adaptive_exit() layers trailing stops + partial profit-taking on
+    top of the existing ATR hard stop / target. Outcome strings must stay
+    compatible with the existing WIN_OUTCOMES schema (HIT_TARGET, HIT_STOP,
+    EXPIRED_GAIN, EXPIRED_LOSS) so accuracy_stats()/compute_metrics() keep
+    working unchanged.
+    """
+
+    def _bar(self, o, h, l, c, atr=1.0):
+        return {"Open": o, "High": h, "Low": l, "Close": c, "atr": atr}
+
+    def _df(self, rows):
+        return pd.DataFrame(rows)
+
+    def test_hard_stop_hit_before_any_partial(self):
+        """Price gaps straight down through the stop on day 1 — HIT_STOP, no partial."""
+        df = self._df([self._bar(100, 100, 88, 89)])
+        r = engine.simulate_adaptive_exit(df, entry_price=100, stop_price=90, target_price=120)
+        self.assertEqual(r["outcome"], "HIT_STOP")
+        self.assertAlmostEqual(r["actual_pct"], -0.10, places=3)
+
+    def test_full_target_hit_with_no_partial_trigger(self):
+        """Price jumps straight to target without ever reaching halfway first — HIT_TARGET."""
+        df = self._df([self._bar(100, 121, 99, 120)])
+        r = engine.simulate_adaptive_exit(df, entry_price=100, stop_price=90, target_price=120)
+        self.assertEqual(r["outcome"], "HIT_TARGET")
+        self.assertAlmostEqual(r["actual_pct"], 0.20, places=3)
+
+    def test_partial_take_then_full_target_blends_return(self):
+        """
+        Entry 100, stop 90, target 120 → halfway = 110.
+        Day 1 touches halfway (partial taken, 50%, stop → breakeven 100).
+        Day 2 hits full target 120 → blended: 0.5*0.10 + 0.5*0.20 = 0.15.
+        """
+        df = self._df([
+            self._bar(100, 111, 99, 110),
+            self._bar(110, 121, 111, 120),
+        ])
+        r = engine.simulate_adaptive_exit(df, entry_price=100, stop_price=90, target_price=120)
+        self.assertEqual(r["outcome"], "HIT_TARGET")
+        self.assertAlmostEqual(r["actual_pct"], 0.15, places=3)
+
+    def test_partial_take_then_breakeven_stop_is_still_a_win(self):
+        """
+        After partial profit-take, price reverses and hits the breakeven stop.
+        Overall blended P&L is still positive (partial leg locked in a real
+        gain) — must classify as EXPIRED_GAIN (a win), NOT HIT_STOP, since the
+        mechanism was the adaptive breakeven/trailing stop, not the original
+        hard stop.
+        """
+        df = self._df([
+            self._bar(100, 111, 99, 110),   # partial-take trigger, stop -> 100
+            self._bar(110, 112, 99, 100),   # reverses down through breakeven stop
+        ])
+        r = engine.simulate_adaptive_exit(df, entry_price=100, stop_price=90, target_price=120)
+        self.assertEqual(r["outcome"], "EXPIRED_GAIN")
+        self.assertGreater(r["actual_pct"], 0)
+
+    def test_trailing_stop_locks_in_gains_after_partial(self):
+        """
+        After partial-take, price runs up further, then pulls back. The
+        trailing stop (ATR-based) should exit above breakeven, locking a
+        bigger gain than a flat breakeven stop would.
+        """
+        df = self._df([
+            self._bar(100, 111, 99, 110, atr=1.0),   # partial trigger @ 111, stop -> 100
+            self._bar(110, 116, 109, 115, atr=1.0),  # runs up: trail stop -> 116 - 1.5 = 114.5
+            self._bar(115, 116, 100, 105, atr=1.0),  # pulls back through 114.5 -> exit
+        ])
+        r = engine.simulate_adaptive_exit(df, entry_price=100, stop_price=90, target_price=120,
+                                           trail_atr_mult=1.5)
+        self.assertEqual(r["outcome"], "EXPIRED_GAIN")
+        # Blended pct should reflect the trailing exit (~14.5%), better than a
+        # flat breakeven exit (~0% on the runner leg).
+        self.assertGreater(r["actual_pct"], 0.05)
+
+    def test_no_stop_hit_expires_at_final_close(self):
+        """Neither stop nor target ever touched — grade on final close (EXPIRED_GAIN/LOSS)."""
+        df = self._df([
+            self._bar(100, 103, 98, 102),
+            self._bar(102, 104, 100, 103),
+        ])
+        r = engine.simulate_adaptive_exit(df, entry_price=100, stop_price=90, target_price=120)
+        self.assertEqual(r["outcome"], "EXPIRED_GAIN")
+        self.assertAlmostEqual(r["actual_pct"], 0.03, places=3)
+
+    def test_missing_stop_or_target_falls_back_to_plain_hold(self):
+        """No stop/target available — behave like the pre-T004 plain hold-to-close grading."""
+        df = self._df([self._bar(100, 103, 98, 105)])
+        r = engine.simulate_adaptive_exit(df, entry_price=100, stop_price=None, target_price=None)
+        self.assertEqual(r["outcome"], "EXPIRED_GAIN")
+        self.assertAlmostEqual(r["actual_pct"], 0.05, places=3)
+
+    def test_empty_hold_slice_is_safe(self):
+        """Empty slice must not raise — degrade to a neutral EXPIRED_LOSS."""
+        r = engine.simulate_adaptive_exit(self._df([]), entry_price=100, stop_price=90, target_price=120)
+        self.assertEqual(r["outcome"], "EXPIRED_LOSS")
+        self.assertEqual(r["actual_pct"], 0.0)
+
+    def test_outcome_always_in_win_outcomes_compatible_set(self):
+        """Outcome strings must never introduce a category outside the existing schema."""
+        valid = {"HIT_TARGET", "HIT_STOP", "EXPIRED_GAIN", "EXPIRED_LOSS"}
+        scenarios = [
+            self._df([self._bar(100, 100, 80, 85)]),
+            self._df([self._bar(100, 125, 99, 124)]),
+            self._df([self._bar(100, 111, 99, 110), self._bar(110, 112, 108, 111)]),
+        ]
+        for df in scenarios:
+            r = engine.simulate_adaptive_exit(df, entry_price=100, stop_price=90, target_price=120)
+            self.assertIn(r["outcome"], valid)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 2. PERFORMANCE ADJUSTMENTS — per-ticker expectancy-based score learning
 # ══════════════════════════════════════════════════════════════════════════════
+
+class TestPositionSizePct(unittest.TestCase):
+    """T008: ATR-based fixed-fractional smart position sizing."""
+
+    def test_zero_or_negative_atr_returns_zero(self):
+        self.assertEqual(engine.position_size_pct(0.0), 0.0)
+        self.assertEqual(engine.position_size_pct(-1.0), 0.0)
+
+    def test_high_volatility_gets_smaller_size_than_low_volatility(self):
+        high_vol = engine.position_size_pct(4.0)   # ATR% >= 3.0 -> sl_mult 2.0
+        low_vol  = engine.position_size_pct(1.0)    # ATR% < 1.5 -> sl_mult 1.2
+        self.assertLess(high_vol, low_vol)
+
+    def test_default_sizing_matches_fixed_fractional_formula(self):
+        # ATR% = 2.0 -> mid-vol tier, sl_mult 1.5 -> stop_loss_pct = 3.0
+        # size = (1.0 / 3.0) * 100 = 33.33%, capped at default max 20%.
+        size = engine.position_size_pct(2.0)
+        self.assertAlmostEqual(size, 20.0)
+
+    def test_size_capped_at_max_position_pct(self):
+        size = engine.position_size_pct(0.5, max_position_pct=10.0)
+        self.assertLessEqual(size, 10.0)
+
+    def test_custom_account_risk_pct_scales_size(self):
+        size_1pct = engine.position_size_pct(2.0, account_risk_pct=1.0, max_position_pct=100.0)
+        size_2pct = engine.position_size_pct(2.0, account_risk_pct=2.0, max_position_pct=100.0)
+        self.assertAlmostEqual(size_2pct, size_1pct * 2)
+
+
+class TestDecideSurfacesPositionSize(unittest.TestCase):
+
+    def test_decide_output_includes_position_size_pct(self):
+        df    = _make_feature_df()
+        model = MockModel(prob=0.80)
+        res   = _run_decide(df, model)
+        self.assertIn("position_size_pct", res)
+        self.assertGreaterEqual(res["position_size_pct"], 0.0)
+
 
 class TestExpectancyBasedAdjustments(unittest.TestCase):
     """
@@ -438,6 +593,27 @@ class TestDecide(unittest.TestCase):
         model = MockModel(prob=0.80)
         res   = _run_decide(df, model)
         self.assertEqual(res["signal"], "GATED")
+
+    def test_gated_when_dollar_volume_too_thin(self):
+        """T007: below the institutional liquidity floor → GATED."""
+        df    = _make_feature_df(dollar_vol=50_000.0)
+        model = MockModel(prob=0.80)
+        res   = _run_decide(df, model)
+        self.assertEqual(res["signal"], "GATED")
+
+    def test_not_gated_when_dollar_volume_missing(self):
+        """No dollar_vol data available (e.g. short history) → gate passes (fail-open)."""
+        df    = _make_feature_df()  # no dollar_vol column at all
+        model = MockModel(prob=0.80)
+        res   = _run_decide(df, model)
+        self.assertNotEqual(res["signal"], "GATED")
+
+    def test_not_gated_when_dollar_volume_sufficient(self):
+        """Ample liquidity → gate passes."""
+        df    = _make_feature_df(dollar_vol=5_000_000.0)
+        model = MockModel(prob=0.80)
+        res   = _run_decide(df, model)
+        self.assertNotEqual(res["signal"], "GATED")
 
     def test_gated_when_ema_downtrend(self):
         """EMA20 < EMA50 → downtrend filter fails."""

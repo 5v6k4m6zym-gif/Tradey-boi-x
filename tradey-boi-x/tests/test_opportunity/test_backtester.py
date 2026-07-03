@@ -19,6 +19,7 @@ from opportunity.backtester import (
     _out_of_sample,
     _historical_simulation,
     _paper_trading_snapshot,
+    _monte_carlo,
     _sharpe,
     _sortino,
     _max_drawdown,
@@ -275,6 +276,58 @@ class TestPaperTrading(unittest.TestCase):
         self.assertGreaterEqual(m["open_positions"], 0)
 
 
+class TestMonteCarlo(unittest.TestCase):
+
+    def _mixed_trades(self, n: int = 40) -> list[dict]:
+        return [
+            _entry("WIN" if i % 2 == 0 else "HIT_STOP",
+                   actual_pct=0.10 if i % 2 == 0 else -0.04)
+            for i in range(n)
+        ]
+
+    def test_empty_entries_returns_zeroed_summary(self):
+        m = _monte_carlo([])
+        self.assertEqual(m["n_simulations"], 0)
+        self.assertEqual(m["risk_of_ruin_pct"], 0.0)
+
+    def test_returns_expected_keys(self):
+        m = _monte_carlo(self._mixed_trades(), n_simulations=100)
+        for key in ("n_simulations", "sample_size", "profit_factor_median",
+                    "profit_factor_p5", "profit_factor_p95",
+                    "expectancy_r_median", "expectancy_r_p5", "expectancy_r_p95",
+                    "max_drawdown_pct_median", "max_drawdown_pct_p95",
+                    "risk_of_ruin_pct"):
+            self.assertIn(key, m)
+
+    def test_sample_size_matches_input_length(self):
+        trades = self._mixed_trades(25)
+        m = _monte_carlo(trades, n_simulations=50)
+        self.assertEqual(m["sample_size"], 25)
+
+    def test_percentiles_are_ordered(self):
+        m = _monte_carlo(self._mixed_trades(), n_simulations=200)
+        self.assertLessEqual(m["profit_factor_p5"], m["profit_factor_median"])
+        self.assertLessEqual(m["profit_factor_median"], m["profit_factor_p95"])
+        self.assertLessEqual(m["expectancy_r_p5"], m["expectancy_r_median"])
+        self.assertLessEqual(m["expectancy_r_median"], m["expectancy_r_p95"])
+
+    def test_deterministic_with_fixed_seed(self):
+        trades = self._mixed_trades()
+        m1 = _monte_carlo(trades, n_simulations=100, seed=7)
+        m2 = _monte_carlo(trades, n_simulations=100, seed=7)
+        self.assertEqual(m1, m2)
+
+    def test_risk_of_ruin_is_percentage_in_range(self):
+        m = _monte_carlo(self._mixed_trades(), n_simulations=100)
+        self.assertGreaterEqual(m["risk_of_ruin_pct"], 0.0)
+        self.assertLessEqual(m["risk_of_ruin_pct"], 100.0)
+
+    def test_all_losing_trades_have_high_risk_of_ruin(self):
+        losers = [_entry("HIT_STOP", actual_pct=-0.20) for _ in range(20)]
+        m = _monte_carlo(losers, n_simulations=50)
+        self.assertGreater(m["risk_of_ruin_pct"], 50.0)
+
+
 # ─── run_backtest ─────────────────────────────────────────────────────────────
 
 class TestRunBacktest(unittest.TestCase):
@@ -334,6 +387,16 @@ class TestRunBacktest(unittest.TestCase):
             result = run_backtest(mode="walk_forward", window_size=80, test_size=20, notify=False)
         if result:
             self.assertIn("windows", result)
+
+    def test_monte_carlo_mode_returns_dict(self):
+        log = self._mock_log(40)
+        with patch.object(bt_mod, "ENABLE_ADVANCED_BACKTESTS", True), \
+             patch.object(bt_mod, "_load_log", return_value=log), \
+             patch.object(bt_mod, "_save_backtest_report", return_value=Path("/tmp/r.json")), \
+             patch.object(bt_mod, "send_backtest_discord", return_value=False):
+            result = run_backtest(mode="monte_carlo", n_simulations=50, notify=False)
+        self.assertIsNotNone(result)
+        self.assertIn("risk_of_ruin_pct", result["summary"])
 
     def test_invalid_mode_raises_value_error(self):
         log = self._mock_log(30)

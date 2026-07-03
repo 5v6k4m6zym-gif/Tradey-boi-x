@@ -227,6 +227,12 @@ TARGET_RETURN   = 0.03
 # subset, before being kept.
 COOLDOWN_HOURS  = 8
 MAX_ALERTS      = 3
+# Institutional quality filter (T005/T007, institutional-upgrade spec):
+# minimum 20-day average dollar volume required for a signal to be
+# considered realistically tradeable at institutional-ish size. Chosen as a
+# conservative floor (excludes only the thinnest micro-caps) so it can be
+# tuned upward later if full-watchlist validation shows headroom.
+MIN_DOLLAR_VOLUME = 500_000
 DISCORD         = os.getenv("Discordwebhook", "") or os.getenv("discordwebhook", "")
 
 BASE_DIR        = Path(__file__).parent
@@ -254,6 +260,7 @@ def get_data(ticker: str, period: str) -> pd.DataFrame:
     df["ema50"]       = ta.trend.EMAIndicator(close, window=50).ema_indicator()
     vol_mean = vol.rolling(20).mean().replace(0, float("nan"))
     df["vol_ratio"]   = vol / vol_mean
+    df["dollar_vol"]  = (close * vol).rolling(20).mean()
     df["ret_5"]       = close.pct_change(5)
     df["ret_10"]      = close.pct_change(10)
     df["ret_20"]      = close.pct_change(20)
@@ -821,6 +828,33 @@ def expected_value_r(price: float, atr: float, prob: float, breakout: bool) -> f
     reward_R = base_target_pct / stop_loss_pct
     return prob * reward_R - (1 - prob) * 1.0
 
+def position_size_pct(atr_pct: float, account_risk_pct: float = 1.0,
+                       max_position_pct: float = 20.0) -> float:
+    """
+    Volatility-adjusted position size, as a % of account equity, using
+    fixed-fractional risk sizing: risk exactly `account_risk_pct` of equity
+    per trade, with position size scaled so a stop-loss hit loses that much.
+
+    Reuses the same ATR-tier stop-loss logic as expected_value_r()/
+    _trade_params() (no new, unvalidated notion of risk): wider stops (high
+    ATR%) => smaller position, tighter stops (low ATR%) => larger position,
+    capped at `max_position_pct` so no single low-volatility setup can
+    dominate the book.
+    """
+    if atr_pct <= 0:
+        return 0.0
+    if atr_pct >= 3.0:
+        sl_mult = 2.0
+    elif atr_pct >= 1.5:
+        sl_mult = 1.5
+    else:
+        sl_mult = 1.2
+    stop_loss_pct = min(sl_mult * atr_pct, 15.0)
+    if stop_loss_pct <= 0:
+        return 0.0
+    size_pct = (account_risk_pct / stop_loss_pct) * 100
+    return min(size_pct, max_position_pct)
+
 def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     GATED = {"signal": "GATED", "label": "🚫 GATED", "color": "#888",
               "alert": False, "prob": 0.0, "score": 0, "why": [], "filters": [],
@@ -844,6 +878,8 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
         ("RSI not overbought (< 72)",          row["rsi"] < 72),
         ("RSI not oversold (> 25)",            row["rsi"] > 25),
         ("Liquidity (vol ratio ≥ 0.5)",        row["vol_ratio"] >= 0.5),
+        ("Institutional liquidity (avg $vol ≥ $200k)",
+         bool(pd.isna(row.get("dollar_vol"))) or row["dollar_vol"] >= MIN_DOLLAR_VOLUME),
         ("AI probability ≥ 40%",              prob >= 0.40),
     ]
     if not all(ok for _, ok in filters):
@@ -913,6 +949,14 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     # future use), and does NOT affect the ELITE/STRONG BUY gate.
     regime = market_regime(ticker)
 
+    # Smart position sizing (T008, institutional-upgrade spec) — ATR-based
+    # fixed-fractional sizing, surfaced as context for the alert/dashboard.
+    # Purely informational here (does not gate signal/tier); the live sizing
+    # decision is applied downstream wherever the alert is turned into an
+    # actual position.
+    atr_pct_now = float(row["atr"]) / float(row["Close"]) * 100 if row["Close"] > 0 else 0.0
+    pos_size_pct = round(position_size_pct(atr_pct_now), 2)
+
     # Grade thresholds — only the strongest qualify for an alert
     # ELITE:      score ≥ 8  AND AI prob ≥ 0.50  AND expected value > 0
     # STRONG BUY: score ≥ 6  AND AI prob ≥ 0.50  AND expected value > 0
@@ -938,6 +982,7 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
             "prob": prob, "score": score, "base_score": base_score,
             "expected_r": round(expected_r, 3),
             "regime": regime,
+            "position_size_pct": pos_size_pct,
             "adj": adj, "news": news, "why": why, "filters": filters,
             "rsi": round(float(row["rsi"]), 1)}
 
@@ -1710,6 +1755,7 @@ def _trade_params(ticker: str, result: dict, price: float, df: "pd.DataFrame") -
         "stop_loss":     stop_loss,
         "stop_loss_pct": stop_loss_pct,
         "rationale":     ", ".join(reasons),
+        "position_size_pct": round(position_size_pct(atr_pct), 2),
     }
 
 def _add_trading_days(start: datetime, n: int) -> datetime:
@@ -2044,17 +2090,132 @@ def _save_log(entries: list):
     tmp.write_text(json.dumps(entries, indent=2))
     tmp.replace(LOG_FILE)
 
+def simulate_adaptive_exit(
+    hold_slice: "pd.DataFrame",
+    entry_price: float,
+    stop_price: float | None,
+    target_price: float | None,
+    atr_col: str = "atr",
+    trail_atr_mult: float = 1.5,
+    partial_fraction: float = 0.5,
+) -> dict:
+    """
+    Adaptive risk management (institutional upgrade T004): day-by-day exit
+    simulation over `hold_slice` (rows strictly after entry, in order) that
+    layers trailing stops + partial profit-taking on top of the existing
+    ATR-based hard stop / target:
+
+      1. Hard stop at `stop_price` until a partial exit occurs.
+      2. Partial profit-take: once price reaches the halfway point between
+         entry and target, `partial_fraction` of the position is realized
+         there and the stop for the remainder is moved to breakeven
+         (entry price) — the classic "risk-free runner" technique.
+      3. Trailing stop: after the partial take, the remaining stop trails
+         `trail_atr_mult` x ATR below the running high (never loosens).
+      4. If neither the hard/trailing stop nor full target is hit by the end
+         of `hold_slice`, the remainder is closed at the final close.
+
+    Returns a dict compatible with the existing outcome schema:
+      {"outcome": one of HIT_TARGET/HIT_STOP/EXPIRED_GAIN/EXPIRED_LOSS,
+       "actual_pct": blended return across any partial + final exit,
+       "exit_price": final leg's exit price,
+       "days_held": number of rows consumed}
+
+    Falls back to a plain hold-to-end-of-window evaluation if stop_price or
+    target_price is missing/invalid (mirrors the pre-T004 behaviour).
+    """
+    if hold_slice is None or len(hold_slice) == 0 or entry_price <= 0:
+        return {"outcome": "EXPIRED_LOSS", "actual_pct": 0.0, "exit_price": entry_price, "days_held": 0}
+
+    if not stop_price or not target_price or stop_price <= 0 or target_price <= entry_price:
+        final_close = float(hold_slice.iloc[-1]["Close"])
+        pct = (final_close - entry_price) / entry_price
+        return {
+            "outcome": "EXPIRED_GAIN" if pct >= 0 else "EXPIRED_LOSS",
+            "actual_pct": round(pct, 5),
+            "exit_price": round(final_close, 4),
+            "days_held": len(hold_slice),
+        }
+
+    halfway_price   = entry_price + 0.5 * (target_price - entry_price)
+    remaining_stop  = float(stop_price)
+    running_high    = entry_price
+    partial_taken   = False
+    partial_weight  = 0.0
+    final_pct       = None
+    exit_price      = None
+    days_held       = len(hold_slice)
+
+    for day_idx, (_, row) in enumerate(hold_slice.iterrows(), start=1):
+        day_low   = float(row["Low"])
+        day_high  = float(row["High"])
+        running_high = max(running_high, day_high)
+
+        if day_low <= remaining_stop:
+            exit_price = remaining_stop
+            leg_pct = (exit_price - entry_price) / entry_price
+            final_pct = (
+                partial_weight * ((halfway_price - entry_price) / entry_price)
+                + (1 - partial_weight) * leg_pct
+            ) if partial_taken else leg_pct
+            days_held = day_idx
+            break
+
+        if day_high >= target_price:
+            exit_price = target_price
+            leg_pct = (exit_price - entry_price) / entry_price
+            final_pct = (
+                partial_weight * ((halfway_price - entry_price) / entry_price)
+                + (1 - partial_weight) * leg_pct
+            ) if partial_taken else leg_pct
+            days_held = day_idx
+            break
+
+        if not partial_taken and day_high >= halfway_price:
+            partial_taken  = True
+            partial_weight = partial_fraction
+            remaining_stop = max(remaining_stop, entry_price)  # move to breakeven
+
+        if partial_taken:
+            atr_val = row.get(atr_col)
+            if atr_val is not None and float(atr_val) > 0:
+                remaining_stop = max(remaining_stop, running_high - trail_atr_mult * float(atr_val))
+
+    if final_pct is None:
+        final_close = float(hold_slice.iloc[-1]["Close"])
+        leg_pct = (final_close - entry_price) / entry_price
+        final_pct = (
+            partial_weight * ((halfway_price - entry_price) / entry_price)
+            + (1 - partial_weight) * leg_pct
+        ) if partial_taken else leg_pct
+        exit_price = final_close
+
+    outcome = "HIT_TARGET" if exit_price == target_price else (
+        "HIT_STOP" if (exit_price == remaining_stop and not partial_taken) else
+        ("EXPIRED_GAIN" if final_pct >= 0 else "EXPIRED_LOSS")
+    )
+
+    return {
+        "outcome":    outcome,
+        "actual_pct": round(final_pct, 5),
+        "exit_price": round(exit_price, 4) if exit_price is not None else None,
+        "days_held":  days_held,
+    }
+
+
 def resolve_outcomes() -> list:
     """
     Grade all pending signals. For each unresolved entry whose hold period
-    has fully elapsed, fetch the OHLC history and check day-by-day:
-      • If the LOW touched the stop_price  → HIT_STOP  (loss, exit early)
-      • If the HIGH touched the target_price → HIT_TARGET (win, exit early)
-      • Otherwise at end of hold period:
-          actual_pct >= target_pct → EXPIRED_GAIN (win)
-          otherwise                → EXPIRED_LOSS (loss)
-    This means the model learns from realistic trade outcomes, not just
-    end-of-period closes.
+    has fully elapsed, fetch the OHLC history and run the adaptive risk
+    management exit simulation (institutional upgrade T004):
+      • Hard ATR stop until a partial profit-take triggers.
+      • Partial profit-take at the halfway point to target, moving the
+        remaining stop to breakeven.
+      • Trailing stop (ATR-based) on the remaining position thereafter.
+      • Full target hit, or hold-to-end-of-window otherwise.
+    See simulate_adaptive_exit() for the full mechanics. This means the
+    model learns from realistic, risk-managed trade outcomes, not just
+    a single fixed stop/target or end-of-period close.
     """
     entries = _load_log()
     changed = False
@@ -2075,37 +2236,16 @@ def resolve_outcomes() -> list:
             if len(hist) < e["pred_days"]:
                 continue
 
-            hold_slice  = hist.iloc[:e["pred_days"]]
-            entry       = e["entry_price"]
-            stop_px     = e.get("stop_price")
-            target_px   = e.get("target_price")
-            outcome     = None
-            exit_px     = None
+            hold_slice = hist.iloc[:e["pred_days"]]
+            entry      = e["entry_price"]
+            stop_px    = e.get("stop_price")
+            target_px  = e.get("target_price")
 
-            # Day-by-day scan: did we hit stop or target intraday?
-            for _, row in hold_slice.iterrows():
-                day_low  = float(row["Low"])
-                day_high = float(row["High"])
-                day_close= float(row["Close"])
+            sim = simulate_adaptive_exit(hold_slice, entry, stop_px, target_px)
 
-                if stop_px and day_low <= stop_px:
-                    outcome  = "HIT_STOP"
-                    exit_px  = stop_px
-                    break
-                if target_px and day_high >= target_px:
-                    outcome  = "HIT_TARGET"
-                    exit_px  = target_px
-                    break
-                exit_px = day_close   # update to last known close
-
-            if outcome is None:
-                # Held to end — grade on final close
-                actual_pct = (exit_px - entry) / entry
-                outcome    = "EXPIRED_GAIN" if actual_pct >= e["target_pct"] else "EXPIRED_LOSS"
-
-            e["exit_price"] = round(exit_px, 4)
-            e["actual_pct"] = round((exit_px - entry) / entry, 4)
-            e["outcome"]    = outcome
+            e["exit_price"] = sim["exit_price"]
+            e["actual_pct"] = sim["actual_pct"]
+            e["outcome"]    = sim["outcome"]
             changed = True
         except Exception:
             pass

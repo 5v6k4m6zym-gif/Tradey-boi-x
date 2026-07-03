@@ -241,6 +241,7 @@ def main():
             actual_pct = (exit_price / entry_price) - 1
             outcome = "WIN" if actual_pct >= engine.TARGET_RETURN else "LOSS"
 
+            atr_pct = float(row["atr"]) / entry_price * 100 if entry_price > 0 else 0.0
             record = {
                 "ticker": ticker,
                 "signal_date": str(df.index[i].date()),
@@ -251,7 +252,32 @@ def main():
                 "actual_pct": actual_pct,
                 "outcome": outcome,
                 "pred_days": engine.PREDICTION_DAYS,
+                "atr_pct": atr_pct,
             }
+
+            # T004 adaptive risk management: for tradeable tiers, replace the
+            # naive fixed-horizon P&L with a day-by-day simulation using the
+            # same ATR stop/target the live system would set, plus trailing
+            # stop + partial profit-taking. Only affects the `trades` record
+            # (used for compute_metrics); `ticker_evaluated`/tier_counts below
+            # still use the naive `record` for calibration purposes.
+            if signal in ("ELITE", "STRONG BUY"):
+                try:
+                    params = engine._trade_params(ticker, {"signal": signal}, entry_price, df.iloc[:i + 1])
+                    hold_slice = df.iloc[i + 1: i + 1 + engine.PREDICTION_DAYS]
+                    sim = engine.simulate_adaptive_exit(
+                        hold_slice, entry_price,
+                        params.get("stop_loss"), params.get("target_price"),
+                    )
+                    record["_trade_record"] = {
+                        **record,
+                        "actual_pct": sim["actual_pct"],
+                        "outcome": "WIN" if sim["outcome"] in ("HIT_TARGET", "EXPIRED_GAIN") else "LOSS",
+                        "adaptive_outcome": sim["outcome"],
+                    }
+                except Exception:
+                    pass
+
             ticker_evaluated.append(record)
 
             fired, mv_score = score_active_mover(df, i, prob)
@@ -285,9 +311,10 @@ def main():
             all_evaluated.append(record)
             tier_counts[record["tier"]] = tier_counts.get(record["tier"], 0) + 1
             if record["tier"] in ("ELITE", "STRONG BUY"):
-                trades.append(record)
+                trade_record = record.pop("_trade_record", record)
+                trades.append(trade_record)
                 if ticker in winner_hits:
-                    winner_hits[ticker].append({**record, "kind": record["tier"]})
+                    winner_hits[ticker].append({**trade_record, "kind": trade_record["tier"]})
         for mv_record in saved["moves"]:
             mover_counts[mv_record["tier"]] = mover_counts.get(mv_record["tier"], 0) + 1
             mover_trades.append(mv_record)
@@ -306,6 +333,25 @@ def main():
     print("=" * 70)
     for k, v in metrics.items():
         print(f"  {k:24s}: {v}")
+
+    # T008 smart position sizing — informational only, does NOT alter any
+    # metric above. Compares the plain (equal-weighted) average per-trade
+    # return already reported via compute_metrics to what the SAME set of
+    # trades would have returned if each were allocated capital via
+    # engine.position_size_pct() (ATR-based fixed-fractional sizing) instead
+    # of a flat/equal size. A positive gap means smart sizing would have
+    # tilted capital toward the trades that actually did better.
+    if trades:
+        sizes = [engine.position_size_pct(t.get("atr_pct", 0.0)) for t in trades]
+        total_size = sum(sizes)
+        if total_size > 0:
+            plain_avg_pct = sum(t["actual_pct"] for t in trades) / len(trades)
+            weighted_avg_pct = sum(t["actual_pct"] * s for t, s in zip(trades, sizes)) / total_size
+            print("\n" + "=" * 70)
+            print("SMART POSITION SIZING (T008) — informational, size-weighted vs plain avg")
+            print("=" * 70)
+            print(f"  plain avg return/trade   : {plain_avg_pct*100:+.3f}%")
+            print(f"  size-weighted avg return : {weighted_avg_pct*100:+.3f}%")
 
     if trades:
         elite = [t for t in trades if t["tier"] == "ELITE"]

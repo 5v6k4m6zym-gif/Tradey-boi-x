@@ -71,6 +71,8 @@ SAMPLE_TICKERS = [
 def score_row(row, prev, prob: float, regime: str = "sideways") -> tuple[str, int]:
     """Replicates engine.decide()'s deterministic technical filters + scoring
     (no live/network-dependent adjusters). Returns (signal, score)."""
+    dollar_vol = row.get("dollar_vol")
+    liquidity_ok = pd.isna(dollar_vol) or dollar_vol >= engine.MIN_DOLLAR_VOLUME
     filters_ok = (
         row["ema20"] > row["ema50"]
         and prev["ema20"] > prev["ema50"]
@@ -78,6 +80,7 @@ def score_row(row, prev, prob: float, regime: str = "sideways") -> tuple[str, in
         and prev["macd_diff"] > 0
         and 25 < row["rsi"] < 72
         and row["vol_ratio"] >= 0.5
+        and liquidity_ok
         and prob >= 0.40
     )
     if not filters_ok:

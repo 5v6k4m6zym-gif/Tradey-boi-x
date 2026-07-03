@@ -12,6 +12,8 @@ from engine import (
     resolve_outcomes, accuracy_stats,
     _load_cooldowns,
 )
+from opportunity.backtester import compute_metrics, _resolved, run_backtest
+from opportunity.config import ENABLE_ADVANCED_BACKTESTS
 
 # ─── CACHED WRAPPERS (Streamlit caching on top of engine functions) ───────────
 @st.cache_data(ttl=300, show_spinner="Fetching…")
@@ -93,13 +95,14 @@ else:
     row = df.iloc[-1]
     chg = (row["Close"] - df["Close"].iloc[-2]) / df["Close"].iloc[-2] * 100
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     c1.metric("Price",     f"${row['Close']:.2f}", f"{chg:+.2f}%")
     c2.metric("AI Prob",   f"{res['prob']*100:.1f}%")
     c3.metric("RSI",       f"{row['rsi']:.1f}")
     c4.metric("MACD",      f"{row['macd_diff']:.4f}")
     c5.metric("Vol Ratio", f"{row['vol_ratio']:.2f}×")
     c6.metric("Score",     f"{res['score']}/14")
+    c7.metric("Regime",    res["regime"], help="Informational only — does not gate alerts")
 
     st.markdown(
         f"### <span style='color:{res['color']}'>{res['label']}</span>"
@@ -159,6 +162,57 @@ if all_signals:
                        if e["outcome"] else f"⏳ ~{e['pred_days']}d window",
         } for e in reversed(all_signals)]
         st.dataframe(pd.DataFrame(rows_h), use_container_width=True)
+
+# ── Institutional metrics (cost-adjusted P&L, regime, walk-forward/Monte Carlo) ─
+with st.expander("🏛️ Institutional Metrics"):
+    resolved = _resolved(all_signals)
+    m = compute_metrics(resolved)
+    if m["trade_count"] == 0:
+        st.caption("No resolved trades yet — institutional metrics need at "
+                    "least one closed signal.")
+    else:
+        st.caption("Cost-adjusted P&L (commissions + slippage + spread applied; "
+                    "see opportunity/costs.py)")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Profit Factor", f"{m['profit_factor']:.3f}"
+                   if m["profit_factor"] not in (float("inf"),) else "∞")
+        m2.metric("Expectancy (R)", f"{m['expectancy_r']:+.3f}")
+        m3.metric("Sharpe", f"{m['sharpe_ratio']:.2f}")
+        m4.metric("Max Drawdown", f"{m['max_drawdown_pct']:.1f}%")
+
+        m5, m6, m7, m8 = st.columns(4)
+        m5.metric("Sortino", f"{m['sortino_ratio']:.2f}"
+                   if m["sortino_ratio"] not in (float("inf"),) else "∞")
+        m6.metric("Trade Count", m["trade_count"])
+        m7.metric("Win Streak (max)", m["winning_streak"])
+        m8.metric("Loss Streak (max)", m["losing_streak"])
+
+    st.divider()
+    st.caption("Walk-forward validation & Monte Carlo risk-of-ruin "
+               "(opportunity/backtester.py)")
+    if not ENABLE_ADVANCED_BACKTESTS:
+        st.info("Disabled — set `ENABLE_ADVANCED_BACKTESTS=true` to compute "
+                "walk-forward and Monte Carlo reports.")
+    else:
+        wf = run_backtest(mode="walk_forward", notify=False)
+        mc = run_backtest(mode="monte_carlo", notify=False)
+        if wf and wf.get("windows"):
+            st.write(f"**Walk-forward** — {len(wf['windows'])} rolling window(s)")
+            st.dataframe(pd.DataFrame(wf["windows"]), use_container_width=True)
+        else:
+            st.caption("Not enough resolved trades yet for a walk-forward window.")
+        if mc and mc.get("summary", {}).get("n_simulations"):
+            s = mc["summary"]
+            st.write(f"**Monte Carlo** — {s['n_simulations']} resampled sequences "
+                      f"of {s['sample_size']} trades")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Profit Factor (median)", f"{s['profit_factor_median']:.3f}",
+                       help=f"p5 {s['profit_factor_p5']:.3f} · p95 {s['profit_factor_p95']:.3f}")
+            c2.metric("Expectancy R (median)", f"{s['expectancy_r_median']:+.3f}",
+                       help=f"p5 {s['expectancy_r_p5']:+.3f} · p95 {s['expectancy_r_p95']:+.3f}")
+            c3.metric("Risk of Ruin", f"{s['risk_of_ruin_pct']:.1f}%")
+        else:
+            st.caption("Not enough resolved trades yet for Monte Carlo resampling.")
 
 # ── Watchlist scan ────────────────────────────────────────────────────────────
 if run_scan:
