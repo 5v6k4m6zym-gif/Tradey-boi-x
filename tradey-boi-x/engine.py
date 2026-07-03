@@ -1974,7 +1974,8 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         # Mid-session, market open — buy now per RSI logic above
         _entry_banner = ("⚡  **BUY NOW** — market is open, entry is live")
 
-    verdict = "🏆 ELITE BUY" if result["signal"] == "ELITE BUY" else "✅ GOOD BUY"
+    verdict     = "🏆 ELITE BUY" if result["signal"] == "ELITE BUY" else "✅ GOOD BUY"
+    market_tag  = "🇦🇺 ASX" if _is_asx else "🇺🇸 US"
     divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     # Compact timing line (no ASCII box)
@@ -2016,7 +2017,7 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
 
     lines = [
         divider,
-        f"{verdict}  **{ticker}**  ${price:.2f}  |  Score: {result['score']}/14"
+        f"{verdict}  **{ticker}**  ({market_tag})  ${price:.2f}  |  Score: {result['score']}/14"
         f"  ·  Confidence: {result['prob']*100:.0f}%  ·  Grade: {grade} {glabel}  `{gbar}`",
         divider,
         timing_line,
