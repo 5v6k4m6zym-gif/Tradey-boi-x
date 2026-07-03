@@ -33,9 +33,11 @@ from manual_historical_backtest import (
     load_regime_series, regime_for,
 )
 
-CACHE_DIR = Path("/tmp/full_ticker_cache")
-CKPT_DIR = Path("/tmp/full_backtest_checkpoint")
-CKPT_DIR.mkdir(exist_ok=True)
+_PERSIST_ROOT = Path(__file__).parent.parent / ".cache"
+CACHE_DIR = _PERSIST_ROOT / "ticker_history"
+CKPT_DIR = _PERSIST_ROOT / "backtest_checkpoint"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+CKPT_DIR.mkdir(parents=True, exist_ok=True)
 TRAIN_FRACTION = 0.70
 
 # Known big historical winners (past ~2 years) not already in WATCHLIST —

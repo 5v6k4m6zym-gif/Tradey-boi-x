@@ -75,8 +75,8 @@ from manual_historical_backtest import score_row, load_regime_series, regime_for
 from full_watchlist_backtest import ALL_TICKERS, KNOWN_WINNERS, load_data, train_or_load_model
 
 TRAIN_FRACTION = 0.70
-CKPT_DIR = Path("/tmp/full_backtest_checkpoint")
-CKPT_DIR.mkdir(exist_ok=True)
+CKPT_DIR = Path(__file__).parent.parent / ".cache" / "backtest_checkpoint"
+CKPT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def build_trade(ticker: str, df: pd.DataFrame, i: int, prob: float, score: int,

@@ -3,3 +3,4 @@
 - [Artifact port conflicts](artifact-port-conflicts.md) — unrelated scaffold artifacts can hardcode the same localPort as the real app; check for conflicts before assuming code is broken.
 - [Tradey Boi X scheduler state](tradey-boi-x-scheduler-state.md) — any scanner.py "once per day/cycle" dedup gate must persist to disk, not just an in-memory var, or workflow restarts re-fire it.
 - [Tradey Boi X test log isolation](tradey-boi-x-test-log-isolation.md) — opportunity-layer unit tests must mock/patch the logger before calling process_trade_signal(), or they silently pollute production JSONL logs.
+- [Persistent ticker-history cache](tradey-boi-x-persistent-cache.md) — cache backtest data under project `.cache/`, not `/tmp`; run heavy fetches/backtests in chunked foreground calls, never background.
