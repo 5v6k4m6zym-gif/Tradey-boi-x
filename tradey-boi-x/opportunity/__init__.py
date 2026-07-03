@@ -31,6 +31,7 @@ from opportunity.config  import (
 from opportunity.regime  import detect_regime, regime_label
 from opportunity.scoring import score_opportunity
 from opportunity.alerts  import send_opportunity_alert, send_outcome_alert
+from opportunity.trade_evaluator import TradeEvaluator, process_trade_signal
 
 _cached_regime: dict | None = None
 
@@ -160,4 +161,7 @@ __all__ = [
     "run_health_check",
     "wrap_run_scan",
     "send_weekly_health_report",
+    # Phase 8
+    "TradeEvaluator",
+    "process_trade_signal",
 ]

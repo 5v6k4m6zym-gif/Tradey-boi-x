@@ -1,0 +1,142 @@
+You are working on an existing trading bot system called “Tradey Boi”.
+
+IMPORTANT CONSTRAINTS:
+- Do NOT modify or replace the existing prediction model logic.
+- Do NOT change how trade signals are generated.
+- Do NOT alter execution logic unless explicitly wrapped.
+- Your job is to ADD a SAFE INSTRUMENTATION + FILTER LAYER on top of the current system.
+- The upgrade must be reversible and non-destructive.
+- The system must support SHADOW MODE testing before any live trading changes.
+
+========================================================
+OBJECTIVE OF THIS UPGRADE
+========================================================
+
+We are adding a “Trade Evaluation & Filtering Layer” that:
+
+1. Evaluates trade quality using:
+   - Edge Score (probability + expected return + risk/reward)
+   - Predictability Score (market structure quality)
+   - Noise Index (market randomness/instability)
+   - Risk/Reward validation
+
+2. Filters trades BEFORE execution using thresholds.
+
+3. Logs ALL trades (approved and rejected) for analysis.
+
+4. Runs in SHADOW MODE by default (no real trades executed initially).
+
+========================================================
+REQUIRED FEATURES
+========================================================
+
+A) TradeEvaluator Module
+
+Create a new module/class that:
+
+- Takes incoming TradeSignal objects from existing system
+- Accepts market_data input alongside trade signals
+- Computes:
+
+1. Risk/Reward Ratio:
+   RR = abs(take_profit - entry) / abs(entry - stop_loss)
+
+2. Noise Index:
+   - placeholder function using volatility + wick instability + randomness proxy
+   - higher = worse
+
+3. Predictability Score:
+   - based on trend strength + structure quality (from market_data)
+
+4. Edge Score:
+   - weighted combination of:
+     probability (from model)
+     risk/reward ratio
+     expected return quality
+
+========================================================
+B) Trade Filtering Rules
+
+A trade is ONLY allowed if ALL conditions are met:
+
+- Edge Score >= 0.65
+- Predictability Score >= 0.60
+- Risk/Reward >= 2.5
+- Noise Index <= 1.2
+
+If any fail:
+- trade is rejected
+- reasons must be recorded
+
+========================================================
+C) Shadow Mode System
+
+Add Config:
+
+- SHADOW_MODE = True (default)
+
+Behavior:
+- If SHADOW_MODE = True:
+  - DO NOT execute trades
+  - ONLY log decisions (pass/fail + reasons)
+
+- If SHADOW_MODE = False:
+  - allow execution ONLY for passed trades
+
+========================================================
+D) Logging System (CRITICAL)
+
+Log every trade decision to a JSONL file:
+
+Fields:
+- timestamp
+- symbol
+- direction
+- probability
+- edge_score
+- predictability_score
+- noise_index
+- risk_reward
+- passed (true/false)
+- rejection_reasons (if any)
+
+This log must be append-only.
+
+========================================================
+E) Wrapper Function (IMPORTANT)
+
+Create a function:
+
+process_trade_signal(trade, market_data)
+
+This function must:
+
+1. Receive existing TradeSignal from current bot
+2. Run evaluation layer
+3. Log result
+4. Either:
+   - return None (if rejected or shadow mode)
+   - OR pass trade through to existing execution system (unchanged)
+
+DO NOT rewrite existing execution logic. Only wrap it.
+
+========================================================
+SAFETY REQUIREMENTS
+
+- Must not break current bot functionality
+- Must not modify existing prediction model
+- Must be toggleable (Shadow Mode ON/OFF)
+- Must be testable independently
+- Must allow A/B comparison of old vs new behavior
+
+========================================================
+OUTPUT EXPECTATION
+
+Implement:
+- TradeEvaluator class
+- Config class
+- process_trade_signal wrapper
+- logging system
+- integration hooks into existing signal flow
+
+Ensure code is clean, modular, and production safe.

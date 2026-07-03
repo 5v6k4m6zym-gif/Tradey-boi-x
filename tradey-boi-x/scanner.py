@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 import pytz
 
+import engine
 from engine import (
     WATCHLIST, MAX_ALERTS, CORRELATION_GROUPS,
     get_data, train_model, decide, send_alert,
@@ -21,6 +22,15 @@ try:
 except ImportError:
     _OPP_AVAILABLE = False
     def wrap_run_scan(fn): return fn   # no-op shim when package unavailable
+
+try:
+    from opportunity.trade_evaluator import process_trade_signal
+    from opportunity.config import ENABLE_TRADE_EVALUATOR, SHADOW_MODE
+    _TRADE_EVAL_AVAILABLE = True
+except ImportError:
+    _TRADE_EVAL_AVAILABLE = False
+    ENABLE_TRADE_EVALUATOR = False
+    SHADOW_MODE = True
 
 SCAN_INTERVAL_SECONDS = 3600   # scan every hour while markets are open
 
@@ -114,6 +124,35 @@ def run_scan(model) -> int:
                     continue
 
                 price = float(df.iloc[-1]["Close"])
+
+                # ── Trade Evaluation & Filtering Layer (Phase 8) ──────────
+                # Purely additive: computes Edge/Predictability/Noise/RR and
+                # logs the decision to logs/trade_evaluations.jsonl. Never
+                # touches the prediction model or send_alert() itself.
+                # SHADOW_MODE=True (default): logs only, existing alert flow
+                #   is completely unaffected — safe to leave on permanently.
+                # SHADOW_MODE=False: an alert is only skipped here if the
+                #   evaluator explicitly rejects it (score/RR/noise fail);
+                #   send_alert() itself is never modified.
+                if ENABLE_TRADE_EVALUATOR:
+                    try:
+                        params = engine._trade_params(ticker, res, price, df)
+                        trade  = {
+                            "ticker":      ticker,
+                            "direction":   "LONG",
+                            "entry":       price,
+                            "stop_loss":   params["stop_loss"],
+                            "take_profit": params["target_price"],
+                            "probability": res.get("prob", 0.0),
+                            "expected_r":  res.get("expected_r"),
+                        }
+                        approved = process_trade_signal(trade, df)
+                        if not SHADOW_MODE and approved is None:
+                            print(f"  🧪 {ticker}: rejected by trade evaluator (see logs/trade_evaluations.jsonl)")
+                            continue
+                    except Exception as _te:
+                        print(f"  ⚠️  {ticker}: trade evaluator error ({_te}) — proceeding unaffected")
+
                 sent  = send_alert(ticker, res, price, df)
                 if sent:
                     mark_alerted(ticker)

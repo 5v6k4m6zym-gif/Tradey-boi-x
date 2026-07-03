@@ -19,6 +19,22 @@ ENABLE_PERFORMANCE_ANALYTICS = _flag("ENABLE_PERFORMANCE_ANALYTICS")
 ENABLE_STRATEGY_CHALLENGER   = _flag("ENABLE_STRATEGY_CHALLENGER")
 ENABLE_SYSTEM_HEALTH         = _flag("ENABLE_SYSTEM_HEALTH")
 
+# ── Trade Evaluation & Filtering Layer (Phase 8) ──────────────────────────────
+# Purely additive instrumentation layer — never modifies the prediction model,
+# signal generation, or execution logic. Runs in SHADOW_MODE by default, which
+# means it only logs pass/fail decisions and never blocks an alert/trade.
+ENABLE_TRADE_EVALUATOR = _flag("ENABLE_TRADE_EVALUATOR")
+SHADOW_MODE            = _flag("SHADOW_MODE", default=True)
+
+TRADE_EVAL_THRESHOLDS: dict[str, float] = {
+    "min_edge_score":          float(os.getenv("TE_MIN_EDGE_SCORE",          "0.65")),
+    "min_predictability_score": float(os.getenv("TE_MIN_PREDICTABILITY_SCORE", "0.60")),
+    "min_risk_reward":         float(os.getenv("TE_MIN_RISK_REWARD",         "2.5")),
+    "max_noise_index":         float(os.getenv("TE_MAX_NOISE_INDEX",         "1.2")),
+}
+
+TRADE_EVAL_LOG_PATH = os.getenv("TE_LOG_PATH", "logs/trade_evaluations.jsonl")
+
 # ── Opportunity scoring weights (must sum to 1.0) ─────────────────────────────
 WEIGHTS: dict[str, float] = {
     "expected_return":    float(os.getenv("OPP_W_EXPECTED_RETURN",   "0.35")),
