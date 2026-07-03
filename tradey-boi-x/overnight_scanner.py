@@ -13,8 +13,8 @@ import pytz
 
 import engine
 from engine import (
-    MAX_ALERTS, WATCHLIST, get_data, train_model, decide, send_alert,
-    log_signal, mark_alerted, big_mover_check, send_mover_alert,
+    MAX_ALERTS, WATCHLIST, CORRELATION_GROUPS, get_data, train_model, decide,
+    send_alert, log_signal, mark_alerted, big_mover_check, send_mover_alert,
     resolve_outcomes,
 )
 try:
@@ -155,6 +155,15 @@ def _save_cursor(pos: int):
     tmp.replace(CURSOR_FILE)
 
 
+def _corr_group(ticker: str) -> int | None:
+    """Return the index of this ticker's correlation group, or None if ungrouped.
+    Mirrors scanner.py's _corr_group exactly — same shared CORRELATION_GROUPS."""
+    for i, group in enumerate(CORRELATION_GROUPS):
+        if ticker in group:
+            return i
+    return None
+
+
 def _full_overnight_universe() -> list:
     """Main WATCHLIST + the overnight-only extras, deduplicated, order preserved."""
     seen = set()
@@ -180,8 +189,9 @@ def run_overnight_scan(model) -> int:
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Overnight scan — "
           f"batch {pos}–{pos + len(batch) - 1} of {total} ({pct_done}% through universe)")
 
-    fired         = 0
-    alerted_count = 0
+    fired          = 0
+    alerted_count  = 0
+    alerted_groups: set = set()   # correlation guard — mirrors scanner.py, one alert per group per batch
 
     for ticker in batch:
         try:
@@ -192,6 +202,12 @@ def run_overnight_scan(model) -> int:
             res = decide(ticker, df, model)
 
             if res["alert"] and fired < MAX_ALERTS:
+                # Correlation guard — skip if a correlated ticker already alerted this batch
+                group_id = _corr_group(ticker)
+                if group_id is not None and group_id in alerted_groups:
+                    print(f"  ⏭ {ticker}: correlation guard — similar ticker already alerted")
+                    continue
+
                 price = float(df.iloc[-1]["Close"])
 
                 # ── Trade Evaluation & Filtering Layer (Phase 8) ──────────
@@ -282,6 +298,8 @@ def run_overnight_scan(model) -> int:
                     log_signal(ticker, price, res["signal"],
                                score=res.get("score", 0),
                                prob=res.get("prob", 0.0))
+                    if group_id is not None:
+                        alerted_groups.add(group_id)
                     print(f"  ✅ {ticker}: {res['label']} (score {res['score']}/14)")
                     fired += 1
             else:
