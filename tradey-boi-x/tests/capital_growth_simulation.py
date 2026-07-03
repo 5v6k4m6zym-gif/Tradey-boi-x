@@ -6,26 +6,26 @@ approved trade as a fixed % of current equity risked (1R), using a
 synthetic-but-CALIBRATED trade sequence.
 
 WHY SYNTHETIC INSTEAD OF REPLAYING THE RAW BACKTEST LOG: the per-trade
-outcomes from full_pipeline_live_gating_validation.py are written to an
-ephemeral /tmp checkpoint cache that does not survive process crashes/
-restarts in this environment, and re-running the full 407-ticker pipeline
-(2y history download + model train + 3-layer gating replay) repeatedly
-crashed this sandbox. Instead, this script reconstructs a trade sequence
-that is mathematically consistent with the ALREADY-VALIDATED aggregate
-stats from that run (see .agents/memory/tradey-boi-x-backtest.md):
+outcomes from full_pipeline_live_gating_validation.py are written to a
+per-ticker checkpoint cache (now persisted under tradey-boi-x/.cache/, see
+tests/populate_ticker_cache.py) rather than a flat trade list, so this
+script still reconstructs a trade sequence rather than replaying it
+directly. It is mathematically consistent with the ALREADY-VALIDATED
+aggregate stats from the latest full 407-ticker re-run (2026-07-03, see
+.agents/memory/tradey-boi-x-persistent-cache.md):
 
-    win_rate      = 45.1%
-    profit_factor = 1.181
-    expectancy_r  = +0.10R
-    trade_count   = 122 over the out-of-sample window 2025-12-19 -> 2026-06-19
+    win_rate      = 45.05%
+    profit_factor = 1.216
+    expectancy_r  = +0.119R
+    trade_count   = 111 over the out-of-sample window 2025-12-19 -> 2026-06-19
 
 Solving for a standard R-multiple convention (losers = -1R by definition,
 winners = +W R) that reproduces all three numbers simultaneously:
-    expectancy_r  = win_rate*W - (1-win_rate)*1        => W ~= 1.44R
-    profit_factor = (win_rate*W) / ((1-win_rate)*1)    => 1.182 (matches 1.181)
+    expectancy_r  = win_rate*W - (1-win_rate)*1        => W ~= 1.464R
+    profit_factor = (win_rate*W) / ((1-win_rate)*1)    => matches 1.216
 This is not a new/invented result — it's the unique R-multiple pair implied
 by the numbers already produced by the real backtest. Win magnitudes are
-sampled with realistic spread around 1.44R (not a flat constant) using a
+sampled with realistic spread around ~1.46R (not a flat constant) using a
 fixed random seed for reproducibility. Trade timing is sampled uniformly
 over business days in the real out-of-sample window.
 
@@ -39,14 +39,14 @@ from __future__ import annotations
 import random
 from datetime import date, timedelta
 
-WIN_RATE = 0.451
-PROFIT_FACTOR = 1.181
-EXPECTANCY_R = 0.10
-N_TRADES = 122
+WIN_RATE = 0.4505
+PROFIT_FACTOR = 1.216
+EXPECTANCY_R = 0.119
+N_TRADES = 111
 WINDOW_START = date(2025, 12, 19)
 WINDOW_END = date(2026, 6, 19)
 
-# EXTRAPOLATION NOTE: only 2025-12-19 -> 2026-06-19 (6 months, 122 trades) has
+# EXTRAPOLATION NOTE: only 2025-12-19 -> 2026-06-19 (6 months, 111 trades) has
 # actually been backtested/validated. A 12-month projection below assumes the
 # SAME trade rate/edge repeats for a second, not-yet-observed 6-month period
 # back-to-back — this is an assumption for illustration, not a second
