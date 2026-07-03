@@ -219,6 +219,12 @@ FEATURES        = [
 ]
 PREDICTION_DAYS = 10
 TARGET_RETURN   = 0.03
+# A 5-day/2% target was tested (see tests/_target_sweep.py) after a 42-ticker
+# sample sweep suggested it could raise win rate without hurting AUC. It did
+# NOT generalize on the full 407-ticker validation (win rate 37.7% -> 34.6%,
+# expectancy +0.002R -> -0.143R) — a small-sample overfit. Reverted; keep
+# 10/0.03 unless a future change is validated on the FULL watchlist, not a
+# subset, before being kept.
 COOLDOWN_HOURS  = 8
 MAX_ALERTS      = 3
 DISCORD         = os.getenv("Discordwebhook", "") or os.getenv("discordwebhook", "")
