@@ -288,7 +288,22 @@ def process_trade_signal(trade: dict[str, Any], market_data: pd.DataFrame) -> di
     evaluation = _evaluator.evaluate(trade, market_data)
     log_trade_decision(trade, evaluation)
 
+    _maybe_tune()
+
     if SHADOW_MODE:
         return None
 
     return trade if evaluation.passed else None
+
+
+def _maybe_tune() -> None:
+    """Fire the auto-tuner check after each decision. Fully self-contained
+    failure handling lives in auto_tuner.maybe_tune() itself (never raises);
+    this wrapper adds one more layer of protection so a bad import or
+    unexpected exception here can never break the evaluation/logging flow
+    above, which has already completed by the time this runs."""
+    try:
+        from opportunity.auto_tuner import maybe_tune
+        maybe_tune()
+    except Exception as e:
+        print(f"  ⚠️  trade_evaluator: auto-tuner check failed safely ({e})")

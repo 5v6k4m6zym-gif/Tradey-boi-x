@@ -1,0 +1,229 @@
+You are working on an existing trading bot system called “Tradey Boi”.
+
+========================================================
+CRITICAL SAFETY RULES (NON-NEGOTIABLE)
+========================================================
+
+1. DO NOT modify, replace, or rewrite:
+   - existing prediction model
+   - signal generation logic
+   - execution logic
+
+2. DO NOT allow uncontrolled self-modification of trading logic.
+
+3. ALL upgrades must be additive wrapper layers only.
+
+4. System must be fail-safe (never crash live trading).
+
+========================================================
+OBJECTIVE
+========================================================
+
+Build a SAFE “Trade Evaluation + Risk Filter + Performance Auto-Tuning Layer”
+that improves trade quality over time WITHOUT breaking existing behavior.
+
+System must:
+- filter low-quality trades
+- log all decisions
+- run shadow mode first
+- learn from performance data
+- adjust thresholds safely within strict limits
+
+========================================================
+ARCHITECTURE (WRAPPER ONLY)
+========================================================
+
+Existing Flow:
+    Model → Trade Signal → Execution
+
+New Flow:
+    Model → Trade Signal → Evaluation Layer → Execution
+
+Evaluation Layer includes:
+1. TradeEvaluator (scoring system)
+2. TradeFilter (pass/reject rules)
+3. Logger (JSONL logging)
+4. PerformanceTracker (new)
+5. AutoThresholdTuner (new SAFE version)
+
+IMPORTANT:
+- NO modification of model
+- NO modification of execution logic
+- ONLY pass/reject decisions
+
+========================================================
+PART 1: TRADE EVALUATION (UNCHANGED FROM PRIOR UPGRADE)
+========================================================
+
+Compute:
+
+- Risk/Reward Ratio:
+  RR = abs(tp - entry) / abs(entry - sl)
+
+- Predictability Score:
+  Based on trend strength + structure quality
+
+- Noise Index:
+  Based on volatility + wick instability + randomness proxy
+
+- Edge Score:
+  Weighted combination of:
+  probability + RR + expected return
+
+========================================================
+FILTER RULES (BASELINE)
+========================================================
+
+Trade passes only if:
+
+- Edge Score >= dynamic_threshold_edge
+- Predictability Score >= dynamic_threshold_predictability
+- Risk/Reward >= dynamic_threshold_rr
+- Noise Index <= dynamic_threshold_noise
+
+NOTE:
+Thresholds are NOT fixed anymore.
+They are controlled by Auto-Tuner (below).
+
+========================================================
+PART 2: PERFORMANCE TRACKING SYSTEM (NEW)
+========================================================
+
+Create PerformanceTracker that logs:
+
+For every trade outcome:
+- whether trade passed filter
+- whether trade won/lost (after closure)
+- profit/loss in R multiple
+- setup metrics at entry time:
+  - edge score
+  - predictability score
+  - noise index
+
+It must group stats into:
+- rolling window (e.g. last 50 / 100 trades)
+- regime buckets (optional if data exists)
+
+========================================================
+PART 3: AUTO THRESHOLD TUNER (SAFE SYSTEM ONLY)
+========================================================
+
+Create AutoThresholdTuner that:
+
+EVERY N trades (e.g. 50–100):
+
+1. Calculates performance metrics:
+   - win rate
+   - average R per trade
+   - expectancy
+
+2. Adjusts thresholds ONLY within safe bounds:
+
+SAFE LIMITS:
+- Edge threshold: 0.55 → 0.80
+- Predictability: 0.50 → 0.75
+- RR minimum: 2.0 → 4.0
+- Noise max: 1.0 → 1.5
+
+3. Adjustment rules:
+
+IF win rate decreases:
+   → increase edge threshold slightly
+
+IF win rate increases but profit per trade drops:
+   → increase RR threshold
+
+IF too few trades occur:
+   → slightly loosen thresholds
+
+IMPORTANT:
+- changes must be SMALL (max 5% adjustment per cycle)
+- NEVER change all thresholds at once
+- NEVER exceed safe bounds
+
+========================================================
+PART 4: SHADOW MODE (MANDATORY FIRST PHASE)
+========================================================
+
+Config:
+
+SHADOW_MODE = True (default)
+
+Behavior:
+- no live trades executed
+- all trades logged
+- system evaluates what WOULD have happened
+
+After validation:
+- SHADOW_MODE can be disabled manually only
+
+========================================================
+PART 5: LOGGING SYSTEM (CRITICAL)
+
+Append-only JSONL logs containing:
+
+- timestamp
+- symbol
+- direction
+- probability
+- edge_score
+- predictability_score
+- noise_index
+- risk_reward
+- passed (true/false)
+- rejection_reasons
+- pnl_result (if available)
+- thresholds_used_at_time
+
+========================================================
+PART 6: WRAPPER FUNCTION (ENTRY POINT)
+
+process_trade_signal(trade, market_data)
+
+Must:
+
+1. Evaluate trade
+2. Apply dynamic thresholds
+3. Log decision
+4. Return:
+   - None if rejected OR shadow mode active
+   - original trade object unchanged if approved AND live mode
+
+========================================================
+FAIL-SAFE RULES (ABSOLUTE REQUIREMENT)
+
+If ANY error occurs in:
+- evaluation
+- logging
+- performance tracking
+- auto-tuning
+
+THEN:
+- DO NOT crash system
+- fallback = pass trade unchanged (safe mode)
+- log error internally
+
+========================================================
+VALIDATION REQUIREMENTS BEFORE COMPLETION
+
+Ensure:
+
+1. Bot runs in shadow mode without errors
+2. Logs are created correctly
+3. Auto-tuner does NOT trigger in shadow mode
+4. Turning off evaluation restores original behavior
+5. Thresholds stay within safe bounds
+6. No modification of core model or execution layer
+
+========================================================
+FINAL OUTPUT EXPECTATION
+
+Implement:
+
+- TradeEvaluator
+- TradeFilter
+- PerformanceTracker
+- AutoThresholdTuner (SAFE constrained version)
+- process_trade_signal wrapper
+- Config system with shadow mode + thresholds
+- Robust logging + fallback system

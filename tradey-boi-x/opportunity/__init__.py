@@ -17,6 +17,8 @@ run_challenger(candidate_weights) — Phase 6: shadow strategy comparison
 run_health_check()                — Phase 7: memory + log summary
 wrap_run_scan(fn)                 — Phase 7: wraps scanner with health monitoring
 run_drift_monitor()               — Phase 9: live vs backtest drift alerting
+PerformanceTracker                — trade-eval decisions joined with outcomes
+run_auto_tuner()                  — SAFE constrained threshold auto-tuning
 """
 from __future__ import annotations
 import pandas as pd
@@ -149,6 +151,23 @@ def run_drift_monitor(live_window_days: int | None = None, notify: bool = True):
     return _rdm(live_window_days=live_window_days or DRIFT_LIVE_WINDOW_DAYS, notify=notify)
 
 
+def get_performance_tracker():
+    """Trade Evaluation upgrade — joins trade_evaluator decisions with their
+    eventual outcomes. Always available (read-only reporting); returns a
+    fresh PerformanceTracker instance for the caller to query."""
+    from opportunity.performance_tracker import PerformanceTracker as _PT
+    return _PT()
+
+
+def run_auto_tuner(window: int | None = None):
+    """Trade Evaluation upgrade — SAFE constrained auto threshold tuning.
+    Returns None when ENABLE_AUTO_TUNER is off, SHADOW_MODE is on, or not
+    enough new resolved trades have accumulated since the last cycle."""
+    from opportunity.auto_tuner import maybe_tune as _mt
+    from opportunity.config import AUTO_TUNER_INTERVAL_TRADES
+    return _mt(window=window or AUTO_TUNER_INTERVAL_TRADES)
+
+
 __all__ = [
     # Core
     "run_opportunity_pass",
@@ -174,4 +193,7 @@ __all__ = [
     "process_trade_signal",
     # Phase 9
     "run_drift_monitor",
+    # Trade Evaluation upgrade — PerformanceTracker + AutoThresholdTuner
+    "get_performance_tracker",
+    "run_auto_tuner",
 ]

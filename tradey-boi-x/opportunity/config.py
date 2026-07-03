@@ -53,6 +53,30 @@ TRADE_EVAL_THRESHOLDS: dict[str, float] = {
 
 TRADE_EVAL_LOG_PATH = os.getenv("TE_LOG_PATH", "logs/trade_evaluations.jsonl")
 
+# ── Auto Threshold Tuner (SAFE, constrained) ──────────────────────────────────
+# Purely additive: every AUTO_TUNER_INTERVAL_TRADES resolved decisions, nudges
+# TRADE_EVAL_THRESHOLDS by at most AUTO_TUNER_MAX_STEP_PCT (5%) per cycle,
+# clamped to the safe bounds below, and only ONE threshold family per cycle.
+# Never runs while SHADOW_MODE is True (observation-only phase) or when
+# ENABLE_AUTO_TUNER is False (default) — complete no-op otherwise.
+ENABLE_AUTO_TUNER = _flag("ENABLE_AUTO_TUNER")
+
+AUTO_TUNER_INTERVAL_TRADES = int(os.getenv("AUTO_TUNER_INTERVAL_TRADES", "50"))
+AUTO_TUNER_MAX_STEP_PCT    = float(os.getenv("AUTO_TUNER_MAX_STEP_PCT", "0.05"))
+AUTO_TUNER_MIN_TRADES_FLOOR = int(os.getenv("AUTO_TUNER_MIN_TRADES_FLOOR", "5"))
+
+# (low, high) safe bounds — thresholds can never move outside this range,
+# regardless of what the adjustment rules compute.
+AUTO_TUNER_BOUNDS: dict[str, tuple[float, float]] = {
+    "min_edge_score":          (0.55, 0.80),
+    "min_predictability_score": (0.50, 0.75),
+    "min_risk_reward":         (2.0, 4.0),
+    "max_noise_index":         (1.0, 1.5),
+}
+
+AUTO_TUNER_STATE_PATH = os.getenv("AUTO_TUNER_STATE_PATH", "logs/auto_tuner_state.json")
+AUTO_TUNER_LOG_PATH   = os.getenv("AUTO_TUNER_LOG_PATH", "logs/auto_tuner_decisions.jsonl")
+
 # ── Realistic Backtesting — Trading Costs (institutional upgrade T003) ────────
 # Applied only to backtest/report metrics (opportunity.backtester.compute_metrics)
 # so validation reflects real-world execution costs. Never touches signal

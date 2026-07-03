@@ -111,6 +111,26 @@ the data. Keep it for the equity-protection rationale, but report the
 size-weighted vs plain comparison honestly rather than implying it "improved"
 results.
 
+**Safety-critical specs: check for existing infra before building (2026-07-03):**
+When given a hard-constrained "SAFE wrapper layer" spec (TradeEvaluator,
+TradeFilter, shadow mode, JSONL logging, fail-safe fallback), most of it
+already existed from an earlier phase under different task numbering. Only
+the pieces the spec explicitly named as "NEW" (PerformanceTracker,
+AutoThresholdTuner) were actually missing. **Why this matters:** re-reading
+a safety-constrained spec against the current codebase before writing code
+avoids duplicate/conflicting implementations of the same guardrails (e.g. a
+second shadow-mode flag or a second logging path) which would be far worse
+than merely wasted effort. **How to apply:** for any "build X layer with
+these named components" request, grep for each named class/function first;
+implement only what's genuinely missing, and wire new pieces onto the
+existing flag/logging/mutation patterns rather than parallel ones.
+
+**Auto-tuning mutable config in place (2026-07-03):** When a module needs to
+adjust a runtime threshold that another already-instantiated object reads
+(e.g. `TradeEvaluator.thresholds`), mutate the shared dict's keys in place
+rather than reassigning the module-level constant — reassignment breaks the
+reference for anything that captured the dict at construction time.
+
 **Drift monitoring (T011) + compute_metrics() R-unit quirk (2026-07-03):**
 Added `opportunity/drift_monitor.py` comparing a recent rolling live window
 of resolved trades against the older resolved-trade baseline (both scored
