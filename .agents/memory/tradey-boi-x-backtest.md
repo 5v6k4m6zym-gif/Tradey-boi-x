@@ -24,3 +24,18 @@ statistically meaningful sample, fall back to a probability-calibration check
 (bucket ALL evaluated days by model probability, not just alert-tier days, and
 check whether win rate/forward return increases with probability) rather than
 force more alerts by loosening thresholds.
+
+**Threshold-tuning result (2026-07-03):** For the ELITE/STRONG BUY score gates
+in `engine.decide()`, sweeping cutoffs downward on a 407-ticker, ~50k-row
+out-of-sample set found `score>=8` (ELITE) / `score>=6 & prob>=0.50` (STRONG
+BUY) as the best tradeoff — meaningfully revives alert volume while keeping win
+rate above the unfiltered baseline. For the big-mover scanner
+(`_large_move_check`/`_breakout_setup_check`), every tested relaxation of the
+vol/return/ATR/OBV/ADX gates made win rate and expectancy monotonically WORSE
+than the current production gates, with no config catching more than 1 of 11
+known historical winners — loosening gates is not a good lever here; a
+different approach (new features/signals) would be needed to meaningfully
+improve mover-catch rate. Reusable trick: cache the trained model/cutoffs and
+per-ticker price data to disk, then batch `predict_proba` across all tickers
+in one call instead of per-ticker — turns a ~0.5s/ticker sweep into a
+near-instant one, making iterative threshold sweeps practical.
