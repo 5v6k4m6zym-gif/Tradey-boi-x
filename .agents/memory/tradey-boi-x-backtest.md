@@ -277,3 +277,40 @@ win_rate 40.0%/profit_factor 0.925/expectancy_r -0.045 → live-gated (~31%
 approval rate) win_rate 45.1%/profit_factor 1.181/expectancy_r +0.10 —
 confirms the gates add real value once thresholds match the system's
 actual signal distribution.
+
+**Contextual adjusters (news/short-interest/VWAP/commodity) cannot be
+backtested at all (2026-07-04):** `engine.py`'s `news_sentiment()`,
+`short_interest_signal()`, `vwap_signal()`, `commodity_signal()` all call
+`yf.Ticker(...).news`/`.info`/`.history(period="1d", interval="1h")` with
+no date parameter — they only ever reflect TODAY's live data; no
+point-in-time history for these exists anywhere in the codebase. Confirmed
+the historical baseline generator (`manual_historical_backtest.py`'s
+`score_row`/`score_active_mover`/`score_setup_mover`, used by
+`full_watchlist_backtest.py`/`full_pipeline_live_gating_validation.py`)
+does NOT call any of these adjusters — not an oversight, it's why
+backtesting works at all for the rest of the model. **Why this matters:**
+any proposed re-weighting of these specific adjusters cannot be validated
+via backtest/rescan — don't spend time on an "expensive full rescan"
+expecting it to reflect the change. **How to apply:** the only valid
+validation path for these adjusters is forward/live paper-trading over
+real time; say this up front if asked to tune/test them via backtest.
+
+**Live-gating threshold tuning (validated 2026-07-04, NOT implemented —
+user deferred):** Sweeping `TRADE_EVAL_THRESHOLDS` against the cached
+live-gated baseline (`tests/candidate_sweep.py`, reuses cached per-ticker
+signal pickles + reruns only the cheap 3-layer gating chain) and checking
+Monte Carlo resampling (`opportunity/backtester.py::_monte_carlo`) is a
+fast, valid way to test threshold changes without a full rescan — raising
+`min_edge_score` 0.10→0.14 combined with `max_noise_index` 2.03→1.9 took
+profit_factor 1.216→1.399 with consistently lower Monte Carlo
+risk-of-ruin (47.9%→30.6%) on the full watchlist baseline (84 trades).
+Also confirmed via the same harness: adaptive exit
+(`engine.simulate_adaptive_exit`) is a clear regression when retested
+against this current baseline (PF 1.399→0.635, expectancy went negative —
+worse than the earlier 2026-07-03 result above, which was against an
+older/different baseline, so don't compare the two numbers directly); the
+existing live-scanner correlation guard (`CORRELATION_GROUPS`) had zero
+overlap with this trade set when applied retroactively (safe no-op).
+User said "forget it all together for now" — nothing here was merged into
+`opportunity/config.py`; re-validate against the current baseline before
+reusing if revisited later, since underlying data/model may have shifted.
