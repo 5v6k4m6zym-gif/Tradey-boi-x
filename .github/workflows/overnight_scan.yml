@@ -40,7 +40,7 @@ jobs:
         run: |
           git config user.email "actions@github.com"
           git config user.name "Tradey Boi X"
-          git add tradey-boi-x/signal_log.json tradey-boi-x/overnight_cursor.json 2>/dev/null || true
+          git add tradey-boi-x/signal_log.json tradey-boi-x/overnight_cursor.json tradey-boi-x/mover_cooldowns.json 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: overnight scan cursor update [skip ci]"
           git pull --rebase origin main
           git push
