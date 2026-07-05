@@ -21,4 +21,4 @@ jobs:
       - name: Send weekly summary
         env:
           Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
-        run: python weekly_summary.py
+        run: cd tradey-boi-x && python weekly_summary.py
