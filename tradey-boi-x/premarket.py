@@ -18,7 +18,7 @@ import yfinance as yf
 import pandas as pd
 from engine import (
     WATCHLIST, _signal_cached, _signal_store,
-    get_news_sentiment, vwap_signal, fear_greed_signal,
+    news_sentiment as get_news_sentiment, vwap_signal, fear_greed_signal,
 )
 
 DISCORD_URL = os.environ.get("Discordwebhook", "")
