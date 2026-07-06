@@ -38,9 +38,15 @@ ASX_PROXIES = {
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
 def _day_change(ticker: str) -> float | None:
-    """Return today's % change vs yesterday's close. None on error."""
+    """Return most recent session's % change vs the prior close. None on error.
+
+    Uses a 5-day lookback (not 2-day) because right at/after market open —
+    especially after a weekend — Yahoo may not have posted today's daily bar
+    yet, and a 2-day window collapses to a single row (Friday's), silently
+    dropping this factor. A wider window guarantees at least two valid rows.
+    """
     try:
-        df = yf.Ticker(ticker).history(period="2d", interval="1d")
+        df = yf.Ticker(ticker).history(period="5d", interval="1d")
         if len(df) < 2:
             return None
         return float(df["Close"].iloc[-1] / df["Close"].iloc[-2] - 1)
@@ -50,15 +56,18 @@ def _day_change(ticker: str) -> float | None:
 
 def _vix() -> float | None:
     try:
-        return float(yf.Ticker("^VIX").history(period="2d")["Close"].iloc[-1])
+        return float(yf.Ticker("^VIX").history(period="5d")["Close"].iloc[-1])
     except Exception:
         return None
 
 
 def _index_gap(ticker: str) -> float | None:
-    """Gap between today's open and yesterday's close."""
+    """Gap between the most recent session's open and the prior close.
+
+    See _day_change for why a 5-day (not 2-day) lookback is required.
+    """
     try:
-        df = yf.Ticker(ticker).history(period="2d", interval="1d")
+        df = yf.Ticker(ticker).history(period="5d", interval="1d")
         if len(df) < 2:
             return None
         today_open = float(df["Open"].iloc[-1])
