@@ -2,10 +2,10 @@ name: Tradey Boi X Pre-Market
 
 "on":
   schedule:
-    # 23:00 UTC Mon-Fri = ~9:00am AEST (ASX pre-market)
-    - cron: "0 23 * * 0-4"
-    # 12:30 UTC Mon-Fri = ~8:30am ET (US pre-market)
-    - cron: "30 12 * * 1-5"
+    # ~23:04 UTC Mon-Fri = ~9:04am AEST (ASX pre-market, offset to avoid GH congestion)
+    - cron: "4 23 * * 0-4"
+    # ~12:34 UTC Mon-Fri = ~8:34am ET (US pre-market)
+    - cron: "34 12 * * 1-5"
   workflow_dispatch:
 
 jobs:

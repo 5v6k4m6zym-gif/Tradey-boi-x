@@ -2,7 +2,7 @@ name: Monthly Model Retrain & Report
 
 "on":
   schedule:
-    - cron: "0 8 1 * *"
+    - cron: "17 8 1 * *"
   workflow_dispatch:
 
 jobs:

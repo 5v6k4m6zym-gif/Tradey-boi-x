@@ -2,9 +2,9 @@ name: Tradey Boi X Evening Scan
 
 "on":
   schedule:
-    # 07:00 UTC Mon-Fri = 5:00pm AEST / 7:00pm AEDT
+    # ~07:04 UTC Mon-Fri = ~5:04pm AEST / 7:04pm AEDT (offset to avoid GH top-of-hour congestion)
     # Runs after ASX close, before you sit down for dinner
-    - cron: "0 7 * * 1-5"
+    - cron: "4 7 * * 1-5"
   workflow_dispatch:
 
 jobs:

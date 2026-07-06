@@ -2,7 +2,7 @@ name: Weekly Model Retrain & Performance Report
 
 "on":
   schedule:
-    - cron: "0 8 * * 0"   # Every Sunday 8am UTC
+    - cron: "12 8 * * 0"   # Every Sunday ~8:12am UTC (offset to avoid GH top-of-hour congestion)
   workflow_dispatch:
 
 jobs:

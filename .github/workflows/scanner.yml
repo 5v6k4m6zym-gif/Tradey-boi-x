@@ -2,7 +2,7 @@ name: Tradey Boi X Scanner
 
 "on":
   schedule:
-    - cron: "0 * * * 1-5"
+    - cron: "9 * * * 1-5"
   workflow_dispatch:
 
 jobs:

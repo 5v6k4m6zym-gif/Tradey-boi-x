@@ -2,7 +2,7 @@ name: Tradey Boi X Overnight Scanner
 
 "on":
   schedule:
-    - cron: "0 * * * 1-5"
+    - cron: "6 * * * 1-5"
   workflow_dispatch:
 
 jobs:

@@ -2,10 +2,10 @@ name: Tradey Boi X Market Open Report
 
 "on":
   schedule:
-    # ASX open: 00:00 UTC Mon-Fri = 10:00am AEST
-    - cron: "0 0 * * 1-5"
-    # US open: 13:30 UTC Mon-Fri = 9:30am ET = 11:30pm AEST
-    - cron: "30 13 * * 1-5"
+    # ASX open: ~00:04 UTC Mon-Fri = ~10:04am AEST (offset to avoid GH top-of-hour congestion)
+    - cron: "4 0 * * 1-5"
+    # US open: ~13:34 UTC Mon-Fri = ~9:34am ET = ~11:34pm AEST
+    - cron: "34 13 * * 1-5"
   workflow_dispatch:
 
 jobs:
