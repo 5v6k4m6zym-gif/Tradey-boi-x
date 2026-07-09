@@ -1,0 +1,25 @@
+name: Tradey Boi X ASX Open Report
+
+"on":
+  schedule:
+    # ASX open: ~00:04 UTC Mon-Fri = ~10:04am AEST (offset to avoid GH top-of-hour congestion)
+    - cron: "4 0 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  asx-open:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install yfinance pandas requests pytz
+      - name: Run ASX open report
+        env:
+          Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
+        run: cd tradey-boi-x && python market_open.py ASX

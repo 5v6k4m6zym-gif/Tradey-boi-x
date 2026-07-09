@@ -1,0 +1,25 @@
+name: Tradey Boi X US Open Report
+
+"on":
+  schedule:
+    # US open: ~13:34 UTC Mon-Fri = ~9:34am ET = ~11:34pm AEST
+    - cron: "34 13 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  us-open:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install yfinance pandas requests pytz
+      - name: Run US open report
+        env:
+          Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
+        run: cd tradey-boi-x && python market_open.py US

@@ -1,0 +1,25 @@
+name: Tradey Boi X End of Day Report
+
+"on":
+  schedule:
+    # ~06:22 UTC Mon-Fri = ~4:22pm AEST (after ASX close, offset to avoid GH top-of-hour congestion)
+    - cron: "22 6 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  eod-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install yfinance ta scikit-learn pandas requests pytz vaderSentiment xgboost
+      - name: Run end of day report
+        env:
+          Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
+        run: cd tradey-boi-x && python eod_report.py
