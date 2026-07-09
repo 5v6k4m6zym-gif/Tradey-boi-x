@@ -2,13 +2,23 @@ name: Tradey Boi X Overnight Scanner
 
 "on":
   schedule:
-    - cron: "6 * * * 1-5"
+    # Both overnight "markets closed" windows, one self-looping job each —
+    # GitHub's hourly cron was observed firing only ~3x/day instead of ~24x
+    # (same throttling issue documented on scanner.yml), so this no longer
+    # depends on repeated cron dispatch to cover the closed-market window.
+    - cron: "25 6 * * 1-5"    # ~16:25 AEST — just after ASX close (16:00), runs until US open (~23:30 AEST)
+    - cron: "40 20 * * 1-5"   # ~06:40 AEST (next day) — just after US close, runs until ASX open (~10:00 AEST)
   workflow_dispatch:
+    inputs:
+      test_minutes:
+        description: "Override time budget in minutes (for manual test runs)"
+        required: false
+        default: ""
 
 jobs:
   overnight:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 450
     permissions:
       contents: write
     steps:
@@ -31,10 +41,23 @@ jobs:
       - name: Install dependencies
         run: pip install yfinance ta scikit-learn pandas requests pytz vaderSentiment xgboost
 
-      - name: Run overnight scanner
+      - name: Determine time budget for this trigger
+        id: budget
+        run: |
+          if [ -n "${{ github.event.inputs.test_minutes }}" ]; then
+            echo "minutes=${{ github.event.inputs.test_minutes }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "25 6 * * 1-5" ]; then
+            echo "minutes=420" >> "$GITHUB_OUTPUT"   # ASX close -> US open window (~7h25m), leave buffer
+          elif [ "${{ github.event.schedule }}" = "40 20 * * 1-5" ]; then
+            echo "minutes=190" >> "$GITHUB_OUTPUT"   # US close -> ASX open window (~3h20m), leave buffer
+          else
+            echo "minutes=45" >> "$GITHUB_OUTPUT"    # manual dispatch fallback: single batch
+          fi
+
+      - name: Run overnight scanner (continuous loop, bounded to fit the window)
         env:
           Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
-        run: cd tradey-boi-x && python overnight_scanner.py
+        run: cd tradey-boi-x && python overnight_scanner.py --minutes "${{ steps.budget.outputs.minutes }}"
 
       - name: Save state
         run: |

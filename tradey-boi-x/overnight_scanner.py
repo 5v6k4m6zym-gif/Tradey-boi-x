@@ -6,7 +6,8 @@ Cursor position is saved to overnight_cursor.json between runs.
 """
 import json
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytz
@@ -323,12 +324,20 @@ def run_overnight_scan(model) -> int:
     return fired + alerted_count
 
 
-if __name__ == "__main__":
+def main(budget_seconds: float | None = None):
+    """Run the overnight batch loop. If budget_seconds is set, keep scanning
+    batches back-to-back until that much wall-clock time has elapsed, then
+    return cleanly — this lets a single GitHub Actions job cover a whole
+    overnight window instead of depending on GitHub's cron scheduler to fire
+    reliably every hour (it does not, under load — same issue as scanner.py's
+    hourly cron, see workflow scheduling notes)."""
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Overnight scanner starting…")
+    if budget_seconds:
+        print(f"  Time budget: {budget_seconds // 60:.0f} min (will exit cleanly after)")
 
     if not _markets_closed():
         print("Markets still open — overnight scanner only runs when both markets are closed.")
-        sys.exit(0)
+        return
 
     print("Training AI model…")
     model = train_model()
@@ -339,4 +348,34 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"  ⚠️  resolve_outcomes: {e}")
 
-    run_overnight_scan(model)
+    _start = time.monotonic()
+    while True:
+        if not _markets_closed():
+            print(f"[{datetime.now().strftime('%H:%M')}] A market has opened — stopping overnight scan.")
+            return
+
+        run_overnight_scan(model)
+
+        if budget_seconds is None:
+            return
+
+        elapsed = time.monotonic() - _start
+        remaining = budget_seconds - elapsed
+        if remaining <= 0:
+            print(f"[{datetime.now().strftime('%H:%M')}] Time budget reached — exiting cleanly.")
+            return
+
+        print(f"  {remaining // 60:.0f} min left in this session's budget — starting next batch.\n")
+
+
+if __name__ == "__main__":
+    if "--minutes" in sys.argv:
+        # Bounded continuous-loop mode — keeps scanning overnight batches for
+        # up to N minutes, then exits cleanly. Used by GitHub Actions so one
+        # job covers a whole overnight window (ASX close → US open, or US
+        # close → ASX open) instead of relying on an hourly cron.
+        _idx = sys.argv.index("--minutes")
+        _n_minutes = float(sys.argv[_idx + 1])
+        main(budget_seconds=_n_minutes * 60)
+    else:
+        main()
