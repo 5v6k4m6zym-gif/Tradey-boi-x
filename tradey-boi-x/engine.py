@@ -1775,6 +1775,19 @@ def _next_trading_day(from_date: datetime) -> datetime:
         candidate += timedelta(days=1)
     return candidate
 
+def _next_market_open_datetime(is_asx: bool, now_aest: datetime) -> datetime:
+    """Exact next market-open timestamp (AEST, tz-aware), skipping weekends.
+    ASX opens 10:00 AEST; US opens 23:30 AEST (pre-market ramp for the 9:30am ET open).
+    Used to give an unambiguous date+time recommended buy timestamp — never just
+    a vague 'next open' label — so the alert can't be misread across days/timezones."""
+    open_hour, open_min = (10, 0) if is_asx else (23, 30)
+    candidate = now_aest.replace(hour=open_hour, minute=open_min, second=0, microsecond=0)
+    if candidate <= now_aest:
+        candidate += timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate += timedelta(days=1)
+    return candidate
+
 def _simple_read(ticker: str, result: dict, price: float) -> str:
     """
     Generate a plain-English one-paragraph summary of why this signal fired.
@@ -1944,6 +1957,15 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
     _us_open     = (not _is_asx) and (_h >= 23 or _h < 6) and _wd < 5
     _mkt_open    = _asx_open or _us_open
 
+    # Exact, unambiguous recommended-buy timestamp (date + time, AEST) — this is
+    # the single source of truth for "when to buy" used by both the entry
+    # banner and the headline timing line below, so they can never disagree.
+    if _opening_now or _mkt_open:
+        _buy_dt = _now_aest
+    else:
+        _buy_dt = _next_market_open_datetime(_is_asx, _now_aest)
+    _buy_dt_str = _buy_dt.strftime("%a %d %b %Y, %I:%M %p AEST")
+
     if _opening_now:
         # ★ Best case — alert fires right at the open
         _open_label  = "ASX open" if _is_asx else "US market open"
@@ -1955,19 +1977,16 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
                          f"└─────────────────────────────────┘")
     elif _is_intraday and not _mkt_open:
         # Intraday signal but market is closed — cannot defer
-        _next_open_str  = "10:00am AEST" if _is_asx else "11:30pm AEST"
-        _next_open_date = buy_date.strftime("%a %d %b")
-        entry_note   += f" — market closed; check back {_next_open_date} at {_next_open_str} for a fresh signal"
+        entry_note   += f" — market closed; check back {_buy_dt_str} for a fresh signal"
         _entry_banner = (f"⚠️  **INTRADAY SIGNAL — MARKET CLOSED**\n"
-                         f"_This VWAP/gap setup expires at close. Check back {_next_open_date} at {_next_open_str} for a fresh signal._")
+                         f"_This VWAP/gap setup expires at close. Check back {_buy_dt_str} for a fresh signal._")
     elif not _mkt_open and _is_swing:
         # Swing setup — thesis still valid at next open
-        _open_str    = "10:00am AEST tomorrow" if _is_asx else "11:30pm AEST tonight"
         _max_valid   = price * 1.025
         entry_price  = f"${price:.3f} – ${_max_valid:.3f}"
-        entry_note   = f"place limit order before {_open_str}. Gap above ${_max_valid:.3f}? Wait for pullback."
+        entry_note   = f"place limit order before {_buy_dt_str}. Gap above ${_max_valid:.3f}? Wait for pullback."
         _entry_banner = (f"┌──────────────────────────────────────┐\n"
-                         f"│  📋 BUY AT OPEN  —  {_open_str.upper():<18}│\n"
+                         f"│  📋 BUY AT OPEN  —  {_buy_dt_str.upper():<18}│\n"
                          f"│  Set your order tonight before sleep.  │\n"
                          f"└──────────────────────────────────────┘")
     else:
@@ -1983,15 +2002,17 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         _open_label = "ASX open" if _is_asx else "US open"
         timing_line = f"⚡ **BUY NOW** — {_open_label.upper()}  ·  tightest spreads right now"
     elif _is_intraday and not _mkt_open:
-        _open_str   = "10:00am AEST" if _is_asx else "11:30pm AEST"
-        _open_date  = buy_date.strftime("%a %d %b")
-        timing_line = f"⚠️ **INTRADAY signal — market closed**  ·  check back {_open_date} · {_open_str}"
+        timing_line = f"⚠️ **INTRADAY signal — market closed**  ·  check back {_buy_dt_str}"
     elif not _mkt_open and _is_swing:
-        _open_str   = "10:00am AEST" if _is_asx else "11:30pm AEST"
-        _open_date  = buy_date.strftime("%a %d %b")
-        timing_line = f"📋 **BUY AT OPEN** — {_open_date}  ·  {_open_str}"
+        timing_line = f"📋 **BUY AT OPEN** — {_buy_dt_str}"
     else:
         timing_line = "⚡ **BUY NOW** — market is open, entry is live"
+
+    # Explicit, always-present recommended buy time line (exact date + time).
+    # This is deliberately separate from timing_line so it survives even if
+    # the compact wording above changes — it's the one line meant to answer
+    # "when exactly should I buy this" with zero ambiguity.
+    buy_time_line = f"📅 **Recommended Buy Time:** {_buy_dt_str}"
 
     # Optional extras — only if present, kept to one line each
     news      = result.get("news", {})
@@ -2021,6 +2042,7 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         f"  ·  Confidence: {result['prob']*100:.0f}%  ·  Grade: {grade} {glabel}  `{gbar}`",
         divider,
         timing_line,
+        buy_time_line,
         "",
         f"🟢 Entry    {entry_price}  _({entry_note})_",
         f"💰 Target   **${target_price:.2f}**  +{target_pct*100:.0f}%"

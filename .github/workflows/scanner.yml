@@ -2,13 +2,25 @@ name: Tradey Boi X Scanner
 
 "on":
   schedule:
-    - cron: "9 * * * 1-5"
+    # Start ~5 min before each session opens and self-loop for the whole
+    # session in one job — GitHub's minute-level cron is unreliable at high
+    # frequency (hourly schedules were observed firing only ~3x/day instead
+    # of ~24x/day), so we no longer depend on repeated cron dispatches to
+    # cover a trading session. One job per session, looping internally via
+    # `scanner.py --minutes N`, guarantees continuous coverage instead.
+    - cron: "55 23 * * 1-5"   # ~09:55 AEST — just before ASX open (10:00)
+    - cron: "25 13 * * 1-5"   # ~23:25 AEST — just before US open (23:30)
   workflow_dispatch:
+    inputs:
+      test_minutes:
+        description: "Override time budget in minutes (for manual test runs)"
+        required: false
+        default: "355"
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 370
     permissions:
       contents: write
     steps:
@@ -31,10 +43,10 @@ jobs:
       - name: Install dependencies
         run: pip install yfinance ta scikit-learn pandas requests pytz vaderSentiment xgboost
 
-      - name: Run scanner
+      - name: Run scanner (continuous loop, bounded to fit the job window)
         env:
           Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
-        run: cd tradey-boi-x && python scanner.py --once
+        run: cd tradey-boi-x && python scanner.py --minutes "${{ github.event.inputs.test_minutes || '355' }}"
 
       - name: Save signal log
         run: |

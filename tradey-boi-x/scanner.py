@@ -312,17 +312,26 @@ def run_scan(model) -> int:
     return fired
 
 # ─── MAIN LOOP ───────────────────────────────────────────────────────────────
-def main():
+def main(budget_seconds: float | None = None):
+    """Run the scan loop. If budget_seconds is set, return cleanly (instead of
+    looping forever) once that much wall-clock time has elapsed — this lets a
+    single GitHub Actions job scan continuously for its whole time slice and
+    still exit normally so the log-commit step afterwards actually runs,
+    rather than being hard-killed by the job timeout mid-scan."""
     print("=" * 50)
     print("  TRADEY BOI X — Auto Scanner")
     print(f"  Interval: every {SCAN_INTERVAL_SECONDS // 60} min during market hours")
     print(f"  Markets: US (09:30–16:00 ET) | ASX (10:00–16:00 AEST)")
     print(f"  Watchlist: {len(WATCHLIST)} tickers")
+    if budget_seconds:
+        print(f"  Time budget: {budget_seconds // 60:.0f} min (will exit cleanly after)")
     print("=" * 50)
 
     print("\nTraining AI model…")
     model = train_model()
     print("Model ready.\n")
+
+    _start = time.monotonic()
 
     # ── Dedup state is persisted to disk (scanner_state.json) so a process
     # restart mid-session does not defeat the once-per-calendar-day gate and
@@ -334,6 +343,10 @@ def main():
         _brief_sent_date = _trace.load_scanner_state().get("brief_sent_date")
 
     while True:
+        if budget_seconds is not None and (time.monotonic() - _start) >= budget_seconds:
+            print(f"[{datetime.now().strftime('%H:%M')}] Time budget reached — exiting cleanly.")
+            return
+
         if markets_open():
             # ── Morning brief — once per calendar day when ASX is open ──
             asx_open, _ = _market_open(ASX_TZ, 10, 0, 16, 0)
@@ -360,10 +373,25 @@ def main():
                 print(f"  Morning brief {'sent ✅' if ok else 'failed ⚠️  (Discord unreachable)'}")
 
             wrap_run_scan(run_scan)(model)
-            print(f"Next scan in {SCAN_INTERVAL_SECONDS // 60} min.\n")
-            time.sleep(SCAN_INTERVAL_SECONDS)
+
+            if budget_seconds is not None:
+                remaining = budget_seconds - (time.monotonic() - _start)
+                if remaining <= 0:
+                    print(f"[{datetime.now().strftime('%H:%M')}] Time budget reached — exiting cleanly.")
+                    return
+                sleep_for = min(SCAN_INTERVAL_SECONDS, remaining)
+            else:
+                sleep_for = SCAN_INTERVAL_SECONDS
+            print(f"Next scan in {sleep_for // 60:.0f} min.\n")
+            time.sleep(sleep_for)
         else:
             wait = seconds_until_next_open()
+            if budget_seconds is not None:
+                remaining = budget_seconds - (time.monotonic() - _start)
+                if remaining <= 0:
+                    print(f"[{datetime.now().strftime('%H:%M')}] Time budget reached — exiting cleanly.")
+                    return
+                wait = min(wait, remaining)
             wake = datetime.now() + timedelta(seconds=wait)
             print(f"[{datetime.now().strftime('%H:%M')}] Markets closed. "
                   f"Sleeping until {wake.strftime('%Y-%m-%d %H:%M')} "
@@ -380,5 +408,14 @@ if __name__ == "__main__":
             run_scan(m)
         else:
             print("Markets closed — skipping scan.")
+    elif "--minutes" in sys.argv:
+        # Bounded continuous-loop mode — scans every SCAN_INTERVAL_SECONDS for
+        # up to N minutes, then exits cleanly. Used by GitHub Actions so a
+        # single job covers a whole market session instead of depending on
+        # GitHub's cron scheduler to fire reliably every hour (it does not,
+        # under load — see market_open scheduling notes).
+        _idx = sys.argv.index("--minutes")
+        _n_minutes = float(sys.argv[_idx + 1])
+        main(budget_seconds=_n_minutes * 60)
     else:
         main()

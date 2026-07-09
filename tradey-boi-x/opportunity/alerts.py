@@ -11,8 +11,35 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+from datetime import datetime, timedelta
+
+import pytz
 
 from opportunity.config import ENABLE_ENHANCED_ALERTS
+
+_AEST = pytz.timezone("Australia/Sydney")
+
+
+def _recommended_buy_time_str(ticker: str) -> str:
+    """Exact next-actionable buy timestamp (date + time, AEST) for a ticker,
+    mirroring the logic in engine.py so both alert types never disagree.
+    Returns 'now' phrasing while the relevant market is open, else the exact
+    next open timestamp (skipping weekends)."""
+    is_asx = ticker.endswith(".AX")
+    now = datetime.now(_AEST)
+    h, wd = now.hour, now.weekday()
+    mkt_open = (is_asx and 10 <= h < 16 and wd < 5) or (not is_asx and (h >= 23 or h < 6) and wd < 5)
+
+    if mkt_open:
+        return f"NOW — {now.strftime('%a %d %b %Y, %I:%M %p AEST')} (market is open)"
+
+    open_hour, open_min = (10, 0) if is_asx else (23, 30)
+    candidate = now.replace(hour=open_hour, minute=open_min, second=0, microsecond=0)
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate += timedelta(days=1)
+    return candidate.strftime("%a %d %b %Y, %I:%M %p AEST")
 
 _RISK_EMOJI: dict[str, str] = {
     "LOW":    "🟢",
@@ -65,6 +92,7 @@ def format_opportunity_alert(opp: dict) -> str:
         f"**Opportunity Score:** {score:.0f}/100  |  **Confidence:** {conf:.0f}%",
         f"**Expected Return:** +{upside:.1f}%  |  "
         f"**Risk:** {risk_em} {risk}  |  **R:R** {rr:.2f}:1",
+        f"📅 **Recommended Buy Time:** {_recommended_buy_time_str(ticker)}",
         "",
         f"**Entry Zone:**    ${entry[0]:.3f} – ${entry[1]:.3f}",
         f"**Stop Loss:**     ${stop:.3f}  (-{dn_pct:.1f}%)",
