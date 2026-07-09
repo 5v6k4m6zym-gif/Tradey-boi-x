@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from market_open import (
     analyse_market, build_market_report, send_discord, _rating,
 )
-from engine import WATCHLIST, get_data, train_model, decide
+from engine import WATCHLIST, get_data, train_model, decide, explain_filter_plain
 
 TOP_N = 5
 
@@ -58,7 +58,8 @@ def _why_not_flagged(ticker: str, df, model) -> str:
     if result["signal"] == "GATED":
         failed = [name for name, ok in result.get("filters", []) if not ok]
         if failed:
-            return f"❌ Blocked by filter: {failed[0]}"
+            return (f"❌ Blocked by filter: {failed[0]}\n"
+                     f"    → Why that's a bad buy: {explain_filter_plain(failed[0])}")
         return "❌ Blocked by a safety filter"
 
     # Passed filters but scored too low for STRONG BUY/ELITE

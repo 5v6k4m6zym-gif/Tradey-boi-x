@@ -855,6 +855,64 @@ def position_size_pct(atr_pct: float, account_risk_pct: float = 1.0,
     size_pct = (account_risk_pct / stop_loss_pct) * 100
     return min(size_pct, max_position_pct)
 
+_FILTER_EXPLANATIONS = [
+    ("Enough data",
+     "There isn't enough price history yet to analyse this stock reliably."),
+    ("VIX fear index safe",
+     "Overall market fear (VIX) is high right now — when fear is elevated, prices swing "
+     "unpredictably and even good setups can get whipsawed."),
+    ("Broad market in uptrend",
+     "The overall market is trending down — most stocks drift down with a falling market, "
+     "so the odds are against a new buy even if this one looks fine on its own."),
+    ("Sector ETF in uptrend",
+     "This stock's sector is trending down — stocks usually follow their sector, so buying "
+     "against that trend means fighting the current."),
+    ("Weekly trend confirmed",
+     "The bigger-picture weekly trend isn't bullish yet — a one-day bounce inside a weak "
+     "weekly trend often fizzles out."),
+    ("No earnings within 5 days",
+     "This company reports earnings within the next 5 days — earnings can cause a big, "
+     "random price jump or crash that has nothing to do with the current chart setup."),
+    ("Uptrend: EMA20 > EMA50",
+     "The short-term average price is still below the medium-term average — the stock "
+     "isn't in a confirmed uptrend yet."),
+    ("Confirmed: EMA20 > EMA50 prior day",
+     "The uptrend hasn't held for two days in a row — a single day's flip can just be noise."),
+    ("MACD bullish (diff > 0)",
+     "The MACD momentum indicator is still negative — downward momentum hasn't turned yet."),
+    ("MACD bullish prior day",
+     "Momentum only turned positive very recently and hasn't been confirmed — could be a "
+     "false start."),
+    ("RSI not overbought",
+     "The stock is overbought (RSI too high) — it has already run up a lot and is due for a "
+     "pullback, so buying now risks buying near the top."),
+    ("RSI not oversold",
+     "The stock is deeply oversold (RSI too low) — that usually means it's in a sharp, "
+     "panicky sell-off, which is risky to try to catch."),
+    ("Liquidity (vol ratio",
+     "Trading volume is too thin right now — with fewer buyers/sellers active, it's harder "
+     "to get a fair price and price moves are less trustworthy."),
+    ("Institutional liquidity",
+     "The average daily dollar volume is too low — big investors avoid stocks this thin, "
+     "so the price can be easily moved and harder to exit later."),
+    ("AI probability",
+     "The AI model's confidence that this stock will go up is too low — the odds aren't "
+     "favourable enough for a trade."),
+    ("News sentiment not strongly negative",
+     "Recent news about this stock is negative — bad headlines can keep pressuring the "
+     "price down no matter how good the chart looks."),
+]
+
+
+def explain_filter_plain(filter_name: str) -> str:
+    """Translate a technical filter name into a simple, plain-English reason
+    why failing it makes the stock a bad buy right now."""
+    for prefix, explanation in _FILTER_EXPLANATIONS:
+        if filter_name.startswith(prefix):
+            return explanation
+    return "This didn't meet one of the safety checks used to avoid risky trades."
+
+
 def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     GATED = {"signal": "GATED", "label": "🚫 GATED", "color": "#888",
               "alert": False, "prob": 0.0, "score": 0, "why": [], "filters": [],
