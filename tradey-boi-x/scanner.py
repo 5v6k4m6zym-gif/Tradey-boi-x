@@ -17,6 +17,11 @@ from engine import (
     send_morning_brief,
 )
 try:
+    from market_open import send_open_report as _send_open_report
+    _OPEN_REPORT_AVAILABLE = True
+except ImportError:
+    _OPEN_REPORT_AVAILABLE = False
+try:
     from opportunity import run_opportunity_pass, refresh_regime, wrap_run_scan
     _OPP_AVAILABLE = True
 except ImportError:
@@ -339,8 +344,13 @@ def main(budget_seconds: float | None = None):
     # not touch the (read-only) morning-brief sender's internals or any
     # trading/signal logic. See diagnostics/ for the audit that found this. ──
     _brief_sent_date: str | None = None
+    _asx_report_sent_date: str | None = None
+    _us_report_sent_date:  str | None = None
     if _DIAGNOSTICS_AVAILABLE:
-        _brief_sent_date = _trace.load_scanner_state().get("brief_sent_date")
+        _state = _trace.load_scanner_state()
+        _brief_sent_date      = _state.get("brief_sent_date")
+        _asx_report_sent_date = _state.get("asx_report_sent_date")
+        _us_report_sent_date  = _state.get("us_report_sent_date")
 
     while True:
         if budget_seconds is not None and (time.monotonic() - _start) >= budget_seconds:
@@ -371,6 +381,37 @@ def main(budget_seconds: float | None = None):
                         duplication_flag=False,
                     )
                 print(f"  Morning brief {'sent ✅' if ok else 'failed ⚠️  (Discord unreachable)'}")
+
+            # ── Open reports — once per session, keyed by local market date ──
+            # Fired from inside the scanner loop so they always send at the
+            # actual market open (not hours late via a standalone GH cron job).
+            today_asx = datetime.now(ASX_TZ).strftime("%Y-%m-%d")
+            today_us  = datetime.now(US_TZ).strftime("%Y-%m-%d")
+            us_open,  _ = _market_open(US_TZ, 9, 30, 16, 0)
+
+            if _OPEN_REPORT_AVAILABLE and asx_open and _asx_report_sent_date != today_asx:
+                print(f"[{datetime.now().strftime('%H:%M')}] Sending ASX open report…")
+                ok = _send_open_report("ASX")
+                _asx_report_sent_date = today_asx
+                if _DIAGNOSTICS_AVAILABLE:
+                    _trace.save_scanner_state({
+                        "brief_sent_date": _brief_sent_date,
+                        "asx_report_sent_date": _asx_report_sent_date,
+                        "us_report_sent_date":  _us_report_sent_date,
+                    })
+                print(f"  ASX open report {'sent ✅' if ok else 'failed ⚠️  (Discord unreachable)'}")
+
+            if _OPEN_REPORT_AVAILABLE and us_open and _us_report_sent_date != today_us:
+                print(f"[{datetime.now().strftime('%H:%M')}] Sending US open report…")
+                ok = _send_open_report("US")
+                _us_report_sent_date = today_us
+                if _DIAGNOSTICS_AVAILABLE:
+                    _trace.save_scanner_state({
+                        "brief_sent_date": _brief_sent_date,
+                        "asx_report_sent_date": _asx_report_sent_date,
+                        "us_report_sent_date":  _us_report_sent_date,
+                    })
+                print(f"  US open report {'sent ✅' if ok else 'failed ⚠️  (Discord unreachable)'}")
 
             wrap_run_scan(run_scan)(model)
 

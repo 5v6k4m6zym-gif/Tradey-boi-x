@@ -214,6 +214,16 @@ def send_discord(content: str) -> bool:
         return False
 
 
+def send_open_report(market: str) -> bool:
+    """Send the open report for the given market ('ASX' or 'US') to Discord.
+    Returns True on success. Safe to call from scanner.py at session start."""
+    market   = market.upper()
+    title    = "ASX OPEN REPORT" if market == "ASX" else "US OPEN REPORT"
+    analysis = analyse_market(market)
+    content  = build_market_report(analysis, title)
+    return send_discord(content)
+
+
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 def run():
     if len(sys.argv) < 2 or sys.argv[1].upper() not in ("ASX", "US"):
