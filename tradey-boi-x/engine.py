@@ -1990,12 +1990,14 @@ def _trade_params(ticker: str, result: dict, price: float, df: "pd.DataFrame") -
     tier    = result.get("signal", "WATCH")
     breakout = bool(row.get("breakout", 0))
 
+    # v3 sweep: 15/10/6% targets beat 8/5/3% — PF 1.419→1.556, ExpR +0.205→+0.333R
+    # (peak at 15d hold; wider targets collapse hit rate too fast above 20%)
     if atr_pct >= 3.0:
-        base_target, base_days, vol_label = 0.08,  7, "high-volatility"
+        base_target, base_days, vol_label = 0.15, 12, "high-volatility"
     elif atr_pct >= 1.5:
-        base_target, base_days, vol_label = 0.05, 10, "mid-volatility"
+        base_target, base_days, vol_label = 0.10, 13, "mid-volatility"
     else:
-        base_target, base_days, vol_label = 0.03, 15, "low-volatility"
+        base_target, base_days, vol_label = 0.06, 15, "low-volatility"
 
     t_mult, d_mult = 1.0, 1.0
     # v3 sweep: ELITE 1.25× target multiplier removed — with tight stops it made
