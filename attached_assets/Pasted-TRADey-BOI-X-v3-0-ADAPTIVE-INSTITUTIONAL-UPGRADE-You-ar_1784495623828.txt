@@ -1,0 +1,333 @@
+TRADey BOI X v3.0 – ADAPTIVE INSTITUTIONAL UPGRADE
+
+You are acting as the lead quantitative engineer for Tradey Boi X.
+
+CRITICAL RULES
+
+* Preserve all existing working functionality.
+* Do NOT remove or break alerting, scanning, logging, scheduling, or existing AI components.
+* Back up every file before modification.
+* Create a new git branch: feature/v3-adaptive-intelligence
+* All new features must be modular and configurable with feature flags.
+* No placeholder code. Everything must run and be tested.
+
+====================================================
+PHASE 1 – IMPLEMENT NEW FEATURES
+
+1. MARKET REGIME DETECTION
+    Create a regime classifier that labels the market as:
+
+* Strong Bull
+* Weak Bull
+* Sideways
+* Weak Bear
+* Strong Bear
+* High Volatility
+* Low Volatility
+
+Use:
+
+* ASX200 trend
+* 50/200 EMA alignment
+* ADX
+* ATR percentile
+* VIX equivalent if available
+* Breadth (advancers/decliners)
+
+The regime must dynamically adjust:
+
+* minimum confidence threshold
+* stop loss multiplier
+* profit target logic
+* position sizing
+* number of filters required for a valid trade
+
+====================================================
+
+2. MULTI-BAGGER DETECTION ENGINE (USER REQUEST)
+    The bot must NO LONGER limit itself to setups with expected returns of 10% or less.
+
+Create upside categories:
+
+* 5–10%
+* 10–20%
+* 20–40%
+* 40%+
+
+Detect explosive setups using:
+
+* long consolidation breakouts (30–180 days)
+* volume expansion >2x average
+* relative strength vs ASX200
+* earnings/revenue acceleration
+* insider buying
+* sector leadership
+* institutional accumulation
+* momentum continuation patterns
+* ATR expansion after compression
+
+The AI must estimate:
+
+* expected upside range
+* probability of reaching that range
+* historical win rate of similar setups
+* expected holding period
+
+====================================================
+
+3. OPPORTUNITY RANKING ENGINE
+    Rank every valid setup by:
+
+* quality score
+* expected return
+* risk/reward
+* regime alignment
+* historical expectancy
+* liquidity score
+* news sentiment
+
+Only alert the TOP 3 opportunities.
+If no setup exceeds the elite threshold, output:
+“NO ELITE SETUPS – HOLD CASH”.
+
+====================================================
+
+4. AI TRADE QUALITY SCORE (0–100)
+    Create a weighted scoring model using:
+
+* trend quality
+* volume confirmation
+* volatility structure
+* breakout quality
+* sector strength
+* fundamentals
+* news sentiment
+* insider activity
+* historical pattern performance
+* regime alignment
+
+Default elite threshold: 92/100
+
+====================================================
+
+5. SIMILAR TRADE MEMORY
+    Build a pattern-memory database that stores completed trades and retrieves the most similar historical setups.
+
+For each new trade show:
+
+* number of similar trades
+* historical win rate
+* average return
+* max drawdown
+* average hold time
+* expectancy
+
+====================================================
+
+6. DYNAMIC EXIT ENGINE
+    Replace fixed profit targets with adaptive management:
+
+* trailing ATR stop
+* structure-based stop
+* partial profit at 1R and 2R
+* runner position for exceptional trends
+* exit on momentum deterioration
+* exit on regime change against the trade
+
+====================================================
+
+7. CONFIDENCE CALIBRATION
+    Implement probability calibration:
+
+* compare predicted confidence vs actual outcomes
+* calculate Brier score
+* apply isotonic or Platt calibration
+* produce reliability charts
+
+====================================================
+
+8. SELF-REVIEW ENGINE
+    After each closed trade generate a review:
+
+* why the trade won/lost
+* which filters helped
+* which filters hurt
+* suggested parameter changes
+* confidence calibration impact
+
+IMPORTANT:
+
+* suggestions are LOGGED ONLY
+* the live strategy must NEVER auto-modify itself
+
+====================================================
+
+9. PORTFOLIO RISK MANAGER
+    Prevent overexposure by:
+
+* sector limits
+* correlation limits
+* max portfolio heat
+* max simultaneous high-beta positions
+* liquidity checks
+* earnings-event exposure control
+
+====================================================
+
+10. EXECUTIVE DASHBOARD
+    Create a dashboard showing:
+
+* market health score
+* current regime
+* volatility state
+* number of elite setups
+* top ranked opportunity
+* portfolio exposure
+* open positions
+* weekly/monthly performance
+* current calibrated edge
+* rolling profit factor
+* rolling Sharpe ratio
+* max drawdown
+
+====================================================
+PHASE 2 – FULL SYSTEM TESTING
+
+Run a COMPLETE historical backtest:
+
+* ASX universe
+* minimum 10 years if data available
+* include delisted stocks if possible
+* realistic slippage and commissions
+* no look-ahead bias
+* no survivorship bias where data allows
+
+Output:
+
+* win rate
+* profit factor
+* CAGR
+* Sharpe ratio
+* Sortino ratio
+* max drawdown
+* average trade
+* expectancy
+* exposure %
+* average hold time
+* consecutive losses
+* yearly returns table
+
+====================================================
+
+PHASE 3 – FORWARD VALIDATION
+
+Run walk-forward testing:
+
+* train on rolling 3-year windows
+* test on the following 6 months
+* repeat across the full dataset
+
+Generate:
+
+* out-of-sample profit factor
+* parameter stability analysis
+* degradation report
+* overfitting score
+
+====================================================
+
+PHASE 4 – MONTE CARLO STRESS TEST
+
+Run 10,000 simulations using randomized trade sequences.
+
+Report:
+
+* probability of profit
+* probability of 10%, 20%, 30% drawdowns
+* expected annual return distribution
+* worst-case 95% drawdown
+* risk of ruin
+* confidence intervals for CAGR and profit factor
+
+====================================================
+
+PHASE 5 – SYSTEM AUDIT
+
+Perform a full audit:
+
+* scan for broken imports
+* scheduler issues
+* duplicate morning evaluations
+* alert duplication
+* memory leaks
+* race conditions
+* API retry handling
+* stale cache problems
+* incorrect timezone handling (Australia/Brisbane)
+* logging failures
+* database integrity
+
+Automatically fix any issues found and rerun affected tests.
+
+====================================================
+
+PHASE 6 – ACCEPTANCE GATES
+
+The upgrade is ONLY accepted if:
+
+* all tests pass
+* alerts still fire correctly
+* duplicate alerts are eliminated
+* backtest completes successfully
+* forward validation completes successfully
+* Monte Carlo completes successfully
+* calibrated confidence improves reliability
+* profit factor is NOT worse than the previous production baseline
+* no critical audit issues remain
+
+If profit factor is worse, automatically revert strategy changes while keeping instrumentation and analytics improvements.
+
+====================================================
+
+PHASE 7 – REPORTING
+
+Generate:
+
+1. V3_UPGRADE_REPORT.md
+2. BACKTEST_RESULTS.md
+3. FORWARD_VALIDATION.md
+4. MONTE_CARLO_REPORT.md
+5. SYSTEM_AUDIT.md
+6. CHANGELOG.md
+
+Include before/after comparison tables against the current production version.
+
+====================================================
+
+PHASE 8 – GITHUB DEPLOYMENT
+
+After all acceptance gates pass:
+
+* git add .
+* git commit -m “Tradey Boi X v3.0 – Adaptive Institutional Upgrade”
+* git push origin feature/v3-adaptive-intelligence
+
+Then open a pull request with a summary of:
+
+* features added
+* test results
+* performance comparison
+* audit fixes
+* deployment notes
+
+Finally, print a concise deployment summary containing:
+
+* branch name
+* commit hash
+* whether push succeeded
+* new profit factor
+* new win rate
+* new max drawdown
+* whether the system is PRODUCTION READY.
+
+Begin execution now and do not stop until every phase has completed and a final summary has been produced.
