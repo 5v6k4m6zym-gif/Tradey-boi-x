@@ -553,27 +553,79 @@ def market_regime_ok(ticker: str) -> bool:
     index = "^AXJO" if ticker.endswith(".AX") else "SPY"
     return _cached_ema_ok(f"regime_{index}", index, span=50)
 
-REGIME_PROB_FLOOR_ADJ = {
-    "strong_bull": -0.02,
-    "weak_bull":    0.0,
-    "sideways":     0.0,
-    "weak_bear":   +0.03,
-    "strong_bear": +0.06,
-    "high_vol":    +0.05,
+# ─── REGIME SCORE THRESHOLDS ─────────────────────────────────────────────────
+# How many extra/fewer score points are required for ELITE and STRONG BUY tiers
+# depending on the current market regime.
+#
+# Key design note: a regime-adaptive PROBABILITY FLOOR was tested on the full
+# 407-ticker watchlist and regressed every metric (win_rate 40%→38.8%, expectancy
+# +0.034R→+0.007R, profit_factor 1.057→1.012). So prob floors are NOT adjusted.
+# Instead, we raise/lower the SCORE REQUIREMENT: in a strong bull we let slightly
+# lower-scoring setups through (the tide lifts boats); in bear/high-vol we demand
+# more confirmation before alerting.
+#
+# Regime         ELITE req   STRONG BUY req   Rationale
+# strong_bull      7 (−1)       5 (−1)         confirmed uptrend — lower bar
+# low_vol          7 (−1)       5 (−1)         coiled-spring setups break hard
+# weak_bull        8  (0)       6  (0)         baseline (unchanged)
+# sideways         8  (0)       6  (0)         baseline
+# weak_bear        9 (+1)       7 (+1)         more confirmation needed
+# high_vol        10 (+2)       8 (+2)         wide bars = whipsaws; demand conviction
+# strong_bear     11 (+3)       9 (+3)         very few longs qualify; only the best
+REGIME_SCORE_ADJ = {
+    "strong_bull":  -1,
+    "low_vol":      -1,
+    "weak_bull":     0,
+    "sideways":      0,
+    "weak_bear":    +1,
+    "high_vol":     +2,
+    "strong_bear":  +3,
 }
 
-def classify_regime(price: float, ema50: float, ema200: float, mom20: float, vix: float) -> str:
+def classify_regime(
+    price: float,
+    ema50: float,
+    ema200: float,
+    mom20: float,
+    vix: float,
+    adx: float = 0.0,
+    atr_pct: float = 0.0,
+    atr_pct_50th: float = 0.0,
+) -> str:
     """
-    Pure regime classifier (no network calls) — one of: strong_bull, weak_bull,
-    sideways, weak_bear, strong_bear, high_vol. Kept side-effect-free so it can
-    be reused identically by both the live scanner (market_regime()) and the
-    point-in-time backtest, which supplies historical index values for the
-    exact date being evaluated — never a look-ahead value.
+    Pure regime classifier (no network calls).
+
+    Returns one of: strong_bull, weak_bull, sideways, weak_bear, strong_bear,
+    high_vol, low_vol.
+
+    Inputs
+    ------
+    price, ema50, ema200, mom20, vix  — same as before (backward compatible)
+    adx          — Average Directional Index of the broad index (0–100).
+                   ADX < 20 = no trend / ranging. ADX > 25 = trending.
+    atr_pct      — Today's ATR as % of price for the broad index.
+    atr_pct_50th — 50th-percentile (median) ATR% over the last 252 trading
+                   days.  If atr_pct < 70% of the median → low_volatility.
+
+    Kept side-effect-free so it can be reused identically by both the live
+    scanner (market_regime()) and point-in-time backtests.
     """
     if vix >= 25:
         return "high_vol"
+
+    # Low-volatility: ATR compressing well below its own historical median.
+    # Compression often precedes explosive breakouts (coiled-spring), so this
+    # is treated as a mildly bullish/neutral state, NOT a bear signal.
+    if atr_pct_50th > 0 and atr_pct < atr_pct_50th * 0.70:
+        return "low_vol"
+
     if ema200 <= 0:
         ema200 = ema50
+
+    # ADX < 20 and price between the two EMAs → confirmed sideways/ranging
+    if adx > 0 and adx < 20 and ema50 * 0.98 < price < ema50 * 1.02:
+        return "sideways"
+
     if price > ema50 > ema200 and mom20 > 0.03:
         return "strong_bull"
     if price > ema50 and price > ema200:
@@ -584,8 +636,39 @@ def classify_regime(price: float, ema50: float, ema200: float, mom20: float, vix
         return "weak_bear"
     return "sideways"
 
+
+def _compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> float:
+    """Compute the Average Directional Index (ADX) for the last bar."""
+    try:
+        adx_series = ta.trend.ADXIndicator(high, low, close, window=period).adx()
+        return float(adx_series.iloc[-1])
+    except Exception:
+        return 0.0
+
+
+def _compute_atr_pct(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> tuple[float, float]:
+    """
+    Returns (today_atr_pct, median_atr_pct_252d).
+    Both expressed as ATR / close_price * 100.
+    """
+    try:
+        atr_series = ta.volatility.AverageTrueRange(high, low, close, window=period).average_true_range()
+        atr_pct_series = atr_series / close * 100
+        today_pct  = float(atr_pct_series.iloc[-1])
+        window     = atr_pct_series.iloc[-252:] if len(atr_pct_series) >= 252 else atr_pct_series
+        median_pct = float(window.median())
+        return today_pct, median_pct
+    except Exception:
+        return 0.0, 0.0
+
+
 def market_regime(ticker: str) -> str:
-    """Live regime classification for the relevant broad index (cached 1h)."""
+    """
+    Live regime classification for the relevant broad index (cached 1h).
+
+    Now uses ADX + ATR-percentile in addition to EMA alignment and momentum,
+    enabling detection of the new 'low_vol' regime (coiled-spring setups).
+    """
     index = "^AXJO" if ticker.endswith(".AX") else "SPY"
     cache_key = f"full_regime_{index}"
     now = datetime.now().timestamp()
@@ -594,28 +677,40 @@ def market_regime(ticker: str) -> str:
         if now - ts < 3600:
             return result
     try:
-        df = yf.Ticker(index).history(period="1y")
+        df = yf.Ticker(index).history(period="2y")
         if df.empty or len(df) < 60:
             return "sideways"
         close  = df["Close"]
+        high   = df["High"]
+        low    = df["Low"]
         ema50  = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
         ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1]) if len(close) >= 200 else ema50
         price  = float(close.iloc[-1])
         mom20  = float(price / close.iloc[-20] - 1) if len(close) >= 20 else 0.0
         vix    = float(yf.Ticker("^VIX").history(period="5d")["Close"].iloc[-1])
-        regime = classify_regime(price, ema50, ema200, mom20, vix)
+        adx    = _compute_adx(high, low, close)
+        atr_pct, atr_pct_50th = _compute_atr_pct(high, low, close)
+        regime = classify_regime(price, ema50, ema200, mom20, vix, adx, atr_pct, atr_pct_50th)
         _regime_cache[cache_key] = (now, regime)
         return regime
     except Exception:
         return "sideways"
 
+
+def regime_score_thresholds(regime: str) -> tuple[int, int]:
+    """
+    Return (elite_min_score, strong_buy_min_score) for the given regime.
+    Baseline is (8, 6); adjusted up or down by REGIME_SCORE_ADJ.
+    """
+    adj = REGIME_SCORE_ADJ.get(regime, 0)
+    return (8 + adj, 6 + adj)
+
+
 def regime_prob_floor(regime: str, base: float = 0.50) -> float:
-    """Adaptive AI-probability floor for the ELITE/STRONG BUY tiers, scaled by
-    market regime. Favorable regimes keep the existing 50% floor; unfavorable
-    or high-volatility regimes raise it so only higher-conviction setups
-    qualify when conditions are worse. Clamped so it can never override the
-    hard 40% technical-filter floor or exceed a sane ceiling."""
-    return max(0.40, min(0.65, base + REGIME_PROB_FLOOR_ADJ.get(regime, 0.0)))
+    """Kept for backward compatibility — returns the flat 0.50 baseline.
+    A regime-adaptive prob floor was tested and regressed metrics; score
+    thresholds (regime_score_thresholds) are used instead."""
+    return base
 
 def vix_safe() -> bool:
     """True when market fear (VIX) is below 30. High VIX = unreliable signals."""
@@ -997,49 +1092,38 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     # extra data source and can't leak future information.
     expected_r = expected_value_r(row["Close"], row["atr"], prob, bool(row["breakout"]))
 
-    # Market regime — classified for dashboard/monitoring visibility (T002,
-    # institutional-upgrade spec). A regime-adaptive probability floor was
-    # tried here and validated on the full 407-ticker watchlist, but it
-    # REGRESSED every metric vs the flat 0.50 floor (win_rate 40.0%→38.8%,
-    # expectancy +0.034R→+0.007R, profit_factor 1.057→1.012), so the floor
-    # itself was reverted to the flat 0.50 baseline. `regime` is still
-    # computed and surfaced below purely as context (dashboard display /
-    # future use), and does NOT affect the ELITE/STRONG BUY gate.
+    # Market regime — now drives dynamic score thresholds (v3 upgrade).
+    # A regime-adaptive PROBABILITY FLOOR was tested on the full 407-ticker
+    # watchlist and regressed every metric, so prob is NOT adjusted.
+    # Instead, regime shifts the SCORE REQUIREMENT via regime_score_thresholds():
+    #   strong_bull / low_vol  → ELITE ≥7, STRONG BUY ≥5  (coiled spring / tide lifting)
+    #   weak_bull / sideways   → ELITE ≥8, STRONG BUY ≥6  (baseline — unchanged)
+    #   weak_bear              → ELITE ≥9, STRONG BUY ≥7
+    #   high_vol               → ELITE ≥10, STRONG BUY ≥8
+    #   strong_bear            → ELITE ≥11, STRONG BUY ≥9
     regime = market_regime(ticker)
+    elite_min, sb_min = regime_score_thresholds(regime)
 
-    # Smart position sizing (T008, institutional-upgrade spec) — ATR-based
-    # fixed-fractional sizing, surfaced as context for the alert/dashboard.
-    # Purely informational here (does not gate signal/tier); the live sizing
-    # decision is applied downstream wherever the alert is turned into an
-    # actual position.
+    # Smart position sizing — ATR-based fixed-fractional sizing, surfaced as
+    # context for the alert/dashboard. Does not gate signal/tier.
     atr_pct_now = float(row["atr"]) / float(row["Close"]) * 100 if row["Close"] > 0 else 0.0
     pos_size_pct = round(position_size_pct(atr_pct_now), 2)
 
-    # Grade thresholds — only the strongest qualify for an alert
-    # ELITE:      score ≥ 8  AND AI prob ≥ 0.50  AND expected value > 0
-    # STRONG BUY: score ≥ 6  AND AI prob ≥ 0.50  AND expected value > 0
-    # Retuned from the prior 11 / 9&0.70 cutoffs after a 407-ticker out-of-
-    # sample backtest showed those never fired a single signal in ~50k
-    # test-period days. 8&0.50 / 6&0.50 was the best point found: revives
-    # alert volume (n=679 in backtest) while pushing combined expectancy
-    # slightly positive (+0.002R, profit_factor 1.002) — adding the prob≥50%
-    # floor to ELITE (not just score≥8) raised its win rate from 30.6%→34.2%
-    # with only a small drop in signal count — see tests/full_watchlist_backtest.py.
-    # The expected_r > 0 gate (T001, institutional-upgrade spec) additionally
-    # rejects high-prob/high-score setups whose reward:risk is so thin the
-    # expected R-multiple is negative. Validated on the full watchlist before
-    # being kept (win_rate 37.7%→40.0%, expectancy +0.002R→+0.034R).
+    # Grade thresholds — regime-adaptive score requirements (v3), fixed prob floor.
+    # ELITE:      score ≥ elite_min  AND AI prob ≥ 0.50  AND expected value > 0
+    # STRONG BUY: score ≥ sb_min     AND AI prob ≥ 0.50  AND expected value > 0
     # WATCH:      everything else that passed filters — shown on dashboard, never alerted
-    if   score >= 8 and prob >= 0.50 and expected_r > 0:  signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
-    elif score >= 6 and prob >= 0.50 and expected_r > 0:  signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
-    elif score >= 5:                                      signal, label, color, qualifies = "WATCH",      "👀 WATCH",      "#e6a817", False
-    else:                                                 signal, label, color, qualifies = "IGNORE",     "⛔ IGNORE",     "#cc3300", False
+    if   score >= elite_min and prob >= 0.50 and expected_r > 0:  signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
+    elif score >= sb_min    and prob >= 0.50 and expected_r > 0:  signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
+    elif score >= 5:                                              signal, label, color, qualifies = "WATCH",      "👀 WATCH",      "#e6a817", False
+    else:                                                         signal, label, color, qualifies = "IGNORE",     "⛔ IGNORE",     "#cc3300", False
 
     return {"signal": signal, "label": label, "color": color,
             "alert": qualifies and cooldown_ok(ticker),
             "prob": prob, "score": score, "base_score": base_score,
             "expected_r": round(expected_r, 3),
             "regime": regime,
+            "regime_thresholds": {"elite": elite_min, "strong_buy": sb_min},
             "position_size_pct": pos_size_pct,
             "adj": adj, "news": news, "why": why, "filters": filters,
             "rsi": round(float(row["rsi"]), 1)}
