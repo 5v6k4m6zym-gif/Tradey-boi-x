@@ -17,7 +17,7 @@ No swing-setup entry levels here — that's evening_scan.py's job.
 This is purely a market recap.
 """
 
-import os, sys
+import os, sys, json, datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 from market_open import (
@@ -26,6 +26,19 @@ from market_open import (
 from engine import WATCHLIST, get_data, train_model, decide, explain_filter_plain
 
 TOP_N = 5
+
+_LOG_FILE = os.path.join(os.path.dirname(__file__), "signal_log.json")
+
+def _alerted_today(ticker: str) -> bool:
+    """Return True if the scanner actually sent a Discord alert for this ticker today."""
+    today = datetime.date.today().isoformat()
+    try:
+        with open(_LOG_FILE) as f:
+            entries = json.load(f)
+        return any(e.get("ticker") == ticker and e.get("signal_date") == today
+                   for e in entries)
+    except Exception:
+        return False
 
 
 def _market_tickers(market: str) -> list[str]:
@@ -46,14 +59,21 @@ def _today_change(ticker: str) -> tuple[float, object] | None:
 
 
 def _why_not_flagged(ticker: str, df, model) -> str:
-    """Explain, in plain terms, why the AI did or didn't suggest this ticker."""
+    """Explain, in plain terms, why the AI did or didn't send an alert for this ticker."""
     try:
         result = decide(ticker, df, model)
     except Exception as e:
         return f"couldn't evaluate ({e})"
 
-    if result.get("alert"):
-        return f"✅ AI already flagged this — {result['signal']} (score {result['score']}, {result['prob']*100:.0f}% confidence)"
+    # Check the signal log — only say "alerted" if a Discord alert was actually sent today
+    if _alerted_today(ticker):
+        return f"✅ Scanner sent a buy alert for this today — {result['signal']} (score {result['score']}, {result['prob']*100:.0f}% confidence)"
+
+    # Qualifies at close time but was never alerted (conditions developed late in the session,
+    # or it was gated by a filter when the scanner ran earlier)
+    if result["signal"] in ("ELITE", "STRONG BUY") and result.get("alert"):
+        return (f"📊 Rates {result['signal']} at close (score {result['score']}, {result['prob']*100:.0f}% confidence) "
+                f"— conditions developed after today's scans, no alert was sent")
 
     if result["signal"] == "GATED":
         failed = [name for name, ok in result.get("filters", []) if not ok]
