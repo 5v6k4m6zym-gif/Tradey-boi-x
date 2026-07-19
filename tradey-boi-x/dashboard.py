@@ -11,6 +11,9 @@ from engine import (
     decide, send_alert, mark_alerted, log_signal,
     resolve_outcomes, accuracy_stats,
     _load_cooldowns,
+    market_regime, vix_safe,
+    quality_score_100, quality_score_label,
+    rank_opportunities,
 )
 from opportunity.backtester import compute_metrics, _resolved, run_backtest
 from opportunity.config import ENABLE_ADVANCED_BACKTESTS
@@ -23,6 +26,17 @@ def get_data(ticker: str, period: str) -> pd.DataFrame:
 @st.cache_resource(show_spinner="Training model…")
 def train_model():
     return _train_model()
+
+@st.cache_data(ttl=1800, show_spinner="Checking market regime…")
+def _get_market_health():
+    """Fetch regime + VIX once per 30 min for the dashboard header."""
+    try:
+        asx_regime = market_regime("CBA.AX")
+        us_regime  = market_regime("SPY")
+        vix_ok     = vix_safe()
+        return {"asx": asx_regime, "us": us_regime, "vix_ok": vix_ok}
+    except Exception:
+        return {"asx": "sideways", "us": "sideways", "vix_ok": True}
 
 # ─── CHART ────────────────────────────────────────────────────────────────────
 def chart(df: pd.DataFrame, ticker: str) -> go.Figure:
@@ -54,6 +68,26 @@ def chart(df: pd.DataFrame, ticker: str) -> go.Figure:
                       margin=dict(l=0, r=0, t=30, b=0))
     return fig
 
+# ─── REGIME DISPLAY HELPERS ───────────────────────────────────────────────────
+_REGIME_EMOJI = {
+    "strong_bull": "📈 Strong Bull",
+    "weak_bull":   "📊 Weak Bull",
+    "low_vol":     "😴 Low Volatility (coiled)",
+    "sideways":    "↔️  Sideways",
+    "weak_bear":   "📉 Weak Bear",
+    "strong_bear": "🐻 Strong Bear",
+    "high_vol":    "⚡ High Volatility",
+}
+_REGIME_COLOR = {
+    "strong_bull": "green",
+    "weak_bull":   "lightgreen",
+    "low_vol":     "yellow",
+    "sideways":    "orange",
+    "weak_bear":   "salmon",
+    "strong_bear": "red",
+    "high_vol":    "red",
+}
+
 # ─── APP ─────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Tradey Boi X", page_icon="📈", layout="wide")
 st.title("📈 Tradey Boi X")
@@ -61,16 +95,41 @@ st.title("📈 Tradey Boi X")
 all_signals = resolve_outcomes()
 stats       = accuracy_stats(all_signals)
 
+# ── Executive Market Health Banner ────────────────────────────────────────────
+mh = _get_market_health()
+asx_r  = mh["asx"]
+us_r   = mh["us"]
+vix_ok = mh["vix_ok"]
+
+st.markdown("### 🌐 Market Health")
+hc1, hc2, hc3, hc4 = st.columns(4)
+hc1.metric("ASX Regime",   _REGIME_EMOJI.get(asx_r, asx_r),
+           help="Broad market regime for ASX200 (^AXJO) — drives score thresholds")
+hc2.metric("US Regime",    _REGIME_EMOJI.get(us_r, us_r),
+           help="Broad market regime for S&P500 (SPY) — drives score thresholds")
+hc3.metric("VIX Safety",   "✅ Safe (< 30)" if vix_ok else "⚡ Elevated (≥ 30)",
+           help="VIX ≥ 30 gates ALL signals — unreliable environment")
+
+# Regime score threshold hint
+_REGIME_SCORE_ADJ = {"strong_bull": -1, "low_vol": -1, "weak_bull": 0,
+                      "sideways": 0, "weak_bear": +1, "high_vol": +2, "strong_bear": +3}
+us_elite = 8 + _REGIME_SCORE_ADJ.get(us_r, 0)
+asx_elite = 8 + _REGIME_SCORE_ADJ.get(asx_r, 0)
+hc4.metric("ELITE Threshold", f"US: {us_elite}  ·  ASX: {asx_elite}",
+           help="Score needed for ELITE today — regime-adaptive (v3)")
+
+st.divider()
+
 with st.sidebar:
     st.header("Settings")
     selected = st.selectbox("Stock", WATCHLIST)
     period   = st.selectbox("Period", ["3mo", "6mo", "1y", "2y"], index=1)
     st.divider()
-    run_scan = st.button("🔍 Scan Now", use_container_width=True)
+    run_scan = st.button("🔍 Scan Now (Ranked)", use_container_width=True)
     st.divider()
     st.caption(f"**Prediction window:** {PREDICTION_DAYS} trading days")
     st.caption(f"**Target:** +{TARGET_RETURN*100:.0f}% return")
-    st.caption("**Alert tiers:** ELITE (≥11) · STRONG BUY (≥8)")
+    st.caption("**Alert tiers:** ELITE · STRONG BUY (regime-adaptive v3)")
     st.caption(f"Cooldown: {COOLDOWN_HOURS}h · Max alerts/scan: {MAX_ALERTS}")
     st.caption("Discord: " + ("✅ Connected" if DISCORD else "❌ Set `Discordwebhook` secret"))
     st.divider()
@@ -95,22 +154,40 @@ else:
     row = df.iloc[-1]
     chg = (row["Close"] - df["Close"].iloc[-2]) / df["Close"].iloc[-2] * 100
 
+    q      = res.get("quality_score", quality_score_100(res))
+    qlabel = quality_score_label(q)
+
     c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-    c1.metric("Price",     f"${row['Close']:.2f}", f"{chg:+.2f}%")
-    c2.metric("AI Prob",   f"{res['prob']*100:.1f}%")
-    c3.metric("RSI",       f"{row['rsi']:.1f}")
-    c4.metric("MACD",      f"{row['macd_diff']:.4f}")
-    c5.metric("Vol Ratio", f"{row['vol_ratio']:.2f}×")
-    c6.metric("Score",     f"{res['score']}/14")
-    c7.metric("Regime",    res["regime"], help="Informational only — does not gate alerts")
+    c1.metric("Price",         f"${row['Close']:.2f}", f"{chg:+.2f}%")
+    c2.metric("AI Confidence", f"{res['prob']*100:.1f}%")
+    c3.metric("RSI",           f"{row['rsi']:.1f}")
+    c4.metric("Vol Ratio",     f"{row['vol_ratio']:.2f}×")
+    c5.metric("Quality Score", f"{q}/100",
+              help=f"{qlabel} — 0-100 composite score (v3): AI conf + score + regime + breakout + multi-bagger + news")
+    c6.metric("Regime",        _REGIME_EMOJI.get(res["regime"], res["regime"]),
+              help=f"Score threshold today: ELITE ≥{res['regime_thresholds']['elite']}  ·  STRONG BUY ≥{res['regime_thresholds']['strong_buy']}")
+    c7.metric("Expected R",    f"{res.get('expected_r', 0):.2f}R",
+              help="Expected R-multiple (reward:risk). Must be > 0 for an alert.")
 
     st.markdown(
         f"### <span style='color:{res['color']}'>{res['label']}</span>"
         + (f" &nbsp;<span style='color:gray;font-size:0.8em'>"
-           f"⏱ {PREDICTION_DAYS}-day window · 🎯 +{TARGET_RETURN*100:.0f}% target</span>"
+           f"⏱ {PREDICTION_DAYS}-day window · 🎯 +{TARGET_RETURN*100:.0f}% target"
+           f" · Quality {q}/100 {qlabel}</span>"
            if res["signal"] not in ("GATED", "IGNORE") else ""),
         unsafe_allow_html=True,
     )
+
+    # Multi-bagger callout
+    mb = res.get("multibagger", {})
+    if mb:
+        st.success(
+            f"🚀 **Multi-bagger setup detected** — {mb.get('consolidation_days')}d base  ·  "
+            f"{mb.get('vol_expansion', 0):.1f}× volume  ·  "
+            f"**{mb.get('upside_category', '')} measured-move target**  ·  "
+            f"est. hold {mb.get('holding_period_days', '?')}d  ·  "
+            f"range {mb.get('range_pct', 0):.1f}% tight"
+        )
 
     if res["alert"]:
         if st.button(f"📣 Send Discord Alert — {selected}"):
@@ -135,7 +212,7 @@ else:
         for name, passed in res["filters"]:
             st.write(("✅ " if passed else "❌ ") + name)
         if res["signal"] != "GATED":
-            st.write("**Score**")
+            st.write("**Score breakdown (raw)**")
             for pts, name, met in [
                 (3, "AI prob ≥ 80%",        res["prob"] >= 0.80),
                 (2, "AI prob ≥ 70%",        0.70 <= res["prob"] < 0.80),
@@ -147,6 +224,13 @@ else:
                 (1, "EMA uptrend",          row["ema20"] > row["ema50"]),
             ]:
                 st.write(f"{'✅' if met else '—'} `{'+'if met else ' '}{pts if met else 0}` {name}")
+            st.write(f"**Regime:** {_REGIME_EMOJI.get(res['regime'], res['regime'])}  |  "
+                     f"ELITE threshold: **{res['regime_thresholds']['elite']}**  ·  "
+                     f"STRONG BUY threshold: **{res['regime_thresholds']['strong_buy']}**")
+            if mb:
+                st.write(f"**Multi-bagger:** {mb.get('consolidation_days')}d base · "
+                         f"{mb.get('upside_category','')} target · "
+                         f"score bonus +{2 if mb.get('consolidation_days', 0) >= 60 else 1}")
 
 # ── Signal history ────────────────────────────────────────────────────────────
 if all_signals:
@@ -214,12 +298,14 @@ with st.expander("🏛️ Institutional Metrics"):
         else:
             st.caption("Not enough resolved trades yet for Monte Carlo resampling.")
 
-# ── Watchlist scan ────────────────────────────────────────────────────────────
+# ── Watchlist scan (ranked — v3) ───────────────────────────────────────────────
 if run_scan:
     st.divider()
-    st.subheader("🔍 Scan Results")
-    rows, fired, prog = [], 0, st.progress(0)
+    st.subheader("🔍 Scan Results — Ranked by Quality")
+    rows, prog = [], st.progress(0)
+    candidates = []
 
+    # Pass 1: collect all data + decisions
     for i, ticker in enumerate(WATCHLIST):
         try:
             d  = get_data(ticker, "6mo")
@@ -227,37 +313,60 @@ if run_scan:
                 continue
             r  = decide(ticker, d, model)
             ll = d.iloc[-1]
-            alerted = False
-
-            if r["alert"] and fired < MAX_ALERTS:
-                alerted = send_alert(ticker, r, ll["Close"])
-                if alerted:
-                    mark_alerted(ticker)
-                    log_signal(ticker, ll["Close"], r["signal"])
-                fired += 1
+            q  = r.get("quality_score", quality_score_100(r))
+            mb = r.get("multibagger", {})
 
             rows.append({
-                "Ticker":   ticker,
-                "Price":    round(ll["Close"], 2),
-                "AI %":     f"{r['prob']*100:.1f}%",
-                "RSI":      round(ll["rsi"], 1),
-                "Vol ×":    round(ll["vol_ratio"], 2),
-                "Breakout": "✅" if ll["breakout"] else "—",
-                "Score":    r["score"] if r["signal"] != "GATED" else "—",
-                "Signal":   r["label"],
-                "Alert":    "📣" if alerted else (
-                            "⏳" if r["signal"] in ("ELITE", "STRONG BUY") and not r["alert"] else "—"),
+                "Ticker":    ticker,
+                "Price":     round(ll["Close"], 2),
+                "Quality":   q if r["signal"] != "GATED" else "—",
+                "AI %":      f"{r['prob']*100:.1f}%",
+                "RSI":       round(ll["rsi"], 1),
+                "Vol ×":     round(ll["vol_ratio"], 2),
+                "Regime":    r.get("regime", "—"),
+                "Multi-bag": f"🚀 {mb.get('upside_category','')} ({mb.get('consolidation_days')}d)" if mb else "—",
+                "Signal":    r["label"],
+                "Alert":     "—",
+                "_score":    r["score"] if r["signal"] != "GATED" else -1,
+                "_q":        q,
             })
+
+            if r["alert"]:
+                candidates.append({"ticker": ticker, "res": r, "price": float(ll["Close"]),
+                                   "df": d, "group_id": None})
         except Exception:
             pass
         prog.progress((i + 1) / len(WATCHLIST))
 
+    # Pass 2: rank and alert top MAX_ALERTS
+    ranked = rank_opportunities(candidates)
+    fired  = 0
+    alerted_tickers = set()
+    for c in ranked:
+        if fired >= MAX_ALERTS:
+            break
+        alerted = send_alert(c["ticker"], c["res"], c["price"])
+        if alerted:
+            mark_alerted(c["ticker"])
+            log_signal(c["ticker"], c["price"], c["res"]["signal"])
+            alerted_tickers.add(c["ticker"])
+            fired += 1
+
+    # Mark alerts in rows
+    for row_d in rows:
+        if row_d["Ticker"] in alerted_tickers:
+            row_d["Alert"] = "📣 Sent"
+        elif row_d.get("_score", -1) > 0 and row_d["Signal"] not in ("🚫 GATED", "⛔ IGNORE"):
+            row_d["Alert"] = "⏳ Qualified"
+
     prog.empty()
     if rows:
-        out = pd.DataFrame(rows)
-        out["_s"] = out["Score"].apply(lambda v: v if isinstance(v, int) else -1)
-        st.dataframe(out.sort_values("_s", ascending=False)
-                        .drop(columns="_s").reset_index(drop=True),
+        out = pd.DataFrame(rows).drop(columns=["_score", "_q"])
+        st.dataframe(out.sort_values("Quality", ascending=False,
+                                      key=lambda s: pd.to_numeric(s, errors="coerce").fillna(-1))
+                        .reset_index(drop=True),
                      use_container_width=True)
-        if fired >= MAX_ALERTS:
-            st.caption(f"Alert cap ({MAX_ALERTS}) reached — lower-ranked signals suppressed.")
+        if fired == 0:
+            st.warning("⛔ No ELITE or STRONG BUY setups found — conditions don't meet quality bar right now. Hold cash.")
+        else:
+            st.caption(f"Alerted {fired}/{MAX_ALERTS} ranked candidates.")

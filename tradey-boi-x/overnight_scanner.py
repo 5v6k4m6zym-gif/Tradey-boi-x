@@ -298,10 +298,16 @@ def run_overnight_scan(model) -> int:
                     mark_alerted(ticker)
                     log_signal(ticker, price, res["signal"],
                                score=res.get("score", 0),
-                               prob=res.get("prob", 0.0))
+                               prob=res.get("prob", 0.0),
+                               features={
+                                   "regime":        res.get("regime", ""),
+                                   "quality_score": res.get("quality_score", 0),
+                                   "rsi":           res.get("rsi", 0),
+                                   "multibagger":   bool(res.get("multibagger")),
+                               })
                     if group_id is not None:
                         alerted_groups.add(group_id)
-                    print(f"  ✅ {ticker}: {res['label']} (score {res['score']}/14)")
+                    print(f"  ✅ {ticker}: {res['label']} (quality {res.get('quality_score',0)}/100)")
                     fired += 1
             else:
                 mover = big_mover_check(ticker, df, model=model)

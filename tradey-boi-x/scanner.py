@@ -14,7 +14,8 @@ from engine import (
     get_data, train_model, decide, send_alert,
     log_signal, mark_alerted, update_ticker_performance,
     big_mover_check, send_mover_alert, resolve_outcomes,
-    send_morning_brief,
+    send_morning_brief, rank_opportunities, send_no_elite_setups_alert,
+    market_regime,
 )
 try:
     from market_open import send_open_report as _send_open_report
@@ -123,9 +124,110 @@ def _corr_group(ticker: str) -> int | None:
     return None
 
 
+def _apply_alert_filters(ticker: str, res: dict, price: float, df) -> bool:
+    """
+    Run all additive filter layers (trade evaluator, adaptive core, strategy
+    optimiser, audit engine) for a single candidate.
+
+    Returns True if the alert should proceed, False if any live (non-shadow)
+    layer rejects it. The audit engine always runs regardless of the return
+    value — it is logging-only and never gates.
+    """
+    if ENABLE_TRADE_EVALUATOR:
+        try:
+            params = engine._trade_params(ticker, res, price, df)
+            trade  = {
+                "ticker":      ticker,
+                "direction":   "LONG",
+                "entry":       price,
+                "stop_loss":   params["stop_loss"],
+                "take_profit": params["target_price"],
+                "probability": res.get("prob", 0.0),
+                "expected_r":  res.get("expected_r"),
+            }
+            approved = process_trade_signal(trade, df)
+            if not SHADOW_MODE and approved is None:
+                print(f"  🧪 {ticker}: rejected by trade evaluator")
+                return False
+        except Exception as _te:
+            print(f"  ⚠️  {ticker}: trade evaluator error ({_te}) — proceeding")
+
+    if ENABLE_ADAPTIVE_CORE:
+        try:
+            params = engine._trade_params(ticker, res, price, df)
+            trade  = {
+                "ticker":      ticker,
+                "direction":   "LONG",
+                "entry":       price,
+                "stop_loss":   params["stop_loss"],
+                "take_profit": params["target_price"],
+                "probability": res.get("prob", 0.0),
+                "expected_r":  res.get("expected_r"),
+            }
+            adaptive_approved = process_adaptive_trade_signal(trade, df)
+            if not SHADOW_MODE and adaptive_approved is None:
+                print(f"  🧬 {ticker}: rejected by adaptive core")
+                return False
+        except Exception as _ac:
+            print(f"  ⚠️  {ticker}: adaptive core error ({_ac}) — proceeding")
+
+    if ENABLE_STRATEGY_OPTIMIZER:
+        try:
+            params = engine._trade_params(ticker, res, price, df)
+            trade  = {
+                "ticker":      ticker,
+                "direction":   "LONG",
+                "entry":       price,
+                "stop_loss":   params["stop_loss"],
+                "take_profit": params["target_price"],
+                "probability": res.get("prob", 0.0),
+                "expected_r":  res.get("expected_r"),
+                "why":         res.get("why", []),
+                "rsi":         res.get("rsi"),
+                "edge_score":  res.get("prob", 0.0),
+            }
+            strategy_approved = process_strategy_signal(trade, df)
+            if not SHADOW_MODE and strategy_approved is None:
+                print(f"  🧭 {ticker}: rejected by strategy optimiser")
+                return False
+        except Exception as _so:
+            print(f"  ⚠️  {ticker}: strategy optimiser error ({_so}) — proceeding")
+
+    if ENABLE_AUDIT_ENGINE:
+        try:
+            params = engine._trade_params(ticker, res, price, df)
+            trade  = {
+                "ticker":      ticker,
+                "direction":   "LONG",
+                "entry":       price,
+                "stop_loss":   params["stop_loss"],
+                "take_profit": params["target_price"],
+                "probability": res.get("prob", 0.0),
+                "expected_r":  res.get("expected_r"),
+            }
+            audit_trade(trade, df)
+        except Exception as _ae:
+            print(f"  ⚠️  {ticker}: audit engine error ({_ae}) — proceeding")
+
+    return True
+
+
 def run_scan(model) -> int:
-    # Grade any signals whose hold period has now elapsed, so the next
-    # train_model() call can use those outcomes as feedback weights.
+    """
+    Two-pass scan with Opportunity Ranking (v3):
+
+    Pass 1 — collect all qualifying candidates without alerting, run big-mover
+             checks on non-qualifying tickers, gather _scan_data for the
+             opportunity engine second pass.
+
+    Pass 2 — rank all candidates by composite quality score (ELITE tier +
+             decide() score + AI prob + expected-R + multi-bagger bonus),
+             apply the additive filter layers in ranked order, and alert the
+             top MAX_ALERTS setups. This ensures the BEST opportunities are
+             alerted, not just the first ones found in watchlist order.
+
+    Returns the number of alerts actually sent.
+    """
     try:
         entries  = resolve_outcomes()
         resolved = [e for e in entries if e.get("outcome")]
@@ -139,10 +241,11 @@ def run_scan(model) -> int:
         print(f"  ⚠️  resolve_outcomes error: {_e}")
 
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Scanning {len(WATCHLIST)} tickers…")
-    fired          = 0
-    alerted_groups: set = set()   # correlation guard — one alert per group per scan
-    _scan_data: list = []          # collected for opportunity second-pass (no extra API calls)
 
+    candidates: list = []   # will be ranked before alerting
+    _scan_data: list = []   # for opportunity engine second-pass
+
+    # ── Pass 1: collect all qualifying candidates ────────────────────────────
     for ticker in WATCHLIST:
         try:
             df  = get_data(ticker, "6mo")
@@ -151,163 +254,86 @@ def run_scan(model) -> int:
             _scan_data.append((ticker, df))
             res = decide(ticker, df, model)
 
-            if res["alert"] and fired < MAX_ALERTS:
-                # Correlation guard — skip if a correlated ticker already alerted this scan
+            if res["alert"]:
+                price    = float(df.iloc[-1]["Close"])
                 group_id = _corr_group(ticker)
-                if group_id is not None and group_id in alerted_groups:
-                    print(f"  ⏭ {ticker}: correlation guard — similar ticker already alerted")
-                    continue
-
-                price = float(df.iloc[-1]["Close"])
-
-                # ── Trade Evaluation & Filtering Layer (Phase 8) ──────────
-                # Purely additive: computes Edge/Predictability/Noise/RR and
-                # logs the decision to logs/trade_evaluations.jsonl. Never
-                # touches the prediction model or send_alert() itself.
-                # LIVE as of 2026-07-03 (SHADOW_MODE=False in config.py,
-                #   validated via full-pipeline replay — see
-                #   .agents/memory/tradey-boi-x-persistent-cache.md): an
-                #   alert is skipped here if the evaluator explicitly
-                #   rejects it (score/RR/noise fail); send_alert() itself
-                #   is never modified.
-                # SHADOW_MODE=True: logs only, existing alert flow is
-                #   completely unaffected — safe fallback if ever reverted.
-                if ENABLE_TRADE_EVALUATOR:
-                    try:
-                        params = engine._trade_params(ticker, res, price, df)
-                        trade  = {
-                            "ticker":      ticker,
-                            "direction":   "LONG",
-                            "entry":       price,
-                            "stop_loss":   params["stop_loss"],
-                            "take_profit": params["target_price"],
-                            "probability": res.get("prob", 0.0),
-                            "expected_r":  res.get("expected_r"),
-                        }
-                        approved = process_trade_signal(trade, df)
-                        if not SHADOW_MODE and approved is None:
-                            print(f"  🧪 {ticker}: rejected by trade evaluator (see logs/trade_evaluations.jsonl)")
-                            continue
-                    except Exception as _te:
-                        print(f"  ⚠️  {ticker}: trade evaluator error ({_te}) — proceeding unaffected")
-
-                # ── Adaptive Trading Core v4 (stacked ABOVE Phase 8) ──────
-                # Purely additive: regime-aware thresholds, execution-quality
-                # filter, calibration, bounded dynamic sizing, expectancy
-                # gate. Logs to logs/adaptive_core_decisions.jsonl. Shares
-                # the same SHADOW_MODE switch as Phase 8. LIVE as of
-                # 2026-07-03 (ENABLE_ADAPTIVE_CORE=True, SHADOW_MODE=False
-                # in config.py, validated via full-pipeline replay — see
-                # .agents/memory/tradey-boi-x-persistent-cache.md).
-                if ENABLE_ADAPTIVE_CORE:
-                    try:
-                        params = engine._trade_params(ticker, res, price, df)
-                        trade  = {
-                            "ticker":      ticker,
-                            "direction":   "LONG",
-                            "entry":       price,
-                            "stop_loss":   params["stop_loss"],
-                            "take_profit": params["target_price"],
-                            "probability": res.get("prob", 0.0),
-                            "expected_r":  res.get("expected_r"),
-                        }
-                        adaptive_approved = process_adaptive_trade_signal(trade, df)
-                        if not SHADOW_MODE and adaptive_approved is None:
-                            print(f"  🧬 {ticker}: rejected by adaptive core (see logs/adaptive_core_decisions.jsonl)")
-                            continue
-                    except Exception as _ac:
-                        print(f"  ⚠️  {ticker}: adaptive core error ({_ac}) — proceeding unaffected")
-
-                # ── Self-Optimising Strategy Engine (SAFE MODE) ───────────
-                # Purely additive: tags the trade with an inferred strategy
-                # type, checks it against the regime-strategy map and its own
-                # bounded weight/expectancy track record. Logs to
-                # logs/strategy_optimizer_decisions.jsonl. Shares the same
-                # SHADOW_MODE switch as the other layers. LIVE as of
-                # 2026-07-03 (ENABLE_STRATEGY_OPTIMIZER=True, SHADOW_MODE=
-                # False in config.py, validated via full-pipeline replay —
-                # see .agents/memory/tradey-boi-x-persistent-cache.md).
-                if ENABLE_STRATEGY_OPTIMIZER:
-                    try:
-                        params = engine._trade_params(ticker, res, price, df)
-                        trade  = {
-                            "ticker":      ticker,
-                            "direction":   "LONG",
-                            "entry":       price,
-                            "stop_loss":   params["stop_loss"],
-                            "take_profit": params["target_price"],
-                            "probability": res.get("prob", 0.0),
-                            "expected_r":  res.get("expected_r"),
-                            "why":         res.get("why", []),
-                            "rsi":         res.get("rsi"),
-                            "edge_score":  res.get("prob", 0.0),
-                        }
-                        strategy_approved = process_strategy_signal(trade, df)
-                        if not SHADOW_MODE and strategy_approved is None:
-                            print(f"  🧭 {ticker}: rejected by strategy optimiser (see logs/strategy_optimizer_decisions.jsonl)")
-                            continue
-                    except Exception as _so:
-                        print(f"  ⚠️  {ticker}: strategy optimiser error ({_so}) — proceeding unaffected")
-
-                # ── Full System Audit Suite — logging-only, never gates ───
-                # Purely additive observability: joins TradeEvaluator's edge/
-                # predictability/noise/RR with regime detection and writes a
-                # single unified JSONL record. The return value is never used
-                # to skip/alter the alert below — a failure here is fully
-                # contained and cannot affect the existing flow.
-                if ENABLE_AUDIT_ENGINE:
-                    try:
-                        params = engine._trade_params(ticker, res, price, df)
-                        trade  = {
-                            "ticker":      ticker,
-                            "direction":   "LONG",
-                            "entry":       price,
-                            "stop_loss":   params["stop_loss"],
-                            "take_profit": params["target_price"],
-                            "probability": res.get("prob", 0.0),
-                            "expected_r":  res.get("expected_r"),
-                        }
-                        audit_trade(trade, df)
-                    except Exception as _ae:
-                        print(f"  \u26a0\ufe0f  {ticker}: audit engine error ({_ae}) — proceeding unaffected")
-
-                sent  = send_alert(ticker, res, price, df)
-                if sent:
-                    mark_alerted(ticker)
-                    log_signal(ticker, price, res["signal"],
-                               score=res.get("score", 0),
-                               prob=res.get("prob", 0.0))
-                    if group_id is not None:
-                        alerted_groups.add(group_id)
-                    print(f"  ✅ Alert sent: {ticker} {res['label']} (score {res['score']}/14)")
-                    fired += 1
+                candidates.append({
+                    "ticker":   ticker,
+                    "res":      res,
+                    "price":    price,
+                    "df":       df,
+                    "group_id": group_id,
+                })
+                rank = len(candidates)
+                print(f"  🎯 {ticker}: {res['label']} (score {res['score']}, prob {res['prob']*100:.0f}%) — candidate #{rank}")
             else:
                 status = res["label"] if res["signal"] != "GATED" else "🚫 GATED"
                 print(f"  — {ticker}: {status}")
 
-                # ── Big Mover check — runs on every non-alerted ticker ────────
-                # Catches large moves in progress even when standard gates fail.
-                # Passes the trained model so the SETUP tier can use AI probability
-                # to reject false positives before sending a Discord alert.
+                # Big Mover check on non-qualifying tickers
                 mover = big_mover_check(ticker, df, model=model)
                 if mover:
                     tier = mover["tier"]
+                    sent = send_mover_alert(ticker, mover, df=df)
                     if tier == "ACTIVE":
-                        sent = send_mover_alert(ticker, mover, df=df)
                         detail = f"+{mover['daily_ret']*100:.1f}% | {mover['vol_r']:.1f}× vol"
                     else:
-                        sent = send_mover_alert(ticker, mover, df=df)
                         detail = f"ai={mover.get('ai_prob',0)*100:.0f}% | adx={mover['adx']:.0f} | obv={mover['obv_r']:.1f}"
-                    flag = "alert sent ✅" if sent else "cooldown active"
-                    print(f"  [{tier}] {ticker}: {detail} — {flag}")
+                    print(f"  [{tier}] {ticker}: {detail} — {'alert sent ✅' if sent else 'cooldown active'}")
 
         except Exception as e:
             print(f"  ⚠️  {ticker}: {e}")
 
-    update_ticker_performance()
-    print(f"Scan done. {fired} alert(s) sent.")
+    # ── Pass 2: rank candidates and alert top MAX_ALERTS ────────────────────
+    if candidates:
+        ranked = rank_opportunities(candidates)
+        print(f"\n  📊 Ranking {len(ranked)} candidate(s) by quality score…")
+        for i, c in enumerate(ranked):
+            t = c["ticker"]; r = c["res"]
+            print(f"    #{i+1}  {t}  {r['label']}  score={r['score']}  prob={r['prob']*100:.0f}%  R={r.get('expected_r',0):.2f}")
 
-    # ── Opportunity Engine second pass (additive — never replaces existing alerts) ──
+    fired          = 0
+    alerted_groups: set = set()
+
+    for c in (rank_opportunities(candidates) if candidates else []):
+        if fired >= MAX_ALERTS:
+            break
+        ticker   = c["ticker"]
+        res      = c["res"]
+        price    = c["price"]
+        df       = c["df"]
+        group_id = c["group_id"]
+
+        # Correlation guard
+        if group_id is not None and group_id in alerted_groups:
+            print(f"  ⏭ {ticker}: correlation guard — similar ticker already alerted")
+            continue
+
+        # Additive filter layers (trade evaluator, adaptive core, strategy optimizer, audit)
+        if not _apply_alert_filters(ticker, res, price, df):
+            continue
+
+        sent = send_alert(ticker, res, price, df)
+        if sent:
+            mark_alerted(ticker)
+            log_signal(ticker, price, res["signal"],
+                       score=res.get("score", 0),
+                       prob=res.get("prob", 0.0),
+                       features={
+                           "regime":        res.get("regime", ""),
+                           "quality_score": res.get("quality_score", 0),
+                           "rsi":           res.get("rsi", 0),
+                           "multibagger":   bool(res.get("multibagger")),
+                       })
+            if group_id is not None:
+                alerted_groups.add(group_id)
+            print(f"  ✅ Alert sent: {ticker} {res['label']} (quality {res.get('quality_score',0)}/100, rank #{fired+1})")
+            fired += 1
+
+    update_ticker_performance()
+    print(f"Scan done. {fired} alert(s) sent ({len(candidates)} candidate(s) found, top {min(fired, MAX_ALERTS)} alerted).")
+
+    # ── Opportunity Engine second pass (additive) ────────────────────────────
     if _OPP_AVAILABLE:
         try:
             run_opportunity_pass(_scan_data)
@@ -346,6 +372,7 @@ def main(budget_seconds: float | None = None):
     _brief_sent_date: str | None = None
     _asx_report_sent_date: str | None = None
     _us_report_sent_date:  str | None = None
+    _no_elite_sent_date:   str | None = None   # v3: send "NO ELITE SETUPS" once per day
     if _DIAGNOSTICS_AVAILABLE:
         _state = _trace.load_scanner_state()
         _brief_sent_date      = _state.get("brief_sent_date")
@@ -413,7 +440,19 @@ def main(budget_seconds: float | None = None):
                     })
                 print(f"  US open report {'sent ✅' if ok else 'failed ⚠️  (Discord unreachable)'}")
 
-            wrap_run_scan(run_scan)(model)
+            fired = wrap_run_scan(run_scan)(model)
+
+            # v3: "NO ELITE SETUPS — HOLD CASH" — once per calendar day when
+            # a market-hours scan completes with zero alerts sent.
+            if fired == 0 and _no_elite_sent_date != today:
+                try:
+                    regime = market_regime("SPY")   # broad regime (US/global)
+                    ok = send_no_elite_setups_alert(regime)
+                    if ok:
+                        _no_elite_sent_date = today
+                        print(f"  📭 No elite setups — 'HOLD CASH' message sent (regime: {regime})")
+                except Exception as _ne:
+                    print(f"  ⚠️  No-elite-setups alert error: {_ne}")
 
             if budget_seconds is not None:
                 remaining = budget_seconds - (time.monotonic() - _start)

@@ -1,0 +1,40 @@
+name: Weekly Self-Review
+
+on:
+  schedule:
+    # Sunday 21:00 UTC = Monday 07:00 AEST
+    - cron: "0 21 * * 0"
+  workflow_dispatch:
+    inputs:
+      lookback:
+        description: "Lookback window in days (7=weekly, 30=monthly)"
+        required: false
+        default: "7"
+      dry_run:
+        description: "Dry run (print only, no Discord post)"
+        required: false
+        default: "false"
+
+jobs:
+  weekly-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r tradey-boi-x/requirements.txt
+
+      - name: Run weekly self-review
+        env:
+          Discordwebhook: ${{ secrets.DISCORDWEBHOOK }}
+        run: |
+          LOOKBACK="${{ github.event.inputs.lookback || '7' }}"
+          DRY_FLAG=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_FLAG="--dry-run"
+          fi
+          python tradey-boi-x/weekly_review.py --lookback "$LOOKBACK" $DRY_FLAG
