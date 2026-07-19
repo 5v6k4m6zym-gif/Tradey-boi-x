@@ -84,7 +84,7 @@ def _why_not_flagged(ticker: str, df, model) -> str:
 
     # Passed filters but scored too low for STRONG BUY/ELITE
     return (f"⛔ Scored {result['score']} with {result['prob']*100:.0f}% AI confidence — "
-            f"below the STRONG BUY threshold (needs score ≥6, confidence ≥50%, positive expected value)")
+            f"below the STRONG BUY threshold (needs score ≥7, confidence ≥53%, positive expected value)")
 
 
 def build_top_performers_section(tickers: list[str], model) -> list[str]:

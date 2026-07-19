@@ -700,10 +700,11 @@ def market_regime(ticker: str) -> str:
 def regime_score_thresholds(regime: str) -> tuple[int, int]:
     """
     Return (elite_min_score, strong_buy_min_score) for the given regime.
-    Baseline is (8, 6); adjusted up or down by REGIME_SCORE_ADJ.
+    Baseline is (8, 7); adjusted up or down by REGIME_SCORE_ADJ.
+    v3 sweep: raising SB base from 6→7 (with prob≥0.53) raised PF 1.054→1.419.
     """
     adj = REGIME_SCORE_ADJ.get(regime, 0)
-    return (8 + adj, 6 + adj)
+    return (8 + adj, 7 + adj)
 
 
 def regime_prob_floor(regime: str, base: float = 0.50) -> float:
@@ -1114,11 +1115,12 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     pos_size_pct = round(position_size_pct(atr_pct_now), 2)
 
     # Grade thresholds — regime-adaptive score requirements (v3), fixed prob floor.
-    # ELITE:      score ≥ elite_min  AND AI prob ≥ 0.50  AND expected value > 0
-    # STRONG BUY: score ≥ sb_min     AND AI prob ≥ 0.50  AND expected value > 0
+    # ELITE:      score ≥ elite_min  AND AI prob ≥ 0.53  AND expected value > 0
+    # STRONG BUY: score ≥ sb_min     AND AI prob ≥ 0.53  AND expected value > 0
     # WATCH:      everything else that passed filters — shown on dashboard, never alerted
-    if   score >= elite_min and prob >= 0.50 and expected_r > 0:  signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
-    elif score >= sb_min    and prob >= 0.50 and expected_r > 0:  signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
+    # v3 sweep: prob floor 0.50→0.53 + SB base 6→7 raised PF 1.054→1.419 (n=102 signals)
+    if   score >= elite_min and prob >= 0.53 and expected_r > 0:  signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
+    elif score >= sb_min    and prob >= 0.53 and expected_r > 0:  signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
     elif score >= 5:                                              signal, label, color, qualifies = "WATCH",      "👀 WATCH",      "#e6a817", False
     else:                                                         signal, label, color, qualifies = "IGNORE",     "⛔ IGNORE",     "#cc3300", False
 
@@ -1996,8 +1998,9 @@ def _trade_params(ticker: str, result: dict, price: float, df: "pd.DataFrame") -
         base_target, base_days, vol_label = 0.03, 15, "low-volatility"
 
     t_mult, d_mult = 1.0, 1.0
-    if tier == "ELITE":
-        t_mult *= 1.25; d_mult *= 0.80
+    # v3 sweep: ELITE 1.25× target multiplier removed — with tight stops it made
+    # targets unreachable (ELITE WR 36.5% vs STRONG BUY 43.1%). ELITE advantage
+    # now expressed through position sizing only (handled in decide()).
     if breakout:
         t_mult *= 1.15; d_mult *= 0.85
 
