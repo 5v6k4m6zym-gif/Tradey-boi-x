@@ -217,7 +217,7 @@ FEATURES        = [
     "vol_ratio", "breakout", "obv_ratio",
     "adx", "mfi", "bb_squeeze", "gap_up",
 ]
-PREDICTION_DAYS = 10
+PREDICTION_DAYS = 15    # v3 sweep: 15d outperforms 10d (PF +32% on 407-ticker backtest)
 TARGET_RETURN   = 0.03
 # A 5-day/2% target was tested (see tests/_target_sweep.py) after a 42-ticker
 # sample sweep suggested it could raise win rate without hurting AUC. It did
@@ -909,15 +909,16 @@ def expected_value_r(price: float, atr: float, prob: float, breakout: bool) -> f
     if price <= 0 or atr <= 0:
         return 0.0
     atr_pct = atr / price * 100
+    # v3 sweep: tightest stops (1.2/1.0/0.8) beat 2.0/1.5/1.2 — PF 0.801→1.054
     if atr_pct >= 3.0:
-        base_target_pct, sl_mult = 8.0, 2.0
+        base_target_pct, sl_mult = 8.0, 1.2
     elif atr_pct >= 1.5:
-        base_target_pct, sl_mult = 5.0, 1.5
+        base_target_pct, sl_mult = 5.0, 1.0
     else:
-        base_target_pct, sl_mult = 3.0, 1.2
+        base_target_pct, sl_mult = 3.0, 0.8
     if breakout:
         base_target_pct *= 1.15
-    stop_loss_pct = min(sl_mult * atr_pct, 15.0)
+    stop_loss_pct = min(sl_mult * atr_pct, 12.0)   # hard floor −12% (was −15%)
     if stop_loss_pct <= 0:
         return 0.0
     reward_R = base_target_pct / stop_loss_pct
@@ -938,13 +939,14 @@ def position_size_pct(atr_pct: float, account_risk_pct: float = 1.0,
     """
     if atr_pct <= 0:
         return 0.0
+    # v3 sweep: tightest stops (1.2/1.0/0.8) — mirrors expected_value_r() change
     if atr_pct >= 3.0:
-        sl_mult = 2.0
-    elif atr_pct >= 1.5:
-        sl_mult = 1.5
-    else:
         sl_mult = 1.2
-    stop_loss_pct = min(sl_mult * atr_pct, 15.0)
+    elif atr_pct >= 1.5:
+        sl_mult = 1.0
+    else:
+        sl_mult = 0.8
+    stop_loss_pct = min(sl_mult * atr_pct, 12.0)
     if stop_loss_pct <= 0:
         return 0.0
     size_pct = (account_risk_pct / stop_loss_pct) * 100
@@ -2006,10 +2008,10 @@ def _trade_params(ticker: str, result: dict, price: float, df: "pd.DataFrame") -
     if tier == "ELITE":  reasons.append("ELITE signal")
     if breakout:         reasons.append("52-week breakout")
 
-    # ATR-based stop-loss — wider for high-vol stocks
+    # ATR-based stop-loss — v3 sweep: tightest 1.2/1.0/0.8 beats 2.0/1.5/1.2 (PF +32%)
     atr_raw  = float(df.iloc[-1]["atr"])
-    sl_mult  = 2.0 if atr_pct >= 3.0 else (1.5 if atr_pct >= 1.5 else 1.2)
-    stop_loss     = round(max(price - sl_mult * atr_raw, price * 0.85), 4)  # hard floor -15%
+    sl_mult  = 1.2 if atr_pct >= 3.0 else (1.0 if atr_pct >= 1.5 else 0.8)
+    stop_loss     = round(max(price - sl_mult * atr_raw, price * 0.88), 4)  # hard floor -12%
     stop_loss_pct = round((stop_loss - price) / price * 100, 1)
 
     return {
@@ -3238,7 +3240,7 @@ def send_mover_alert(ticker: str, mover: dict, df: "pd.DataFrame | None" = None)
         if tier == "ACTIVE":
             tgt_pct = min(tgt_pct * 1.20, 0.20)   # wider target — move already started
 
-        sl_mult  = 2.0 if atr_pct >= 3.0 else (1.5 if atr_pct >= 1.5 else 1.2)
+        sl_mult  = 1.2 if atr_pct >= 3.0 else (1.0 if atr_pct >= 1.5 else 0.8)  # v3 sweep
         stop     = round(max(entry_price - sl_mult * atr_raw, entry_price * 0.88), 4)
         sl_pct   = round((stop - entry_price) / entry_price * 100, 1)
         tgt      = round(entry_price * (1 + tgt_pct), 4)

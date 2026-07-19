@@ -8,3 +8,4 @@
 - [Market report labeling & multi-schedule workflows](tradey-boi-x-cron-labeling.md) — never infer report variant from wall-clock hour; delayed GH Actions runs mislabel. Split into separate workflows with explicit CLI args instead.
 - [High-frequency GH Actions cron unreliability](tradey-boi-x-cron-throttling.md) — hourly+ cron schedules get silently dropped to a fraction of intended runs; use one self-looping job per session instead of relying on repeated cron dispatch.
 - [Full system audit method](tradey-boi-x-full-audit.md) — how to audit all GH Actions workflows/scripts at once: workflow list+state, per-workflow run history, job logs for failures, local py_compile+pytest, and local-vs-remote file diff.
+- [v3 stop/hold parameter sweep](tradey-boi-x-v3-sweep.md) — tightest ATR stops (1.2/1.0/0.8× vs old 2.0/1.5/1.2×) + 15-day hold raised PF 0.801→1.054 on 407-ticker out-of-sample backtest; sweep uses eval-cache signals (103 tickers only, not 406) to avoid timeout.

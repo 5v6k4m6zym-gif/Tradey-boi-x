@@ -413,13 +413,14 @@ class TestPositionSizePct(unittest.TestCase):
         self.assertEqual(engine.position_size_pct(-1.0), 0.0)
 
     def test_high_volatility_gets_smaller_size_than_low_volatility(self):
-        high_vol = engine.position_size_pct(4.0)   # ATR% >= 3.0 -> sl_mult 2.0
-        low_vol  = engine.position_size_pct(1.0)    # ATR% < 1.5 -> sl_mult 1.2
+        # v3 sweep: sl_mult 1.2/1.0/0.8 — use max_position_pct=100 to see uncapped values
+        high_vol = engine.position_size_pct(5.0, max_position_pct=100.0)  # ATR% 5% >= 3.0 -> sl_mult 1.2 -> stop 6%
+        low_vol  = engine.position_size_pct(1.0, max_position_pct=100.0)  # ATR% 1.0% < 1.5 -> sl_mult 0.8 -> stop 0.8%
         self.assertLess(high_vol, low_vol)
 
     def test_default_sizing_matches_fixed_fractional_formula(self):
-        # ATR% = 2.0 -> mid-vol tier, sl_mult 1.5 -> stop_loss_pct = 3.0
-        # size = (1.0 / 3.0) * 100 = 33.33%, capped at default max 20%.
+        # ATR% = 2.0 -> mid-vol tier, sl_mult 1.0 -> stop_loss_pct = 2.0%
+        # size = (1.0 / 2.0) * 100 = 50%, capped at default max 20%.
         size = engine.position_size_pct(2.0)
         self.assertAlmostEqual(size, 20.0)
 
