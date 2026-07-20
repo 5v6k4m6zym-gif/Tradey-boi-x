@@ -1304,6 +1304,36 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     except Exception:
         pass
 
+    # ── Agent weighted score gate (v5) ─────────────────────────────────────────
+    # Uses agent_weights.json to compute a weighted total score.
+    # All weights start at 1.0 → weighted_score ≈ raw score → zero behaviour
+    # change on day 1.  After agent_weight_update() has run for several weeks,
+    # weights diverge: agents that consistently predict correctly are upweighted,
+    # poor ones downweighted.  A signal whose weighted_score then falls below the
+    # adaptive threshold is blocked — no Discord alert, no log entry.
+    # This makes the agent learner an ACTIVE gate, not just a reporting system.
+    try:
+        from opportunity.agent_subscores import (weighted_score as _ws_fn,
+                                                  load_agent_weights as _law)
+        _aw = _law()
+        ws  = _ws_fn(result["subscores"], _aw)
+        result["weighted_score"] = round(ws, 2)
+        _ws_floor = _adaptive_cfg.get("sb_base_score", SB_BASE_SCORE)
+        if ws < _ws_floor:
+            return {
+                "signal":         "NO_SIGNAL",
+                "score":          result["score"],
+                "weighted_score": round(ws, 2),
+                "prob":           result.get("prob", 0),
+                "regime":         result.get("regime", ""),
+                "why":  [f"agent gate: weighted_score {ws:.1f} < threshold {_ws_floor}"],
+                "tier":           "NO_SIGNAL",
+                "label":          "NO_SIGNAL",
+                "subscores":      result["subscores"],
+            }
+    except Exception:
+        result["weighted_score"] = result.get("score", 0)
+
     return result
 
 # ─── COMMODITY PRICE TRACKING ────────────────────────────────────────────────
