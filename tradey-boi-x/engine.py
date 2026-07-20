@@ -21,6 +21,20 @@ from xgboost import XGBClassifier
 
 _vader = SentimentIntensityAnalyzer()
 
+# ─── ADAPTIVE THRESHOLDS ─────────────────────────────────────────────────────
+# Loaded from config/adaptive_thresholds.json at import time.
+# Written weekly by adaptive_threshold_update(); falls back to hardcoded values.
+_ADAPTIVE_CONFIG_PATH = Path(__file__).parent / "config" / "adaptive_thresholds.json"
+_ADAPTIVE_DEFAULTS    = {"prob_floor": 0.53, "sb_base_score": 7}
+
+def _load_adaptive_config() -> dict:
+    try:
+        return json.loads(_ADAPTIVE_CONFIG_PATH.read_text())
+    except Exception:
+        return dict(_ADAPTIVE_DEFAULTS)
+
+_adaptive_cfg = _load_adaptive_config()
+
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 WATCHLIST = [
     # ── US — mega-cap tech ────────────────────────────────────────────────
@@ -700,11 +714,14 @@ def market_regime(ticker: str) -> str:
 def regime_score_thresholds(regime: str) -> tuple[int, int]:
     """
     Return (elite_min_score, strong_buy_min_score) for the given regime.
-    Baseline is (8, 7); adjusted up or down by REGIME_SCORE_ADJ.
+    Baseline read from adaptive_thresholds.json (default SB=7, Elite=SB+1).
+    Regime shifts the base via REGIME_SCORE_ADJ; adaptive_threshold_update()
+    nudges the base weekly based on live signal performance.
     v3 sweep: raising SB base from 6→7 (with prob≥0.53) raised PF 1.054→1.419.
     """
-    adj = REGIME_SCORE_ADJ.get(regime, 0)
-    return (8 + adj, 7 + adj)
+    sb_base = _adaptive_cfg.get("sb_base_score", 7)
+    adj     = REGIME_SCORE_ADJ.get(regime, 0)
+    return (sb_base + 1 + adj, sb_base + adj)
 
 
 def regime_prob_floor(regime: str, base: float = 0.50) -> float:
@@ -836,6 +853,128 @@ def performance_adjustments() -> dict[str, int]:
         elif expectancy <= -0.2: adj[ticker] = -1
         else:                    adj[ticker] =  0
     return adj
+
+
+def adaptive_threshold_update() -> dict:
+    """
+    Weekly global threshold tuner (v5 — live outcome feedback loop).
+
+    Reads the last 30 resolved ELITE/STRONG BUY outcomes, computes rolling
+    expectancy, then nudges prob_floor and sb_base_score within hard safety
+    bounds.  Result is written to config/adaptive_thresholds.json, which
+    engine.py reads at import time so the next scan picks up the change.
+
+    Adjustment rules (one step per week maximum):
+      • expectancy < −0.30R  → tighten bar  (prob +0.01, score +1)
+      • expectancy > +0.80R  AND recent alerts < 3 (signal drought)
+                             → ease bar    (prob −0.01, score −1)
+      • otherwise            → no change
+
+    Hard safety bounds:
+      prob_floor    : 0.50 – 0.60
+      sb_base_score : 5    – 9
+      minimum resolved trades before any change: 10
+
+    Returns a dict summarising the decision (logged by the caller).
+    """
+    cfg        = _load_adaptive_config()
+    prob_floor = cfg.get("prob_floor",    0.53)
+    sb_base    = cfg.get("sb_base_score", 7)
+
+    entries  = _load_log()
+    resolved = [e for e in entries
+                if e.get("outcome") is not None
+                and e.get("tier") in ("ELITE", "STRONG BUY")]
+    recent = resolved[-30:]
+
+    result: dict = {
+        "prob_floor":    prob_floor,
+        "sb_base_score": sb_base,
+        "recent_n":      len(recent),
+        "adjustment":    None,
+        "reason":        None,
+    }
+
+    if len(recent) < 10:
+        result["reason"] = f"Skipped — only {len(recent)} resolved ELITE/SB trades (need ≥10)"
+        # Still persist last_checked so callers can see the file was evaluated
+        cfg["last_checked"] = datetime.now().strftime("%Y-%m-%d")
+        cfg["recent_n"]     = len(recent)
+        _ADAPTIVE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _ADAPTIVE_CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+        return result
+
+    _, _, win_rate, avg_win_R, avg_loss_R, expectancy = _expectancy_stats(recent)
+    result["expectancy"] = round(expectancy, 3)
+    result["win_rate"]   = round(win_rate,   3)
+
+    # How many ELITE/SB alerts fired in the last 14 calendar days?
+    cutoff        = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
+    recent_alerts = sum(
+        1 for e in entries
+        if e.get("tier") in ("ELITE", "STRONG BUY")
+        and (e.get("signal_date") or "") >= cutoff
+    )
+
+    # ── Decide direction ────────────────────────────────────────────────────
+    if expectancy < -0.30:
+        new_prob = min(round(prob_floor + 0.01, 4), 0.60)
+        new_sb   = min(sb_base + 1, 9)
+        reason   = (f"Expectancy {expectancy:+.3f}R < −0.30R "
+                    f"({len(recent)} trades, WR={win_rate:.1%}) → raising bar")
+    elif expectancy > 0.80 and recent_alerts < 3:
+        new_prob = max(round(prob_floor - 0.01, 4), 0.50)
+        new_sb   = max(sb_base - 1, 5)
+        reason   = (f"Expectancy {expectancy:+.3f}R > +0.80R with only "
+                    f"{recent_alerts} alerts in 14d → easing bar")
+    else:
+        result["reason"] = (f"No change — expectancy={expectancy:+.3f}R, "
+                            f"alerts_14d={recent_alerts}, n={len(recent)}")
+        cfg.update({
+            "last_checked":    datetime.now().strftime("%Y-%m-%d"),
+            "last_expectancy": round(expectancy, 3),
+            "last_win_rate":   round(win_rate,   3),
+            "recent_n":        len(recent),
+        })
+        _ADAPTIVE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _ADAPTIVE_CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+        return result
+
+    # ── Apply ───────────────────────────────────────────────────────────────
+    adj_entry = {
+        "date":          datetime.now().strftime("%Y-%m-%d"),
+        "prob_floor":    f"{prob_floor:.2f}→{new_prob:.2f}",
+        "sb_base_score": f"{sb_base}→{new_sb}",
+        "expectancy":    round(expectancy, 3),
+        "win_rate":      round(win_rate,   3),
+        "reason":        reason,
+    }
+    history = cfg.get("adjustment_history", [])
+    history.append(adj_entry)
+
+    cfg.update({
+        "prob_floor":        new_prob,
+        "sb_base_score":     new_sb,
+        "last_updated":      datetime.now().strftime("%Y-%m-%d"),
+        "last_checked":      datetime.now().strftime("%Y-%m-%d"),
+        "last_expectancy":   round(expectancy, 3),
+        "last_win_rate":     round(win_rate,   3),
+        "recent_n":          len(recent),
+        "adjustment_history": history[-20:],   # keep last 20 changes only
+    })
+    _ADAPTIVE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _ADAPTIVE_CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+
+    # Reload module-level cache so current process uses new thresholds immediately
+    _adaptive_cfg.update(cfg)
+
+    result.update({
+        "prob_floor":    new_prob,
+        "sb_base_score": new_sb,
+        "adjustment":    adj_entry,
+        "reason":        reason,
+    })
+    return result
 
 
 def update_ticker_performance() -> dict:
@@ -1114,13 +1253,16 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
     atr_pct_now = float(row["atr"]) / float(row["Close"]) * 100 if row["Close"] > 0 else 0.0
     pos_size_pct = round(position_size_pct(atr_pct_now), 2)
 
-    # Grade thresholds — regime-adaptive score requirements (v3), fixed prob floor.
-    # ELITE:      score ≥ elite_min  AND AI prob ≥ 0.53  AND expected value > 0
-    # STRONG BUY: score ≥ sb_min     AND AI prob ≥ 0.53  AND expected value > 0
+    # Grade thresholds — regime-adaptive score requirements (v3), adaptive prob floor.
+    # ELITE:      score ≥ elite_min  AND AI prob ≥ prob_floor  AND expected value > 0
+    # STRONG BUY: score ≥ sb_min     AND AI prob ≥ prob_floor  AND expected value > 0
     # WATCH:      everything else that passed filters — shown on dashboard, never alerted
     # v3 sweep: prob floor 0.50→0.53 + SB base 6→7 raised PF 1.054→1.419 (n=102 signals)
-    if   score >= elite_min and prob >= 0.53 and expected_r > 0:  signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
-    elif score >= sb_min    and prob >= 0.53 and expected_r > 0:  signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
+    # v5: prob_floor and sb_base_score now read from config/adaptive_thresholds.json and
+    #     nudged weekly by adaptive_threshold_update() based on live signal expectancy.
+    _prob_floor = _adaptive_cfg.get("prob_floor", 0.53)
+    if   score >= elite_min and prob >= _prob_floor and expected_r > 0:  signal, label, color, qualifies = "ELITE",      "🏆 ELITE",      "#00cc44", True
+    elif score >= sb_min    and prob >= _prob_floor and expected_r > 0:  signal, label, color, qualifies = "STRONG BUY", "✅ STRONG BUY", "#44bb00", True
     elif score >= 5:                                              signal, label, color, qualifies = "WATCH",      "👀 WATCH",      "#e6a817", False
     else:                                                         signal, label, color, qualifies = "IGNORE",     "⛔ IGNORE",     "#cc3300", False
 
