@@ -1065,8 +1065,7 @@ def expected_value_r(price: float, atr: float, prob: float, breakout: bool) -> f
     return prob * reward_R - (1 - prob) * 1.0
 
 def position_size_pct(atr_pct: float, account_risk_pct: float = 1.0,
-                       max_position_pct: float = 20.0,
-                       weighted_score: float | None = None) -> float:
+                       max_position_pct: float = 20.0) -> float:
     """
     Volatility-adjusted position size, as a % of account equity, using
     fixed-fractional risk sizing: risk exactly `account_risk_pct` of equity
@@ -1077,21 +1076,9 @@ def position_size_pct(atr_pct: float, account_risk_pct: float = 1.0,
     ATR%) => smaller position, tighter stops (low ATR%) => larger position,
     capped at `max_position_pct` so no single low-volatility setup can
     dominate the book.
-
-    Conviction scaling (v5 agent gate):
-      weighted_score >= 10  → 1.5× account_risk_pct (max 2.0%) — high conviction
-      weighted_score  8–10  → 1.0× (unchanged)
-      weighted_score <  8   → 0.75× — borderline signal, smaller position
-    Initially all weights=1.0 so weighted_score ≈ raw score — no behaviour
-    change until agent learning pushes weights above/below 1.0.
     """
     if atr_pct <= 0:
         return 0.0
-    if weighted_score is not None:
-        if weighted_score >= 10.0:
-            account_risk_pct = min(account_risk_pct * 1.5, 2.0)
-        elif weighted_score < 8.0:
-            account_risk_pct = account_risk_pct * 0.75
     # v3 sweep: tightest stops (1.2/1.0/0.8) — mirrors expected_value_r() change
     if atr_pct >= 3.0:
         sl_mult = 1.2
@@ -1346,11 +1333,6 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
             }
     except Exception:
         result["weighted_score"] = result.get("score", 0)
-
-    # Update position size now that weighted_score is known — high conviction
-    # signals get a larger position, borderline signals get a smaller one.
-    result["position_size_pct"] = round(
-        position_size_pct(atr_pct_now, weighted_score=result.get("weighted_score")), 2)
 
     return result
 

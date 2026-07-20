@@ -16,7 +16,7 @@ from engine import (
     big_mover_check, send_mover_alert, resolve_outcomes,
     send_morning_brief, rank_opportunities, send_no_elite_setups_alert,
     market_regime,
-    circuit_breaker_active, open_position_count, MAX_OPEN_POSITIONS,
+    circuit_breaker_active,
 )
 try:
     from market_open import send_open_report as _send_open_report
@@ -303,18 +303,8 @@ def run_scan(model) -> int:
         print(f"  Skipping all alerts this scan to protect capital.")
         return 0
 
-    # ── Max open positions guard ───────────────────────────────────────────────
-    _open_pos = open_position_count()
-    if _open_pos >= MAX_OPEN_POSITIONS:
-        print(f"\n  ⏸ MAX POSITIONS REACHED ({_open_pos}/{MAX_OPEN_POSITIONS} open) — no new alerts this scan.")
-        return 0
-
     for c in (rank_opportunities(candidates) if candidates else []):
         if fired >= MAX_ALERTS:
-            break
-        # Re-check open positions per alert (positions may fill mid-loop)
-        if open_position_count() >= MAX_OPEN_POSITIONS:
-            print(f"  ⏸ {c['ticker']}: max open positions reached — stopping")
             break
         ticker   = c["ticker"]
         res      = c["res"]
