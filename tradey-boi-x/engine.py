@@ -1277,6 +1277,33 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
               "adj": adj, "news": news, "why": why, "filters": filters,
               "rsi": round(float(row["rsi"]), 1)}
     result["quality_score"] = quality_score_100(result)
+
+    # ── Per-agent subscores (v5 multi-agent system) ─────────────────────────
+    # Groups the 18 signal adjusters into 7 named "agents" so agent_weight_update()
+    # can learn which agent groups best predict winning trades.
+    result["subscores"] = {
+        "technical":   base_score,                                          # ML prob + EMA/RSI/volume/breakout
+        "regime":      rot_adj + fg_adj + rs_adj,                           # sector rotation + fear/greed + rel strength
+        "fundamental": fund_adj,                                             # P/E, FCF, debt/equity
+        "sentiment":   news_adj + vel_adj,                                  # VADER news + velocity
+        "risk":        sr_adj + mtf_adj,                                    # support/resistance + multi-timeframe
+        "momentum":    sq_adj + gap_adj + mb_adj,                           # squeeze + gap + multibagger
+        "smart_money": opts_adj + short_adj + insider_adj + vwap_adj + comm_adj,  # options/insider/short/VWAP/commodity
+    }
+
+    # ── Pattern similarity (v5) ─────────────────────────────────────────────
+    # Compare indicator fingerprint against resolved historical winners/losers.
+    # Only runs when signal_log.json has ≥10 resolved ELITE/SB entries (cheap).
+    try:
+        from opportunity.pattern_similarity import pattern_similarity_signal
+        pat_adj, pat_why = pattern_similarity_signal(result)
+        if pat_adj != 0:
+            result["score"]    = score + pat_adj
+            result["why"]      = result.get("why", []) + ([pat_why] if pat_why else [])
+            result["subscores"]["momentum"] = result["subscores"]["momentum"] + pat_adj
+    except Exception:
+        pass
+
     return result
 
 # ─── COMMODITY PRICE TRACKING ────────────────────────────────────────────────
@@ -2674,7 +2701,8 @@ def log_signal(ticker: str, price: float, tier: str,
                stop_price: float | None = None,
                target_price: float | None = None,
                hold_days: int | None = None,
-               features: dict | None = None):
+               features: dict | None = None,
+               subscores: dict | None = None):
     """
     Log a signal. Include stop/target so resolve_outcomes can detect intraday hits.
 
@@ -2682,6 +2710,10 @@ def log_signal(ticker: str, price: float, tier: str,
     Similar Trade Memory (Feature 5):
         {"regime", "quality_score", "rsi", "vol_ratio", "breakout", "multibagger"}
     If omitted the field is stored as {}.
+
+    `subscores` (optional, v5) — per-agent subscore dict from decide() result:
+        {"technical", "regime", "fundamental", "sentiment", "risk", "momentum", "smart_money"}
+    Stored so agent_weight_update() can compute per-agent prediction accuracy.
     """
     entries = _load_log()
     today = datetime.now().strftime("%Y-%m-%d")
@@ -2704,6 +2736,7 @@ def log_signal(ticker: str, price: float, tier: str,
         "exit_price":   None,
         "actual_pct":   None,
         "features":     features or {},
+        "subscores":    subscores or {},
     })
     _save_log(entries)
 

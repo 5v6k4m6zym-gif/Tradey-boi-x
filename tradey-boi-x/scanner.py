@@ -324,7 +324,11 @@ def run_scan(model) -> int:
                            "quality_score": res.get("quality_score", 0),
                            "rsi":           res.get("rsi", 0),
                            "multibagger":   bool(res.get("multibagger")),
-                       })
+                           "vol_ratio":     res.get("vol_ratio", 1.0),
+                           "breakout":      bool(res.get("breakout")),
+                           "base_score":    res.get("base_score", 0),
+                       },
+                       subscores=res.get("subscores", {}))
             if group_id is not None:
                 alerted_groups.add(group_id)
             print(f"  ✅ Alert sent: {ticker} {res['label']} (quality {res.get('quality_score',0)}/100, rank #{fired+1})")

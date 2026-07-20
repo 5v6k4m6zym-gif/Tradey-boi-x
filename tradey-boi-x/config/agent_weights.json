@@ -1,0 +1,35 @@
+{
+  "weights": {
+    "technical": 1.0,
+    "regime": 1.0,
+    "fundamental": 1.0,
+    "sentiment": 1.0,
+    "risk": 1.0,
+    "momentum": 1.0,
+    "smart_money": 1.0
+  },
+  "last_updated": "2026-07-20",
+  "recent_n": 0,
+  "agent_stats": {},
+  "weight_history": [
+    {
+      "date": "2026-07-20",
+      "weights": {
+        "technical": 1.0,
+        "regime": 1.0,
+        "fundamental": 1.0,
+        "sentiment": 1.0,
+        "risk": 1.0,
+        "momentum": 1.0,
+        "smart_money": 1.0
+      },
+      "skipped": true,
+      "reason": "Only 0 resolved ELITE/SB entries with subscores (need \u226515)",
+      "resolved_n": 0
+    }
+  ],
+  "_note": "Auto-managed by agent_weight_update() in opportunity/agent_subscores.py. All weights start equal (1.0). Normalised so mean=1.0 after each weekly update. Do NOT edit manually unless resetting.",
+  "skipped": true,
+  "reason": "Only 0 resolved ELITE/SB entries with subscores (need \u226515)",
+  "resolved_n": 0
+}

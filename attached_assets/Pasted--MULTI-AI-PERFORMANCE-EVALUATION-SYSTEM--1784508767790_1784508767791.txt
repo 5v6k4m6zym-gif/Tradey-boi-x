@@ -1,0 +1,196 @@
+=====================================
+MULTI-AI PERFORMANCE EVALUATION SYSTEM
+=====================================
+
+Implement a multi-agent AI architecture where multiple specialised AI models analyse trades independently and are continuously evaluated based on real-world performance.
+
+The goal:
+Create an evolving AI system where the highest-performing decision-making models receive more influence, while weaker models are retrained, adjusted, or replaced.
+
+AI AGENTS:
+
+Create multiple specialised AI evaluators:
+
+1. Technical Analysis AI
+Evaluates:
+- Price action
+- EMA trends
+- RSI
+- ADX
+- MACD
+- Support/resistance
+- Breakouts
+- Momentum strength
+
+2. Market Regime AI
+Evaluates:
+- Bull/bear conditions
+- Market cycles
+- Sector strength
+- Volatility
+- Overall market risk
+
+3. Fundamental AI
+Evaluates:
+- Company fundamentals
+- Earnings
+- Growth potential
+- Financial strength
+- Valuation
+
+4. News & Sentiment AI
+Evaluates:
+- News impact
+- Market sentiment
+- Insider activity
+- Catalysts
+- Negative risks
+
+5. Risk Management AI
+Evaluates:
+- Entry risk
+- Stop-loss placement
+- Position sizing
+- Risk/reward ratio
+- Probability of failure
+
+6. Pattern Recognition AI
+Evaluates:
+- Historical chart patterns
+- Similar past setups
+- Probability of repeating outcomes
+
+=====================================
+AI COMPETITION AND LEARNING SYSTEM
+=====================================
+
+Each AI must generate:
+
+- Trade confidence score
+- Expected return
+- Expected risk
+- Probability of success
+- Reasoning behind recommendation
+
+Create a scoring system that tracks every AI’s performance.
+
+Track:
+
+- Win rate
+- Average return per trade
+- Profit factor contribution
+- Maximum drawdown caused
+- Accuracy of predictions
+- Risk-adjusted performance
+
+=====================================
+AI WEIGHTING SYSTEM
+=====================================
+
+Do not give every AI equal influence.
+
+Create dynamic weighting:
+
+Higher performing AI models receive:
+- Greater voting influence
+- Higher confidence weighting
+- More impact on final trade decisions
+
+Lower performing AI models receive:
+- Reduced influence
+- Parameter adjustment
+- Retraining
+
+Weights must update automatically based on proven performance.
+
+=====================================
+AI RETRAINING ENGINE
+=====================================
+
+Create an automated retraining system.
+
+When an AI underperforms:
+
+Analyse:
+- Incorrect predictions
+- Missed opportunities
+- False positives
+- False negatives
+- Market conditions where it failed
+
+Retrain the AI using:
+- Successful previous trades
+- Failed predictions
+- New market data
+- Updated patterns
+
+Do not retrain blindly.
+
+Every new AI version must pass validation testing before replacing the current model.
+
+=====================================
+AI CHALLENGE MODE
+=====================================
+
+Create a testing environment where AI models compete.
+
+Example:
+
+AI Version A:
+- Current strategy
+
+AI Version B:
+- Improved parameters
+
+AI Version C:
+- Alternative prediction model
+
+Run historical simulations and forward testing.
+
+The winning AI configuration should only be promoted if it improves:
+
+✅ Profit factor
+✅ Total return
+✅ Win rate
+✅ Risk/reward
+✅ Drawdown control
+
+=====================================
+FINAL DECISION ENGINE
+=====================================
+
+Create a final AI decision layer that combines:
+
+- Individual AI scores
+- Historical performance
+- Market conditions
+- Risk assessment
+
+Only generate a trade alert when confidence and expected reward meet minimum requirements.
+
+The system must prioritise:
+1. Profit factor
+2. Risk-adjusted return
+3. Trade quality
+4. Win probability
+5. Trade frequency
+
+=====================================
+PROTECTION RULES
+=====================================
+
+The AI system must reject any update that:
+
+- Reduces profit factor
+- Creates excessive drawdown
+- Overfits historical data
+- Reduces long-term expectancy
+
+All AI improvements must pass:
+
+- Backtesting
+- Walk-forward validation
+- Out-of-sample testing
+- Forward simulation
+
+before deployment.
