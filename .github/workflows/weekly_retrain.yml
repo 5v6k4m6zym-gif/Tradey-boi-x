@@ -34,23 +34,36 @@ jobs:
           from engine import (train_model, WATCHLIST, get_data, FEATURES,
                               PREDICTION_DAYS, TARGET_RETURN,
                               resolve_outcomes, performance_adjustments,
+                              adaptive_threshold_update,
                               accuracy_stats, _load_log)
-          from datetime import datetime
+          from opportunity.agent_subscores import (
+              agent_weight_update, challenge_mode_comparison, load_agent_weights)
+          from datetime import datetime, timedelta, timezone
           from collections import defaultdict
 
           DISCORD = os.getenv("Discordwebhook", "")
 
           # 1. Resolve any matured trade outcomes
           print("Resolving outcomes...")
-          updated  = resolve_outcomes()
-          resolved = [e for e in updated if e["outcome"] is not None]
-          stats    = accuracy_stats(resolved)
+          updated     = resolve_outcomes()
+          all_entries = updated
+
+          # 1b. v5 live feedback loop — global threshold tuner
+          print("Running adaptive threshold update...")
+          threshold_result = adaptive_threshold_update()
+
+          # 1c. v5 multi-agent weight learner
+          print("Running agent weight update...")
+          agent_result    = agent_weight_update(min_trades=15)
+          challenge_result = challenge_mode_comparison()
+          resolved    = [e for e in all_entries if e.get("outcome") is not None]
+          pending     = [e for e in all_entries if e.get("outcome") is None]
 
           # 2. Retrain with recency-weighted data
           print("Retraining model...")
           model = train_model()
 
-          # 3. Compute in-sample accuracy
+          # 3. In-sample accuracy
           correct, total = 0, 0
           for ticker in WATCHLIST:
               try:
@@ -66,54 +79,130 @@ jobs:
                   pass
           accuracy = correct / total * 100 if total > 0 else 0
 
-          # 4. Per-ticker win rates
-          adj = performance_adjustments()
+          # 4. All-time stats
+          stats   = accuracy_stats(resolved)
+          wr_str  = f"{stats['win_rate']*100:.1f}%" if stats.get("win_rate") is not None else "N/A"
+          avg_str = f"{stats['avg_return']*100:+.1f}%" if stats.get("avg_return") is not None else "N/A"
+
+          # 5. Signals maturing in the next 7 trading days
+          now_utc  = datetime.now(timezone.utc)
+          maturing = []
+          for e in pending:
+              try:
+                  entered   = datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
+                  pred_days = e.get("pred_days", PREDICTION_DAYS)
+                  # Approximate: 1 trading day ~ 1.4 calendar days
+                  expiry    = entered + timedelta(days=pred_days * 1.4)
+                  days_left = (expiry - now_utc).days
+                  if 0 <= days_left <= 7:
+                      maturing.append((days_left, e["ticker"], e.get("tier", "?"),
+                                       e.get("entry_price", 0), e.get("target_pct", TARGET_RETURN)))
+              except Exception:
+                  pass
+          maturing.sort()
+
+          # 6. Per-ticker win rates — only tickers that have at least one resolved trade
+          adj    = performance_adjustments()
           bucket = defaultdict(list)
           for e in resolved:
               bucket[e["ticker"]].append(e)
 
           ticker_lines = []
-          for ticker in sorted(WATCHLIST):
-              trades = bucket.get(ticker, [])
-              if not trades:
-                  ticker_lines.append(f"  {ticker}: no resolved trades yet")
-                  continue
-              recent = trades[-20:]
-              wins   = sum(1 for t in recent if t["outcome"] == "WIN")
-              wr     = wins / len(recent) * 100
+          for ticker in sorted(bucket.keys()):
+              trades = bucket[ticker][-20:]
+              wins   = sum(1 for t in trades if t["outcome"] in ("WIN", "HIT_TARGET", "EXPIRED_GAIN"))
+              wr     = wins / len(trades) * 100
               a      = adj.get(ticker, 0)
               bar    = "🟢" if wr >= 60 else ("🟡" if wr >= 40 else "🔴")
-              ticker_lines.append(f"  {bar} {ticker}: {wr:.0f}% ({wins}/{len(recent)}) | score adj {a:+d}")
+              ticker_lines.append(f"  {bar} {ticker}: {wr:.0f}% ({wins}/{len(trades)}) | score adj {a:+d}")
 
-          # 5. Send Discord report
-          wr_str  = f"{stats['win_rate']*100:.1f}%" if stats.get("win_rate") is not None else "N/A"
-          avg_str = f"{stats['avg_return']*100:+.1f}%" if stats.get("avg_return") is not None else "N/A"
+          # 7. Build message
           lines = [
-              "**TRADEY BOI X** | 🔄 Weekly Retrain & Learning Update",
+              "**TRADEY BOI X** | 🔄 Weekly Retrain & Performance Report",
               f"📅 {datetime.now().strftime('%A %d %b %Y')}",
               "",
-              "**📊 Live Trade Performance**",
-              f"Total resolved: {stats['total']} | Wins: {stats['wins']} | Losses: {stats['losses']}",
-              f"Overall win rate: **{wr_str}** | Avg return: **{avg_str}**",
+              "**📊 All-Time Signal Performance**",
+              f"Resolved: **{stats['total']}** | Wins: {stats.get('wins', 0)} | Losses: {stats.get('losses', 0)}",
+              f"Win rate: **{wr_str}** | Avg return per trade: **{avg_str}**",
+              f"Signals still open (in window): **{len(pending)}**",
+          ]
+
+          if maturing:
+              lines += ["", "**⏳ Signals Maturing This Week**"]
+              for days_left, ticker, tier, entry, tgt_pct in maturing:
+                  label = "today" if days_left == 0 else f"in {days_left}d"
+                  lines.append(f"  • {ticker} ({tier}) — entered @ {entry:.2f}, target +{tgt_pct*100:.0f}% — resolves {label}")
+          else:
+              lines.append("_No signals resolving this week._")
+
+          if ticker_lines:
+              lines += ["", "**🎯 Ticker Win Rates** _(tickers with resolved trades, last 20 each)_"]
+              lines += ticker_lines
+          else:
+              lines.append("_No resolved trades yet — win rates appear once signals complete their hold window._")
+
+          # v5 adaptive threshold section
+          t_prob = threshold_result.get("prob_floor", 0.53)
+          t_sb   = threshold_result.get("sb_base_score", 7)
+          t_adj  = threshold_result.get("adjustment")
+          t_why  = threshold_result.get("reason", "")
+          t_n    = threshold_result.get("recent_n", 0)
+          t_exp  = threshold_result.get("expectancy")
+          if t_adj:
+              thresh_line = (f"**Thresholds adjusted** — "
+                             f"prob≥{t_adj['prob_floor']} | score≥{t_adj['sb_base_score']}\n"
+                             f"  ↳ {t_why}")
+          else:
+              exp_str = f"{t_exp:+.3f}R" if t_exp is not None else "N/A"
+              thresh_line = (f"Unchanged: prob≥{t_prob:.2f} | score≥{t_sb} | "
+                             f"expectancy={exp_str} (n={t_n})")
+
+          # Agent weight section
+          if not agent_result.get("skipped"):
+              aw = agent_result.get("weights", {})
+              as_ = agent_result.get("agent_stats", {})
+              agent_lines = []
+              for ag, stat in sorted(as_.items()):
+                  acc = stat.get("accuracy")
+                  wt  = aw.get(ag, 1.0)
+                  n_  = stat.get("n", 0)
+                  if acc is not None:
+                      bar = "🟢" if wt > 1.1 else ("🟡" if wt >= 0.9 else "🔴")
+                      agent_lines.append(f"  {bar} {ag:<12} acc={acc:.0%}  w={wt:.2f}  n={n_}")
+              chal = challenge_result
+              chal_line = (chal.get("summary_lines", [""])[0]
+                           if not chal.get("skipped") else
+                           f"Challenge: {chal.get('reason','insufficient data')}")
+          else:
+              agent_lines = [f"  Accumulating data ({agent_result.get('resolved_n',0)} resolved with subscores, need 15)"]
+              chal_line   = "Challenge mode: waiting for more resolved trades"
+
+          lines += [
               "",
-              "**🎯 Per-Ticker Win Rates (last 20 signals)**",
-          ] + ticker_lines + [
+              "**🤖 Multi-Agent Performance** _(v5)_",
+              *agent_lines,
+              chal_line,
+              "",
+              "**🎯 Adaptive Thresholds** _(v5 live feedback loop)_",
+              thresh_line,
               "",
               "**🧠 Model Update**",
               f"In-sample accuracy: {accuracy:.1f}%",
               "Retrained with recency weights — last 30 days count 4×, last 90 days count 2×",
-              "_Tickers with strong track records get a score boost next week. Poor performers get penalised._",
+              "_Tickers with strong track records get a score boost. Poor performers get penalised._",
           ]
+
+          msg = "\n".join(lines)
           if DISCORD:
-              r = requests.post(DISCORD, json={"content": "\n".join(lines)}, timeout=10)
+              r = requests.post(DISCORD, json={"content": msg}, timeout=10)
               print("Discord report sent:", r.status_code)
-          print("\n".join(lines))
+          print(msg)
           EOF
 
       - name: Commit updated signal log
         run: |
           git config user.email "actions@github.com"
           git config user.name "Tradey Boi X"
-          git add tradey-boi-x/signal_log.json tradey-boi-x/cooldowns.json 2>/dev/null || true
+          git add tradey-boi-x/signal_log.json tradey-boi-x/cooldowns.json tradey-boi-x/config/adaptive_thresholds.json tradey-boi-x/config/agent_weights.json 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: weekly retrain + outcome resolution [skip ci]"
           git push
