@@ -857,17 +857,16 @@ def performance_adjustments() -> dict[str, int]:
 
 def adaptive_threshold_update() -> dict:
     """
-    Weekly global threshold tuner (v5 — live outcome feedback loop).
+    Weekly global threshold tuner (v4.0 — validated adaptive gate system).
 
-    Reads the last 30 resolved ELITE/STRONG BUY outcomes, computes rolling
-    expectancy, then nudges prob_floor and sb_base_score within hard safety
-    bounds.  Result is written to config/adaptive_thresholds.json, which
-    engine.py reads at import time so the next scan picks up the change.
+    Reads the last 30 resolved ELITE/STRONG BUY outcomes, computes a full
+    14-metric suite, checks if a rollback is needed from a prior bad change,
+    then proposes a gate adjustment and validates it with walk-forward +
+    Monte Carlo + ensemble checks before applying.
 
     Adjustment rules (one step per week maximum):
       • expectancy < −0.30R  → tighten bar  (prob +0.01, score +1)
-      • expectancy > +0.80R  AND recent alerts < 3 (signal drought)
-                             → ease bar    (prob −0.01, score −1)
+      • expectancy > +0.80R  AND recent alerts < 3 → ease bar (prob −0.01, score −1)
       • otherwise            → no change
 
     Hard safety bounds:
@@ -877,6 +876,17 @@ def adaptive_threshold_update() -> dict:
 
     Returns a dict summarising the decision (logged by the caller).
     """
+    try:
+        from opportunity.metrics       import compute_metrics
+        from opportunity.gate_validator import validate_gate_change
+        from opportunity.gate_history   import (
+            save_snapshot, load_snapshots, check_needs_rollback, restore_previous
+        )
+    except Exception:
+        compute_metrics     = None
+        validate_gate_change = None
+        save_snapshot       = None
+
     cfg        = _load_adaptive_config()
     prob_floor = cfg.get("prob_floor",    0.53)
     sb_base    = cfg.get("sb_base_score", 7)
@@ -897,7 +907,6 @@ def adaptive_threshold_update() -> dict:
 
     if len(recent) < 10:
         result["reason"] = f"Skipped — only {len(recent)} resolved ELITE/SB trades (need ≥10)"
-        # Still persist last_checked so callers can see the file was evaluated
         cfg["last_checked"] = datetime.now().strftime("%Y-%m-%d")
         cfg["recent_n"]     = len(recent)
         _ADAPTIVE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -907,6 +916,59 @@ def adaptive_threshold_update() -> dict:
     _, _, win_rate, avg_win_R, avg_loss_R, expectancy = _expectancy_stats(recent)
     result["expectancy"] = round(expectancy, 3)
     result["win_rate"]   = round(win_rate,   3)
+
+    # ── Multi-metric suite (v4.0) ────────────────────────────────────────────
+    multi_metrics: dict = {}
+    if compute_metrics is not None:
+        try:
+            multi_metrics = compute_metrics(recent)
+            result["multi_metrics"] = multi_metrics
+        except Exception:
+            pass
+
+    # ── Rollback check — did the most recent gate change hurt performance? ──
+    if save_snapshot is not None:
+        try:
+            from opportunity.gate_history import load_snapshots, check_needs_rollback
+            snaps = load_snapshots(1)
+            if snaps:
+                last_snap_metrics = snaps[0].get("metrics", {})
+                last_snap_ts      = snaps[0].get("timestamp", "")
+                post_change = [e for e in resolved
+                               if (e.get("signal_date") or "") >= last_snap_ts[:10]]
+                needs_rb, rb_reason = check_needs_rollback(post_change, last_snap_metrics)
+                if needs_rb:
+                    from opportunity.gate_history import restore_previous
+                    restored = restore_previous(_ADAPTIVE_CONFIG_PATH)
+                    if restored:
+                        _adaptive_cfg.update(restored)
+                        result["reason"] = f"AUTO-ROLLBACK: {rb_reason}"
+                        result["rollback"] = True
+                        print(f"  🔄 AUTO-ROLLBACK: {rb_reason}")
+                        return result
+        except Exception:
+            pass
+
+    # ── Regime-aware gate profile ────────────────────────────────────────────
+    _REGIME_PROFILES_PATH = Path(__file__).parent / "config" / "regime_gate_profiles.json"
+    regime_label: str | None = None
+    try:
+        from opportunity.regime import detect_regime as _detect_regime
+        _rm = _detect_regime()
+        if _rm and isinstance(_rm, dict):
+            regime_label = _rm.get("regime")
+    except Exception:
+        pass
+    if regime_label and _REGIME_PROFILES_PATH.exists():
+        try:
+            _rp = json.loads(_REGIME_PROFILES_PATH.read_text())
+            _rg = _rp.get(regime_label, {})
+            if _rg:
+                prob_floor = float(_rg.get("prob_floor",    prob_floor))
+                sb_base    = int(  _rg.get("sb_base_score", sb_base))
+                result["regime_profile_applied"] = regime_label
+        except Exception:
+            pass
 
     # How many ELITE/SB alerts fired in the last 14 calendar days?
     cutoff        = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
@@ -940,6 +1002,38 @@ def adaptive_threshold_update() -> dict:
         _ADAPTIVE_CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
         return result
 
+    # ── Walk-forward + Monte Carlo validation (v4.0) ─────────────────────────
+    if validate_gate_change is not None:
+        try:
+            vr = validate_gate_change(
+                prob_floor, sb_base, new_prob, new_sb, recent
+            )
+            result["validation"] = vr.to_dict()
+            if not vr.passed:
+                result["reason"] = (
+                    f"Gate change REJECTED by validator — {vr.reason}. "
+                    f"Keeping current gates ({prob_floor:.2f}/{sb_base})."
+                )
+                cfg.update({
+                    "last_checked":    datetime.now().strftime("%Y-%m-%d"),
+                    "last_expectancy": round(expectancy, 3),
+                    "last_win_rate":   round(win_rate,   3),
+                    "recent_n":        len(recent),
+                })
+                _ADAPTIVE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+                _ADAPTIVE_CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+                print(f"  ⛔ Gate change rejected: {vr.reason}")
+                return result
+        except Exception as _ve:
+            print(f"  [adaptive_threshold_update] validator error: {_ve}")
+
+    # ── Snapshot before applying (v4.0) ─────────────────────────────────────
+    if save_snapshot is not None:
+        try:
+            save_snapshot(cfg, f"pre-change: {reason}", multi_metrics)
+        except Exception:
+            pass
+
     # ── Apply ───────────────────────────────────────────────────────────────
     adj_entry = {
         "date":          datetime.now().strftime("%Y-%m-%d"),
@@ -949,23 +1043,26 @@ def adaptive_threshold_update() -> dict:
         "win_rate":      round(win_rate,   3),
         "reason":        reason,
     }
+    if multi_metrics:
+        adj_entry["profit_factor"] = multi_metrics.get("profit_factor")
+        adj_entry["sharpe"]        = multi_metrics.get("sharpe")
+        adj_entry["max_drawdown"]  = multi_metrics.get("max_drawdown")
     history = cfg.get("adjustment_history", [])
     history.append(adj_entry)
 
     cfg.update({
-        "prob_floor":        new_prob,
-        "sb_base_score":     new_sb,
-        "last_updated":      datetime.now().strftime("%Y-%m-%d"),
-        "last_checked":      datetime.now().strftime("%Y-%m-%d"),
-        "last_expectancy":   round(expectancy, 3),
-        "last_win_rate":     round(win_rate,   3),
-        "recent_n":          len(recent),
-        "adjustment_history": history[-20:],   # keep last 20 changes only
+        "prob_floor":         new_prob,
+        "sb_base_score":      new_sb,
+        "last_updated":       datetime.now().strftime("%Y-%m-%d"),
+        "last_checked":       datetime.now().strftime("%Y-%m-%d"),
+        "last_expectancy":    round(expectancy, 3),
+        "last_win_rate":      round(win_rate,   3),
+        "recent_n":           len(recent),
+        "adjustment_history": history[-20:],
     })
     _ADAPTIVE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     _ADAPTIVE_CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
 
-    # Reload module-level cache so current process uses new thresholds immediately
     _adaptive_cfg.update(cfg)
 
     result.update({

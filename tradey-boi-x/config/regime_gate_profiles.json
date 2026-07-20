@@ -1,0 +1,10 @@
+{
+  "_note": "Per-macro-regime gate profiles (v4.0). Applied by adaptive_threshold_update() when a regime is detected. Conservative defaults — tighten in hostile regimes, ease slightly in confirmed bull markets. Only overrides adaptive_thresholds.json when a regime is confidently identified.",
+  "BULLISH":  { "prob_floor": 0.53, "sb_base_score": 7 },
+  "BEARISH":  { "prob_floor": 0.55, "sb_base_score": 8 },
+  "SIDEWAYS": { "prob_floor": 0.54, "sb_base_score": 7 },
+  "HIGH_VOL": { "prob_floor": 0.55, "sb_base_score": 8 },
+  "LOW_VOL":  { "prob_floor": 0.52, "sb_base_score": 6 },
+  "_last_regime": null,
+  "_last_updated": null
+}
