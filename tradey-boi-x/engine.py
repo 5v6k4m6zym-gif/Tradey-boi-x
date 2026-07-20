@@ -1065,7 +1065,8 @@ def expected_value_r(price: float, atr: float, prob: float, breakout: bool) -> f
     return prob * reward_R - (1 - prob) * 1.0
 
 def position_size_pct(atr_pct: float, account_risk_pct: float = 1.0,
-                       max_position_pct: float = 20.0) -> float:
+                       max_position_pct: float = 20.0,
+                       weighted_score: float | None = None) -> float:
     """
     Volatility-adjusted position size, as a % of account equity, using
     fixed-fractional risk sizing: risk exactly `account_risk_pct` of equity
@@ -1076,9 +1077,21 @@ def position_size_pct(atr_pct: float, account_risk_pct: float = 1.0,
     ATR%) => smaller position, tighter stops (low ATR%) => larger position,
     capped at `max_position_pct` so no single low-volatility setup can
     dominate the book.
+
+    Conviction scaling (v5 agent gate):
+      weighted_score >= 10  → 1.5× account_risk_pct (max 2.0%) — high conviction
+      weighted_score  8–10  → 1.0× (unchanged)
+      weighted_score <  8   → 0.75× — borderline signal, smaller position
+    Initially all weights=1.0 so weighted_score ≈ raw score — no behaviour
+    change until agent learning pushes weights above/below 1.0.
     """
     if atr_pct <= 0:
         return 0.0
+    if weighted_score is not None:
+        if weighted_score >= 10.0:
+            account_risk_pct = min(account_risk_pct * 1.5, 2.0)
+        elif weighted_score < 8.0:
+            account_risk_pct = account_risk_pct * 0.75
     # v3 sweep: tightest stops (1.2/1.0/0.8) — mirrors expected_value_r() change
     if atr_pct >= 3.0:
         sl_mult = 1.2
@@ -1333,6 +1346,11 @@ def decide(ticker: str, df: pd.DataFrame, model: Pipeline) -> dict:
             }
     except Exception:
         result["weighted_score"] = result.get("score", 0)
+
+    # Update position size now that weighted_score is known — high conviction
+    # signals get a larger position, borderline signals get a smaller one.
+    result["position_size_pct"] = round(
+        position_size_pct(atr_pct_now, weighted_score=result.get("weighted_score")), 2)
 
     return result
 
@@ -2529,6 +2547,7 @@ def send_alert(ticker: str, result: dict, price: float, df=None) -> bool:
         f"💰 Target   **${target_price:.2f}**  +{target_pct*100:.0f}%"
         f"  ·  🛑 Stop  **${params['stop_loss']:.2f}**  {params['stop_loss_pct']:.1f}%"
         f"  ·  ⚖️ Risk: 1  ·  Reward: {rr:.1f}",
+        f"📍 Exit plan: sell 50% at **${(price + target_price) / 2:.2f}** → move stop to breakeven → trail remainder with ATR",
         f"🚪 Exit by  **{exit_date.strftime('%a %d %b %Y')}**  ({exit_days} trading days)",
         "",
         f"_{why_str}_",
@@ -2726,6 +2745,74 @@ def send_no_elite_setups_alert(regime: str) -> bool:
 
 
 # ─── SIGNAL LOG + OUTCOME TRACKING ───────────────────────────────────────────
+# ─── RISK MANAGEMENT HELPERS (v5) ────────────────────────────────────────────
+_CB_CONSEC     = 3    # consecutive losing trades before circuit breaker trips
+_CB_PAUSE_DAYS = 5    # calendar days to pause alerting after circuit breaker trips
+MAX_OPEN_POSITIONS = 8  # max simultaneous open trades before new alerts are suppressed
+
+def circuit_breaker_active(log_path: Path = LOG_FILE) -> tuple[bool, str]:
+    """
+    Check whether consecutive losses have tripped the circuit breaker.
+    Returns (active, reason_string).
+
+    Logic: read the last _CB_CONSEC *resolved* entries from signal_log.json.
+    If all are stops or losses AND the most recent resolved within
+    _CB_PAUSE_DAYS × 1.5 calendar days, return (True, reason).
+    This gives the regime gate time to re-learn before the bot fires again.
+    """
+    try:
+        if not log_path.exists():
+            return False, ""
+        entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
+        resolved = [e for e in entries if e.get("resolved") and e.get("outcome")]
+        if len(resolved) < _CB_CONSEC:
+            return False, ""
+        last_n = resolved[-_CB_CONSEC:]
+        bad = {"HIT_STOP", "EXPIRED_LOSS", "LOSS", "STOP"}
+        if not all(e.get("outcome", "").upper() in bad for e in last_n):
+            return False, ""
+        last_date_str = (last_n[-1].get("resolved_date") or
+                         last_n[-1].get("date", ""))[:10]
+        if not last_date_str:
+            return False, ""
+        days_ago = (datetime.now() - datetime.strptime(last_date_str, "%Y-%m-%d")).days
+        if days_ago <= int(_CB_PAUSE_DAYS * 1.5):
+            return True, (f"{_CB_CONSEC} consecutive losses "
+                          f"(last {last_date_str}) — pausing {_CB_PAUSE_DAYS}d")
+    except Exception:
+        pass
+    return False, ""
+
+
+def open_position_count(log_path: Path = LOG_FILE,
+                         max_hold_days: int = 15) -> int:
+    """
+    Count signals still within their hold window (not yet resolved).
+    Any signal within max_hold_days of its entry date is counted as 'open'.
+    Used by scanner to prevent stacking more than MAX_OPEN_POSITIONS trades.
+    """
+    try:
+        if not log_path.exists():
+            return 0
+        entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
+        today = datetime.now().date()
+        count = 0
+        for e in entries:
+            if e.get("resolved"):
+                continue
+            ds = e.get("date", "")[:10]
+            if not ds:
+                continue
+            try:
+                if (today - datetime.strptime(ds, "%Y-%m-%d").date()).days <= max_hold_days:
+                    count += 1
+            except ValueError:
+                pass
+        return count
+    except Exception:
+        return 0
+
+
 def log_signal(ticker: str, price: float, tier: str,
                score: int = 0, prob: float = 0.0,
                stop_price: float | None = None,

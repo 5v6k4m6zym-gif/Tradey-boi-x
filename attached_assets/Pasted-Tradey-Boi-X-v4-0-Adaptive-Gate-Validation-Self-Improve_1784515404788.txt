@@ -1,0 +1,229 @@
+Tradey Boi X v4.0 – Adaptive Gate Validation & Self-Improvement Framework
+
+Objective
+
+Upgrade the adaptive learning engine so that every learned change to entry/exit gates is scientifically validated before it can influence live trading. The primary objective is to increase long-term expectancy and profit factor while ensuring no degradation in system stability, risk management, or existing functionality.
+
+Core Requirements
+
+1. Validation Before Deployment
+
+No adaptive gate adjustment is allowed to become active until it has passed validation.
+
+Every proposed change must be tested against:
+
+* Historical backtests
+* Walk-forward validation
+* Out-of-sample data
+* Monte Carlo simulations
+* Different market regimes (bull, bear, sideways, high volatility, low volatility)
+
+If a proposed change fails any validation threshold, reject it automatically.
+
+⸻
+
+2. Multi-Metric Optimisation
+
+The adaptive engine must optimise for the complete strategy rather than win rate alone.
+
+Evaluate every change using:
+
+* Profit Factor (highest priority)
+* Expectancy per trade
+* CAGR
+* Maximum Drawdown
+* Sharpe Ratio
+* Sortino Ratio
+* Calmar Ratio
+* Win Rate
+* Average Winner
+* Average Loser
+* Average Hold Time
+* Risk/Reward Ratio
+* Trade Frequency
+* Equity Curve Stability
+
+No change should improve one metric while materially damaging higher-priority metrics.
+
+⸻
+
+3. Automatic Rollback
+
+Maintain version history of every adaptive adjustment.
+
+If live performance after deployment shows deterioration beyond acceptable thresholds:
+
+* automatically disable the new gates
+* restore the previous version
+* log the reason
+* prevent similar changes from being retried unless new evidence exists
+
+The rollback system must be completely automatic.
+
+⸻
+
+4. Confidence Thresholds
+
+Every adaptive adjustment must receive a confidence score.
+
+Only deploy if:
+
+* statistical significance is sufficient
+* sample size is adequate
+* confidence exceeds the configured minimum
+* improvement is repeatable across multiple datasets
+
+Never deploy changes based on small sample sizes.
+
+⸻
+
+5. Market Regime Awareness
+
+Identify market regimes automatically.
+
+Examples:
+
+* Bull Market
+* Bear Market
+* Sideways Market
+* High Volatility
+* Low Volatility
+* Strong Trend
+* Weak Trend
+* Earnings Season
+* Macro Event Conditions
+
+Maintain separate adaptive gate profiles for each regime.
+
+Never allow one regime to degrade performance in another.
+
+⸻
+
+6. Conservative Learning
+
+Adaptive gates should evolve gradually.
+
+Use bounded parameter updates.
+
+Prevent large jumps caused by recent trades.
+
+Require multiple independent confirmations before increasing or decreasing thresholds.
+
+Prioritise stability over speed.
+
+⸻
+
+7. Continuous Learning Database
+
+Store every trade with:
+
+* market regime
+* features
+* gate values
+* AI confidence
+* prediction
+* outcome
+* profit/loss
+* MAE
+* MFE
+* holding period
+* reason for success/failure
+
+Use this database to improve future learning.
+
+⸻
+
+8. Ensemble Evaluation
+
+Before accepting a gate adjustment, require agreement between multiple evaluation models.
+
+Each model independently scores the proposed change.
+
+Only deploy when consensus exceeds the required threshold.
+
+Disagreement should trigger additional testing rather than immediate deployment.
+
+⸻
+
+9. Shadow Mode
+
+Every adaptive update must first trade in Shadow Mode.
+
+The candidate strategy should:
+
+* generate signals
+* simulate execution
+* compare directly against the live strategy
+
+Only promote to production if Shadow Mode demonstrates consistent improvement.
+
+⸻
+
+10. Safety Constraints
+
+Adaptive learning must NEVER modify:
+
+* position sizing rules
+* account risk limits
+* emergency stop logic
+* portfolio exposure limits
+* maximum drawdown protection
+* capital preservation systems
+
+Those systems remain fixed safety controls.
+
+⸻
+
+11. Performance Dashboard
+
+Create reporting showing:
+
+* Current adaptive gate values
+* Previous values
+* Reason for adjustment
+* Expected improvement
+* Actual improvement
+* Profit Factor trend
+* Expectancy trend
+* Drawdown trend
+* Win Rate trend
+* False breakout rate
+* Missed opportunity rate
+
+⸻
+
+12. Regression Testing
+
+Run a complete regression test after implementation.
+
+Verify:
+
+* Alerts still work correctly
+* Market scanner functions correctly
+* News analysis functions correctly
+* Technical indicator calculations remain unchanged
+* AI prediction engine still operates correctly
+* Hourly ASX scans continue normally
+* Overnight US scans continue normally
+* Risk calculations remain unchanged
+* Entry and exit generation remains functional
+* Notifications continue operating correctly
+* Logging remains intact
+
+⸻
+
+13. Acceptance Criteria
+
+The upgrade is only accepted if:
+
+* Profit Factor is maintained or improved.
+* Expectancy is maintained or improved.
+* Maximum drawdown is not materially increased.
+* Risk controls remain intact.
+* Existing functionality is preserved.
+* No bugs are introduced.
+* Backtests, forward tests and Shadow Mode all confirm the improvement.
+
+If any criterion fails, automatically reject the upgrade, identify the root cause, correct it, and repeat testing until all acceptance criteria are satisfied.
+
+Produce a comprehensive report comparing the system before and after the upgrade, including all key performance metrics, statistical validation, identified issues, fixes applied, and a final recommendation on whether the upgrade is safe to deploy.
