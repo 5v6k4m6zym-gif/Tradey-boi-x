@@ -123,8 +123,14 @@ def _fetch_regime(market: str) -> RegimeData:
     def _get_series(ticker: str) -> pd.Series | None:
         try:
             if len(tickers) == 1:
-                return raw["Close"].squeeze().dropna()
-            return raw[ticker]["Close"].squeeze().dropna()
+                df_s = raw.copy()
+            else:
+                df_s = raw[ticker].copy()
+            # Flatten MultiIndex and normalise to Title Case (handles new yfinance)
+            if hasattr(df_s.columns, "levels") and df_s.columns.nlevels > 1:
+                df_s.columns = df_s.columns.get_level_values(0)
+            df_s.columns = [c.title() if isinstance(c, str) else c for c in df_s.columns]
+            return df_s["Close"].squeeze().dropna()
         except Exception:
             return None
 
