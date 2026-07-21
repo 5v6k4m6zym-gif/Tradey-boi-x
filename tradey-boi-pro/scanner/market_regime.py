@@ -134,8 +134,9 @@ def _fetch_regime(market: str) -> RegimeData:
         except Exception:
             return None
 
-    index_close = _get_series(tickers["index"])
-    vix_close   = _get_series(tickers["vix"])
+    index_close   = _get_series(tickers["index"])
+    vix_close     = _get_series(tickers["vix"])
+    breadth_close = _get_series(tickers["breadth"])
 
     if index_close is None or len(index_close) < 60:
         return RegimeData(market=market, regime=Regime.NEUTRAL, confidence=0.5,
@@ -151,37 +152,56 @@ def _fetch_regime(market: str) -> RegimeData:
     if vix_close is not None and len(vix_close) > 0:
         vix_val = float(vix_close.iloc[-1])
 
-    # ── Regime classification ─────────────────────────────────────────────────
+    # ── Regime classification (12 possible points — prevents artificial 100%) ──
     bull_points = 0
     bear_points = 0
 
-    # Trend
+    # 1. Short-term trend: price vs 50 EMA (max 2 bull / 2 bear)
     if pct_50ema > 2:    bull_points += 2
     elif pct_50ema > 0:  bull_points += 1
     elif pct_50ema < -2: bear_points += 2
     else:                bear_points += 1
 
-    if pct_200ema > 0:   bull_points += 2
+    # 2. Long-term trend: price vs 200 EMA (max 2 bull / 2 bear)
+    if pct_200ema > 0:    bull_points += 2
     elif pct_200ema < -5: bear_points += 2
-    else:                bear_points += 1
+    else:                 bear_points += 1
 
-    # EMA alignment
+    # 3. EMA alignment: 50 above/below 200 (max 1 bull / 1 bear)
     if ema50 > ema200:   bull_points += 1
     else:                bear_points += 1
 
-    # VIX
+    # 4. Volatility: VIX level (max 2 bull / 2 bear)
     if vix_val is not None:
         if vix_val < 18:   bull_points += 2
         elif vix_val < 25: bull_points += 1
         elif vix_val > 35: bear_points += 2
         elif vix_val > 28: bear_points += 1
 
-    # Rate of change (10-day momentum)
+    # 5. Short-term momentum: 10-day rate of change (max 1 bull / 1 bear)
     if len(index_close) >= 10:
         roc10 = (curr - float(index_close.iloc[-10])) / float(index_close.iloc[-10]) * 100
         if roc10 > 2:    bull_points += 1
         elif roc10 < -3: bear_points += 1
 
+    # 6. Medium-term momentum: 50-day rate of change (max 1 bull / 1 bear)
+    if len(index_close) >= 50:
+        roc50 = (curr - float(index_close.iloc[-50])) / float(index_close.iloc[-50]) * 100
+        if roc50 > 5:     bull_points += 1
+        elif roc50 < -10: bear_points += 1
+
+    # 7. Market breadth: broad index vs its 200 EMA (max 1 bull / 1 bear)
+    if breadth_close is not None and len(breadth_close) >= 200:
+        b_curr   = float(breadth_close.iloc[-1])
+        b_ema200 = float(breadth_close.ewm(span=200, adjust=False).mean().iloc[-1])
+        # Also check if breadth is declining (divergence warning)
+        b_ema50  = float(breadth_close.ewm(span=50, adjust=False).mean().iloc[-1])
+        if b_curr > b_ema200 and b_ema50 > b_ema200:
+            bull_points += 1   # broad market healthy and trending
+        elif b_curr < b_ema200:
+            bear_points += 1   # broad market below long-term average
+
+    # ── Regime classification ─────────────────────────────────────────────────
     total = bull_points + bear_points
     confidence = max(bull_points, bear_points) / total if total > 0 else 0.5
 
@@ -193,20 +213,19 @@ def _fetch_regime(market: str) -> RegimeData:
         regime = Regime.NEUTRAL
 
     log.info(
-        f"Regime [{market}]: {regime.value}  "
-        f"confidence={confidence:.2f}  "
-        f"50EMA={pct_50ema:+.1f}%  200EMA={pct_200ema:+.1f}%  "
-        f"VIX={vix_val}"
+        f"Regime [{market}]: {regime.value}  conf={confidence:.2f}  "
+        f"bull={bull_points}  bear={bear_points}  total={total}  "
+        f"50EMA={pct_50ema:+.1f}%  200EMA={pct_200ema:+.1f}%  VIX={vix_val}"
     )
 
     return RegimeData(
-        market          = market,
-        regime          = regime,
-        confidence      = round(confidence, 2),
-        vix             = round(vix_val, 1) if vix_val else None,
+        market           = market,
+        regime           = regime,
+        confidence       = round(confidence, 2),
+        vix              = round(vix_val, 1) if vix_val else None,
         index_pct_50ema  = round(pct_50ema, 2),
         index_pct_200ema = round(pct_200ema, 2),
-        fetched_at      = datetime.utcnow(),
+        fetched_at       = datetime.utcnow(),
     )
 
 
