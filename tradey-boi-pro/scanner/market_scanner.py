@@ -1,26 +1,35 @@
 """
 Tradey Boi Pro — Core Scanner
 
-Applies Tradey Boi X's proven breakout detection logic to an arbitrary ticker list.
-This module is pure signal detection — no scheduling, no ranking, no regime logic.
-Those are handled by monitor.py, ranker.py, and market_regime.py respectively.
+Uses Tradey Boi X's REAL trained EnsembleModel (XGBoost + RandomForest, 60/40 blend)
+and the identical 15-feature pipeline, hard filters, scoring rules, and adaptive
+thresholds from X's engine.py.  The only difference from X is execution instead of
+Discord alerts.
 
-Preserved from X:
-  - 20-day high breakout filter
-  - Volume surge ≥ 1.5× average
-  - 50-day EMA trend filter
-  - ATR-based stop/target calculation
-  - 14-day RSI filter (50–80 sweet spot)
-  - Score (0–10) construction logic
+Feature pipeline (matches X's get_data() exactly):
+  rsi, macd_diff, bb_width, atr, ret_5, ret_10, ret_20, ret_63,
+  vol_ratio, breakout, obv_ratio, adx, mfi, bb_squeeze, gap_up
 
-Upgraded in Pro:
-  - Covers any ticker list (not a fixed watchlist)
-  - Returns OHLCV cache for ranker to reuse (no double-download)
-  - scan_batch() for efficient subset re-scans (Tier 2/3)
+Hard filters (X's decide() gates, unchanged):
+  EMA20 > EMA50 today and prior day, MACD diff > 0 today and prior day,
+  RSI 25–72, vol_ratio ≥ 0.5, AI prob ≥ 0.40
+
+Scoring (X's rules):
+  +3/2/1 AI prob tiers, +3 52-week breakout, +2 vol surge >1.5×,
+  +2/1 RSI sweet-spot, +1 EMA uptrend
+
+Tier gates (X's adaptive thresholds):
+  ELITE: score ≥ elite_min AND prob ≥ prob_floor AND expected_R > 0
+  STRONG BUY: score ≥ sb_min AND prob ≥ prob_floor AND expected_R > 0
 """
 from __future__ import annotations
 
+import json
 import logging
+import pathlib
+import pickle
+import sys
+import threading
 from datetime import datetime
 from typing import Callable, Optional
 
@@ -28,14 +37,29 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 import pytz
+import ta
 
 log = logging.getLogger("MarketScanner")
 
 _ASX_TZ = pytz.timezone("Australia/Sydney")
 _US_TZ  = pytz.timezone("America/New_York")
 
+# ── Paths to X's shared artefacts ─────────────────────────────────────────────
+_SCANNER_DIR   = pathlib.Path(__file__).parent
+_PRO_DIR       = _SCANNER_DIR.parent
+_X_DIR         = _PRO_DIR.parent / "tradey-boi-x"
+_X_MODEL_PATH  = _X_DIR / ".cache" / "backtest_checkpoint" / "model.pkl"
+_X_ADAPTIVE    = _X_DIR / "config" / "adaptive_thresholds.json"
 
-# ── Market hours ──────────────────────────────────────────────────────────────
+# X's 15-feature list — must match engine.py exactly
+FEATURES = [
+    "rsi", "macd_diff", "bb_width", "atr",
+    "ret_5", "ret_10", "ret_20", "ret_63",
+    "vol_ratio", "breakout", "obv_ratio",
+    "adx", "mfi", "bb_squeeze", "gap_up",
+]
+
+# ── Market hours ───────────────────────────────────────────────────────────────
 
 def _is_asx_open() -> bool:
     now = datetime.now(_ASX_TZ)
@@ -65,84 +89,236 @@ def next_open_seconds() -> int:
     return min(secs) if secs else 3600
 
 
-# ── Core signal detection (Tradey Boi X logic, unchanged) ────────────────────
+# ── X's trained EnsembleModel — loaded once, shared across all scans ──────────
 
-def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]:
+_X_MODEL      = None
+_X_MODEL_LOCK = threading.Lock()
+
+
+def _load_x_model():
     """
-    Tradey Boi X breakout detection applied to a single ticker's OHLCV DataFrame.
-    Returns a raw signal dict or None if criteria not met.
-    All indicator logic preserved from X's strategy.
+    Load X's trained XGBoost+RF EnsembleModel from the shared cache.
+    Thread-safe singleton — loads exactly once per process.
+    Falls back to None if unavailable (heuristic prob used instead).
     """
-    if df is None or len(df) < 30:
-        return None
+    global _X_MODEL
+    if _X_MODEL is not None:
+        return _X_MODEL
+    with _X_MODEL_LOCK:
+        if _X_MODEL is not None:
+            return _X_MODEL
+        try:
+            if str(_X_DIR) not in sys.path:
+                sys.path.insert(0, str(_X_DIR))
+            import engine as _x_engine  # noqa: F401 — needed so pickle can resolve EnsembleModel
+            with open(_X_MODEL_PATH, "rb") as fh:
+                _X_MODEL = pickle.load(fh)
+            log.info("X EnsembleModel loaded from cache — using real AI probability")
+        except Exception as exc:
+            log.warning(f"Could not load X model ({exc}) — heuristic prob fallback active")
+            _X_MODEL = None
+    return _X_MODEL
+
+
+# ── X's adaptive thresholds (auto-updated by X's weekly learning cycle) ───────
+
+def _load_x_adaptive_cfg() -> dict:
+    """Read X's adaptive_thresholds.json — the same file X's engine updates weekly."""
     try:
-        close  = df["Close"].squeeze().dropna()
-        volume = df["Volume"].squeeze().dropna()
-        high   = df["High"].squeeze().dropna()
-        low    = df["Low"].squeeze().dropna()
+        return json.loads(_X_ADAPTIVE.read_text())
+    except Exception:
+        return {"prob_floor": 0.53, "sb_base_score": 7}
+
+
+def _regime_score_thresholds(sb_base: int) -> tuple[int, int]:
+    """
+    Return (elite_min, sb_min) using X's default neutral-regime offsets.
+    Pro doesn't run the full regime classifier, so we use the neutral baseline
+    (same as X for weak_bull / sideways market).
+    """
+    return sb_base + 2, sb_base
+
+
+# ── X's expected-value R filter (mirrors engine.py:expected_value_r) ──────────
+
+def _expected_value_r(price: float, atr: float, prob: float, breakout: bool) -> float:
+    """
+    Reject setups where the ATR-implied reward:risk is too thin even at the
+    given win probability.  Identical formula to X's expected_value_r().
+    """
+    if price <= 0 or atr <= 0:
+        return -1.0
+    atr_pct = atr / price * 100
+    if atr_pct >= 3.0:
+        base_target_pct, sl_mult = 8.0, 1.2
+    elif atr_pct >= 1.5:
+        base_target_pct, sl_mult = 5.0, 1.0
+    else:
+        base_target_pct, sl_mult = 3.0, 0.8
+    if breakout:
+        base_target_pct *= 1.25
+    denom = sl_mult * atr_pct
+    if denom <= 0:
+        return -1.0
+    reward_r = base_target_pct / denom
+    return prob * reward_r - (1 - prob) * 1.0
+
+
+# ── Feature computation (mirrors X's get_data() exactly) ──────────────────────
+
+def _compute_x_features(df: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """
+    Compute all 15 FEATURES from a raw OHLCV DataFrame.
+    Uses min_periods=1 on long rolling windows so shorter histories still
+    produce a result for the last row (the model was trained with full history
+    but degrades gracefully with partial data).
+    Returns None if any required column is missing or computation fails.
+    """
+    try:
+        df = df.copy()
+        df.columns = (
+            df.columns.get_level_values(0)
+            if hasattr(df.columns, "levels") and df.columns.nlevels > 1
+            else df.columns
+        )
+        close = df["Close"].squeeze().astype(float)
+        high  = df["High"].squeeze().astype(float)
+        low   = df["Low"].squeeze().astype(float)
+        vol   = df["Volume"].squeeze().astype(float)
 
         if len(close) < 30:
             return None
 
-        curr_price  = float(close.iloc[-1])
-        prev_close  = float(close.iloc[-2])
-        if curr_price <= 0:
+        # ── Trend indicators ──────────────────────────────────────────────────
+        macd_ind          = ta.trend.MACD(close)
+        df["macd"]        = macd_ind.macd()
+        df["macd_signal"] = macd_ind.macd_signal()
+        df["macd_diff"]   = macd_ind.macd_diff()
+        df["ema20"]       = ta.trend.EMAIndicator(close, window=20).ema_indicator()
+        df["ema50"]       = ta.trend.EMAIndicator(close, window=50).ema_indicator()
+        df["adx"]         = ta.trend.ADXIndicator(high, low, close, window=14).adx()
+
+        # ── Momentum ──────────────────────────────────────────────────────────
+        df["rsi"] = ta.momentum.RSIIndicator(close, window=14).rsi()
+        df["mfi"] = ta.volume.MFIIndicator(high, low, close, vol, window=14).money_flow_index()
+
+        # ── Volatility ────────────────────────────────────────────────────────
+        bb_ind         = ta.volatility.BollingerBands(close)
+        df["bb_upper"] = bb_ind.bollinger_hband()
+        df["bb_lower"] = bb_ind.bollinger_lband()
+        df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / close
+        df["atr"]      = ta.volatility.AverageTrueRange(high, low, close).average_true_range()
+        df["bb_squeeze"] = (
+            df["bb_width"] < df["bb_width"].rolling(126, min_periods=20).quantile(0.20)
+        ).astype(int)
+
+        # ── Volume features ───────────────────────────────────────────────────
+        vol_mean        = vol.rolling(20, min_periods=5).mean().replace(0, float("nan"))
+        df["vol_ratio"] = vol / vol_mean
+        df["dollar_vol"] = (close * vol).rolling(20, min_periods=5).mean()
+        obv             = ta.volume.OnBalanceVolumeIndicator(close, vol).on_balance_volume()
+        obv_chg         = obv.diff(5)
+        df["obv_ratio"] = obv_chg / (obv.rolling(20, min_periods=5).std() + 1e-10)
+
+        # ── Returns ───────────────────────────────────────────────────────────
+        df["ret_5"]  = close.pct_change(5)
+        df["ret_10"] = close.pct_change(10)
+        df["ret_20"] = close.pct_change(20)
+        df["ret_63"] = close.pct_change(63)
+
+        # ── Breakout (52-week high) ───────────────────────────────────────────
+        df["breakout"] = (close >= close.rolling(252, min_periods=60).max() * 0.98).astype(int)
+
+        # ── Gap up ────────────────────────────────────────────────────────────
+        if "Open" in df.columns:
+            df["gap_up"] = ((df["Open"].squeeze().astype(float) / close.shift(1) - 1) > 0.02).astype(int)
+        else:
+            df["gap_up"] = 0
+
+        return df
+
+    except Exception as exc:
+        log.debug(f"Feature computation failed: {exc}")
+        return None
+
+
+# ── Core signal detection — identical strategy logic to X's decide() ──────────
+
+def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]:
+    """
+    Evaluate one ticker using X's real EnsembleModel + identical hard filters,
+    scoring rules, adaptive thresholds, and expected-value gate.
+    Returns a signal dict or None if the ticker doesn't qualify.
+    """
+    if df is None or len(df) < 60:
+        return None
+
+    try:
+        feat_df = _compute_x_features(df)
+        if feat_df is None or len(feat_df) < 2:
             return None
 
-        high_20   = float(high.iloc[-21:-1].max())
-        avg_vol20 = float(volume.iloc[-21:-1].mean())
-        curr_vol  = float(volume.iloc[-1])
-        ema50     = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
-        ema20     = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
+        row  = feat_df.iloc[-1]
+        prev = feat_df.iloc[-2]
 
-        # ATR-14
-        tr_list = []
-        for i in range(-15, 0):
-            h = float(high.iloc[i]);  l = float(low.iloc[i])
-            c = float(close.iloc[i - 1])
-            tr_list.append(max(h - l, abs(h - c), abs(l - c)))
-        atr     = float(np.mean(tr_list))
-        atr_pct = atr / curr_price * 100
+        # ── Guard against NaN in critical indicators ───────────────────────────
+        for col in ("ema20", "ema50", "rsi", "macd_diff", "vol_ratio", "atr"):
+            if pd.isna(row.get(col)):
+                return None
 
-        # RSI-14
-        delta  = close.diff()
-        avg_g  = delta.clip(lower=0).rolling(14).mean().iloc[-1]
-        avg_l  = (-delta).clip(lower=0).rolling(14).mean().iloc[-1]
-        rsi    = 100 - 100 / (1 + avg_g / avg_l) if avg_l > 0 else 100
+        # ── AI probability — X's real EnsembleModel ───────────────────────────
+        model = _load_x_model()
+        if model is not None:
+            try:
+                feat_row = pd.DataFrame([{f: row.get(f, 0) for f in FEATURES}])
+                prob = float(model.predict_proba(feat_row)[0][1])
+            except Exception as exc:
+                log.debug(f"Model predict failed for {ticker}: {exc}")
+                prob = None
+        else:
+            prob = None
 
-        # ── Hard filters (X strategy, unchanged) ─────────────────────────────
-        if curr_price <= high_20 * 1.001:   return None   # not a breakout
-        if curr_price < ema50 * 0.97:        return None   # below trend
-        if rsi > 80:                          return None   # overbought
-        if curr_vol  < avg_vol20 * 1.1:      return None   # no vol confirmation
-        if atr_pct   < 0.3:                  return None   # too thin
+        # Heuristic fallback (only used when model is unavailable)
+        if prob is None:
+            rsi_raw = float(row["rsi"])
+            vr_raw  = float(row["vol_ratio"])
+            prob = min(0.40 + (rsi_raw - 50) / 200 + (vr_raw - 1) * 0.05, 0.82)
+            prob = max(prob, 0.35)
 
-        # ── Score 0–10 (X logic preserved) ───────────────────────────────────
+        # ── Hard filters (X's decide() gates, unchanged) ──────────────────────
+        if float(row["ema20"])     <= float(row["ema50"]):          return None  # uptrend today
+        if float(prev["ema20"])    <= float(prev["ema50"]):         return None  # uptrend prior day
+        if not pd.isna(row.get("macd_diff")) and float(row["macd_diff"])  <= 0: return None  # MACD bull today
+        if not pd.isna(prev.get("macd_diff")) and float(prev["macd_diff"]) <= 0: return None  # MACD bull prior
+        rsi = float(row["rsi"])
+        if rsi >= 72 or rsi <= 25:                                  return None  # RSI safe zone
+        vr = float(row["vol_ratio"]) if not pd.isna(row["vol_ratio"]) else 0
+        if vr < 0.5:                                                return None  # liquidity
+        if prob < 0.40:                                             return None  # AI floor
+
+        # ── Scoring (X's rules) ───────────────────────────────────────────────
+        is_breakout = bool(int(row.get("breakout", 0)))
         score = 0
-        bp    = (curr_price - high_20) / high_20 * 100
-        if bp > 3:    score += 2
-        elif bp > 1:  score += 1
-        vr = curr_vol / avg_vol20 if avg_vol20 > 0 else 1
-        if vr > 3:    score += 2
-        elif vr > 2:  score += 1
-        if curr_price > ema20 > ema50:  score += 2
-        elif curr_price > ema50:        score += 1
-        if 55 <= rsi <= 70:   score += 2
-        elif 50 <= rsi < 55:  score += 1
-        dm = (curr_price - prev_close) / prev_close * 100
-        if dm > 2:  score += 1
-        if dm > 4:  score += 1
-        score = min(score, 10)
+        if   prob >= 0.80: score += 3
+        elif prob >= 0.70: score += 2
+        elif prob >= 0.60: score += 1
+        if is_breakout:    score += 3
+        if vr > 1.5:       score += 2
+        if 35 <= rsi <= 65:  score += 2
+        elif rsi < 70:       score += 1
+        if float(row["ema20"]) > float(row["ema50"]): score += 1   # always True here but mirrors X
 
-        # ── Probability estimate (X heuristic) ───────────────────────────────
-        prob = min(0.50 + score * 0.025, 0.82)
+        # ── Adaptive thresholds from X's weekly learning cycle ────────────────
+        acfg        = _load_x_adaptive_cfg()
+        prob_floor  = float(acfg.get("prob_floor",    params.get("min_prob",  0.53)))
+        sb_base     = int(  acfg.get("sb_base_score", params.get("min_score", 7)))
+        elite_min, sb_min = _regime_score_thresholds(sb_base)
 
-        min_score = int(params.get("min_score", 7))
-        min_prob  = float(params.get("min_prob", 0.53))
-        if score < min_score or prob < min_prob:
-            return None
+        # ── ATR / stop / target ───────────────────────────────────────────────
+        curr_price  = float(row["Close"])
+        atr         = float(row["atr"]) if not pd.isna(row["atr"]) else curr_price * 0.015
+        atr_pct     = atr / curr_price * 100 if curr_price > 0 else 0
 
-        # ── Stop / Target (X ATR-mult logic) ─────────────────────────────────
         if atr_pct >= 3.0:
             sl_mult = params.get("sl_mult_hi",  1.2);  tp_pct = params.get("target_hi",  12.0)
         elif atr_pct >= 1.5:
@@ -152,27 +328,49 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
 
         stop_price   = max(curr_price - sl_mult * atr, curr_price * 0.88)
         target_price = curr_price * (1 + tp_pct / 100)
-        exchange     = "ASX" if ticker.endswith(".AX") else "SMART"
+
+        # ── Expected-value gate (X's formula) ─────────────────────────────────
+        expected_r = _expected_value_r(curr_price, atr, prob, is_breakout)
+
+        # ── Tier classification (X's thresholds) ──────────────────────────────
+        if   score >= elite_min and prob >= prob_floor and expected_r > 0:
+            tier = "ELITE"
+        elif score >= sb_min    and prob >= prob_floor and expected_r > 0:
+            tier = "STRONG BUY"
+        elif score >= 5:
+            tier = "BUY"
+        else:
+            return None   # IGNORE — don't surface to ranker
+
+        # Respect per-params overrides (backtest / analysis mode with lowered gates)
+        min_score_override = int(params.get("min_score", 0))
+        if min_score_override == 0 and tier == "BUY":
+            return None   # live scan: only ELITE / STRONG BUY pass through
+
+        exchange = "ASX" if ticker.endswith(".AX") else "SMART"
 
         return {
-            "ticker":       ticker,
-            "entry_price":  round(curr_price,    4),
-            "stop_price":   round(stop_price,    4),
-            "target_price": round(target_price,  4),
-            "atr_pct":      round(atr_pct,       2),
-            "score":        score,
-            "prob":         round(prob,           3),
-            "rsi":          round(float(rsi),     1),
-            "vol_ratio":    round(vr,             1),
-            "breakout_pct": round(bp,             2),
-            "signal_date":  datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
-            "exchange":     exchange,
-            "currency":     "AUD" if exchange == "ASX" else "USD",
-            "tier":         "STRONG BUY" if score >= 8 else "BUY",   # pre-rank tier
-            "source":       "pro_scanner",
+            "ticker":         ticker,
+            "entry_price":    round(curr_price,   4),
+            "stop_price":     round(stop_price,   4),
+            "target_price":   round(target_price, 4),
+            "atr_pct":        round(atr_pct,      2),
+            "score":          score,
+            "prob":           round(prob,          3),
+            "ai_confidence":  round(prob,          3),
+            "rsi":            round(rsi,           1),
+            "vol_ratio":      round(vr,            1),
+            "breakout":       is_breakout,
+            "expected_r":     round(expected_r,    3),
+            "signal_date":    datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+            "exchange":       exchange,
+            "currency":       "AUD" if exchange == "ASX" else "USD",
+            "tier":           tier,
+            "source":         "pro_scanner",
         }
-    except Exception as e:
-        log.debug(f"Score error {ticker}: {e}")
+
+    except Exception as exc:
+        log.debug(f"Score error {ticker}: {exc}")
         return None
 
 
@@ -180,7 +378,7 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
 
 def _download_batch(
     tickers: list[str],
-    period:  str = "90d",
+    period:  str = "15mo",      # 15 months ≈ 325 trading days → enough for 252-day breakout
 ) -> dict[str, pd.DataFrame]:
     if not tickers:
         return {}
@@ -197,13 +395,13 @@ def _download_batch(
         for t in tickers:
             try:
                 df = raw[t].dropna(how="all")
-                if not df.empty and len(df) >= 30:
+                if not df.empty and len(df) >= 60:
                     result[t] = df
             except (KeyError, TypeError):
                 pass
         return result
-    except Exception as e:
-        log.error(f"Batch download error: {e}")
+    except Exception as exc:
+        log.error(f"Batch download error: {exc}")
         return {}
 
 
@@ -223,6 +421,8 @@ def scan_all(
     if params is None:
         params = _default_params()
 
+    _load_x_model()   # warm up model before scan loop starts
+
     signals:  list[dict]              = []
     df_cache: dict[str, pd.DataFrame] = {}
     batches   = [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
@@ -240,29 +440,32 @@ def scan_all(
             sig = _score_signal(df, ticker, params)
             if sig:
                 signals.append(sig)
-                log.info(f"  RAW SIGNAL: {ticker}  score={sig['score']}  prob={sig['prob']:.2f}")
+                log.info(
+                    f"  RAW SIGNAL: {ticker}  tier={sig['tier']}  "
+                    f"score={sig['score']}  prob={sig['prob']:.2f}  "
+                    f"expectedR={sig['expected_r']:+.2f}"
+                )
 
     signals.sort(key=lambda s: (s["score"], s["prob"]), reverse=True)
-    log.info(f"scan_all: {len(signals)} raw signals from {len(tickers)} tickers")
+    log.info(f"scan_all: {len(signals)} signals from {len(tickers)} tickers")
 
     return (signals, df_cache) if return_cache else signals
 
 
 def scan_batch(
     tickers:      list[str],
-    period:       str  = "90d",
+    period:       str  = "15mo",
     return_cache: bool = False,
     params:       dict | None = None,
 ) -> tuple[list[dict], dict] | list[dict]:
     """
     Fast re-scan of a small ticker subset (Tier 2/3 refresh).
-    Skips batching overhead for speed.
     """
     if params is None:
         params = _default_params()
 
-    data     = _download_batch(tickers, period=period)
-    signals  = []
+    data    = _download_batch(tickers, period=period)
+    signals = []
     for ticker, df in data.items():
         sig = _score_signal(df, ticker, params)
         if sig:
