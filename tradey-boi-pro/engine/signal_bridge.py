@@ -72,12 +72,12 @@ def get_pending_signals(
         if sig.get("regime_alignment") == "BEAR":
             log.debug(f"Regime veto: {ticker} skipped (BEAR)")
             continue
-        # Quality gates
+        # Quality gates — use original model prob (ai_confidence is reduced by ranker)
         composite = float(sig.get("composite_score", sig.get("score", 0)))
-        ai_conf   = float(sig.get("ai_confidence",  sig.get("prob",  0)))
+        raw_prob  = float(sig.get("prob", sig.get("ai_confidence", 0)))
         if composite < min_composite:
             continue
-        if ai_conf < min_prob:
+        if raw_prob < min_prob:
             continue
         # Keep highest composite if duplicate
         if ticker not in combined or composite > float(combined[ticker].get("composite_score", 0)):
