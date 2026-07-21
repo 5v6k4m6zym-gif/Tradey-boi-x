@@ -21,6 +21,14 @@ import yfinance as yf
 
 log = logging.getLogger("Backtest")
 
+# Import the real scanner so the backtest tests the actual ML strategy
+try:
+    from scanner.market_scanner import _score_signal as _real_score, _load_x_model
+    _USE_REAL_SCANNER = True
+except Exception as _e:
+    log.warning(f"Could not import real scanner — falling back to rule-based: {_e}")
+    _USE_REAL_SCANNER = False
+
 
 # ── Data structures ────────────────────────────────────────────────────────────
 
@@ -71,12 +79,22 @@ class BtTrade:
 
 def _detect_signal(df_slice: pd.DataFrame, ticker: str, params: dict) -> dict | None:
     """
-    Apply breakout criteria to df_slice (data up to and including signal day).
-    Mirror of market_scanner logic — no lookahead.
-    Returns signal dict or None.
+    Evaluate one ticker using the real X EnsembleModel (same as live bot).
+    Falls back to simple rule-based scoring if the scanner module is unavailable.
+    No lookahead: df_slice contains only data up to and including the signal day.
     """
     if df_slice is None or len(df_slice) < 30:
         return None
+
+    # ── Real scanner path (uses actual ML model) ─────────────────────────────
+    if _USE_REAL_SCANNER:
+        try:
+            return _real_score(df_slice, ticker, params)
+        except Exception as e:
+            log.debug(f"Real scorer failed for {ticker}: {e}")
+            return None
+
+    # ── Rule-based fallback (used only if scanner import failed) ─────────────
     try:
         close  = df_slice["Close"].squeeze()
         volume = df_slice["Volume"].squeeze()
@@ -94,7 +112,6 @@ def _detect_signal(df_slice: pd.DataFrame, ticker: str, params: dict) -> dict | 
         ema50     = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
         ema20     = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
 
-        # ATR (14-day)
         tr_list = []
         for i in range(-15, 0):
             h = float(high.iloc[i]);  l = float(low_s.iloc[i])
@@ -103,20 +120,17 @@ def _detect_signal(df_slice: pd.DataFrame, ticker: str, params: dict) -> dict | 
         atr     = float(np.mean(tr_list))
         atr_pct = atr / curr_price * 100
 
-        # RSI
         delta  = close.diff()
         avg_g  = delta.clip(lower=0).rolling(14).mean().iloc[-1]
         avg_l  = (-delta).clip(lower=0).rolling(14).mean().iloc[-1]
         rsi    = 100 - 100 / (1 + avg_g / avg_l) if avg_l > 0 else 100
 
-        # Hard filters
         if curr_price <= high_20 * 1.001:    return None
         if curr_price < ema50 * 0.97:        return None
         if rsi > 80:                          return None
         if curr_vol < avg_vol20 * 1.1:       return None
         if atr_pct < 0.3:                    return None
 
-        # Score
         score = 0
         bp    = (curr_price - high_20) / high_20 * 100
         if bp > 3:    score += 2
@@ -135,10 +149,9 @@ def _detect_signal(df_slice: pd.DataFrame, ticker: str, params: dict) -> dict | 
 
         prob = min(0.50 + score * 0.025, 0.82)
 
-        if score  < params.get("min_score", 7):   return None
-        if prob   < params.get("min_prob",  0.53): return None
+        if score < params.get("min_score", 7):    return None
+        if prob  < params.get("min_prob",  0.53):  return None
 
-        # Stop / target
         if atr_pct >= 3.0:
             sl_mult = params.get("sl_mult_hi",  1.2);  tp_pct = params.get("target_hi",  12.0)
         elif atr_pct >= 1.5:
@@ -150,13 +163,13 @@ def _detect_signal(df_slice: pd.DataFrame, ticker: str, params: dict) -> dict | 
         target = curr_price * (1 + tp_pct / 100)
 
         return {
-            "ticker":      ticker,
-            "entry_price": curr_price,
-            "stop_price":  round(stop,   4),
-            "target_price": round(target, 4),
-            "atr_pct":     round(atr_pct, 2),
-            "score":       score,
-            "prob":        round(prob,    3),
+            "ticker":       ticker,
+            "entry_price":  curr_price,
+            "stop_price":   round(stop,    4),
+            "target_price": round(target,  4),
+            "atr_pct":      round(atr_pct, 2),
+            "score":        score,
+            "prob":         round(prob,    3),
         }
     except Exception as e:
         log.debug(f"Signal error {ticker}: {e}")
@@ -202,6 +215,13 @@ def run_backtest(
         "cb_losses":      params.get("cb_consecutive_losses", 3),
         "cb_pause_days":  params.get("cb_pause_days",  7),
     }
+
+    # Pre-warm the ML model so it loads once, not per-ticker
+    if _USE_REAL_SCANNER:
+        try:
+            _load_x_model()
+        except Exception:
+            pass
 
     # ── Download historical data ─────────────────────────────────────────────
     # Need 90 extra days before test_start for indicator warm-up
