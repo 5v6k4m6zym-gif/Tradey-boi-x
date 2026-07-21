@@ -100,14 +100,16 @@ def _weekly_trend_ok(df: pd.DataFrame) -> bool:
     No extra download. Fails open (returns True) if data is insufficient.
     """
     try:
-        df = df.copy()
-        df.index = pd.to_datetime(df.index)
-        weekly = df["Close"].resample("W").last().dropna()
+        idx = pd.to_datetime(df.index)
+        if hasattr(idx, "tz") and idx.tz is not None:
+            idx = idx.tz_localize(None)   # strip tz — resample requires tz-naive
+        close = pd.Series(df["Close"].squeeze().values, index=idx)
+        weekly = close.resample("W").last().dropna()
         if len(weekly) < 50:
             return True
-        ema20 = weekly.ewm(span=20, adjust=False).mean().iloc[-1]
-        ema50 = weekly.ewm(span=50, adjust=False).mean().iloc[-1]
-        return bool(ema20 > ema50)
+        ema20 = float(weekly.ewm(span=20, adjust=False).mean().iloc[-1])
+        ema50 = float(weekly.ewm(span=50, adjust=False).mean().iloc[-1])
+        return ema20 > ema50
     except Exception:
         return True
 
@@ -670,11 +672,6 @@ def scan_batch(
             signals.append(sig)
 
     signals.sort(key=lambda s: (s["score"], s["prob"]), reverse=True)
-
-    # VWAP + multi-timeframe post-filter (live only)
-    min_score = params.get("min_score", 7)
-    signals = _apply_live_filters(signals, min_score)
-
     return (signals, data) if return_cache else signals
 
 
