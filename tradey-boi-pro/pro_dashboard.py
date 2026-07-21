@@ -971,6 +971,11 @@ with tab_bt:
             st.markdown("**Quality gates**")
             bt_min_score = st.slider("Min score",       1, 10,  5, key="bt_min_score")
             bt_min_prob  = st.slider("Min probability", 0.50, 0.75, 0.50, step=0.01, key="bt_min_prob")
+            st.caption(
+                "ℹ️ These thresholds apply to the **backtest only** — they do not affect "
+                "the live bot. The backtest uses a simplified rule-based scorer; score 5 here "
+                "is roughly equivalent to score 7 in the live ML model."
+            )
 
         with col3:
             st.markdown("**Risk parameters**")
