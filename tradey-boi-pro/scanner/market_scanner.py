@@ -443,13 +443,19 @@ def _download_batch(
             auto_adjust=True, progress=False,
             group_by="ticker", threads=True,
         )
+        def _norm(df: pd.DataFrame) -> pd.DataFrame:
+            if hasattr(df.columns, "levels") and df.columns.nlevels > 1:
+                df.columns = df.columns.get_level_values(0)
+            df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
+            return df
+
         if len(tickers) == 1:
-            df = raw.dropna(how="all")
+            df = _norm(raw.dropna(how="all"))
             return {tickers[0]: df} if not df.empty else {}
         result = {}
         for t in tickers:
             try:
-                df = raw[t].dropna(how="all")
+                df = _norm(raw[t].dropna(how="all"))
                 if not df.empty and len(df) >= 60:
                     result[t] = df
             except (KeyError, TypeError):
