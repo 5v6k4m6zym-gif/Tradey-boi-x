@@ -1265,6 +1265,7 @@ with tab_bt:
             _monthly_std = max(_bm["max_drawdown"] * 0.35, 0.015)
 
         _ann_roi_bt = ((1 + _monthly_r) ** 12 - 1) * 100
+        _tpm        = _bm["trade_count"] / max(_pm, 0.5)
 
         st.info(
             f"📈 **Your backtest implies {_ann_roi_bt:+.1f}% annualised ROI** "
@@ -1296,6 +1297,7 @@ with tab_bt:
         )
 
         _ann_roi_bt = None
+        _tpm        = 9.0   # assumed default (see warning above)
 
         # ── Vectorised Monte Carlo ────────────────────────────────────────────
         _paths = _np.ones((_SIMS, _MTHS + 1))
