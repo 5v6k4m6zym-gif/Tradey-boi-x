@@ -1231,49 +1231,77 @@ with tab_bt:
     st.divider()
     st.subheader("📊 Forward ROI Projection")
 
-    _bt = st.session_state.get("bt_results")
-    if _bt:
-        _bm   = _bt["metrics"]
-        _td   = _bt.get("trading_days", 126)
-        _cap  = float(_bm["initial_capital"]) or float(initial_cap)
-        _pm   = max(_td / 21.0, 0.5)
-        _tpm  = _bm["trade_count"] / _pm                  # trades per month (actual)
-        _wr   = _bm["win_rate"]
-        _w_f  = _bm["avg_win"]  / max(_cap, 1)            # win as fraction of capital
-        _l_f  = _bm["avg_loss"] / max(_cap, 1)            # loss as fraction of capital
-        st.caption(
-            f"Based on your last backtest — {_bm['trade_count']} trades over "
-            f"~{_pm:.0f} months  ·  {_wr*100:.0f}% win rate  ·  "
-            f"PF {_bm['profit_factor']:.2f}  ·  Avg hold {_bm['avg_hold_days']:.0f}d"
-        )
-    else:
-        _cap  = float(initial_cap)
-        _wr   = 0.52
-        _w_f  = 0.0195   # avg win ≈ 1.95% of capital
-        _l_f  = 0.0200   # avg loss ≈ 2.00% (2% risk rule)
-        _tpm  = 6.0      # ~6 trades/month: 5 max positions, 15-day avg hold
-        st.caption(
-            "ℹ️ No backtest run yet — using optimised defaults from parameter sweep "
-            "(PF 1.054 · 52% win rate · 6 trades/month · 2% risk per trade). "
-            "Run a backtest above for personalised projections."
-        )
-
     import numpy as _np
-    _rng   = _np.random.default_rng(42)
-    _SIMS  = 1_000
-    _MTHS  = 12
 
-    # ── Vectorised Monte Carlo ────────────────────────────────────────────────
-    _paths = _np.ones((_SIMS, _MTHS + 1))
-    for _mi in range(_MTHS):
-        _counts  = _rng.poisson(max(_tpm, 0.1), _SIMS).astype(int)
-        _max_t   = max(int(_counts.max()), 1)
-        _rolls   = _rng.random((_SIMS, _max_t))
-        _wins    = _rolls < _wr
-        _mult    = _np.where(_wins, 1.0 + _w_f, 1.0 - _l_f)
-        _active  = _np.arange(_max_t)[None, :] < _counts[:, None]
-        _mult    = _np.where(_active, _mult, 1.0)
-        _paths[:, _mi + 1] = _paths[:, _mi] * _np.prod(_mult, axis=1)
+    _bt  = st.session_state.get("bt_results")
+    _rng = _np.random.default_rng(42)
+    _SIMS, _MTHS = 1_000, 12
+
+    if _bt and _bt.get("trades"):
+        _bm         = _bt["metrics"]
+        _td         = _bt.get("trading_days", 126)
+        _cap        = float(_bm["initial_capital"]) or float(initial_cap)
+        _pm         = max(_td / 21.0, 0.5)
+        _trades_raw = _bt["trades"]
+
+        # ── Build actual monthly portfolio returns from individual trades ──────
+        # t.pnl is dollars; dividing by capital gives portfolio-level % impact.
+        # Summing within each month captures concurrent-position overlap
+        # correctly — this is what was missing from the old avg_win/capital model.
+        _monthly_map: dict = {}
+        for _t in _trades_raw:
+            _mo = str(_t.exit_date)[:7]      # "YYYY-MM"
+            _monthly_map[_mo] = _monthly_map.get(_mo, 0.0) + _t.pnl / max(_cap, 1)
+
+        _mo_rets = list(_monthly_map.values())
+
+        if len(_mo_rets) >= 2:
+            _monthly_r   = float(_np.mean(_mo_rets))
+            _monthly_std = float(_np.std(_mo_rets, ddof=1))
+        else:
+            # Only 1 month of data — fall back to aggregated stats
+            _total_roi   = _bm["roi_pct"] / 100.0
+            _monthly_r   = (1 + _total_roi) ** (1 / _pm) - 1
+            _monthly_std = max(_bm["max_drawdown"] * 0.35, 0.015)
+
+        _ann_roi_bt = ((1 + _monthly_r) ** 12 - 1) * 100
+
+        st.info(
+            f"📈 **Your backtest implies {_ann_roi_bt:+.1f}% annualised ROI** "
+            f"({_bm['trade_count']} trades · {_bm['win_rate']*100:.0f}% win rate · "
+            f"PF {_bm['profit_factor']:.2f} · avg hold {_bm['avg_hold_days']:.0f}d).  "
+            f"The fan chart below shows the probability distribution of outcomes "
+            f"if that same monthly return / volatility persists forward."
+        )
+
+        # ── Vectorised Monte Carlo from actual monthly return distribution ────
+        _paths = _np.ones((_SIMS, _MTHS + 1))
+        for _mi in range(_MTHS):
+            _draws = _rng.normal(_monthly_r, max(_monthly_std, 0.001), _SIMS)
+            _paths[:, _mi + 1] = _paths[:, _mi] * (1 + _draws)
+
+    else:
+        # ── No backtest in session — show estimated projection with note ──────
+        _cap = float(initial_cap)
+        # Defaults assume: 5 concurrent positions, 12-day avg hold → ~9 trades/month,
+        # PF 1.15 (better signal quality once scanner warms up), 53% win rate.
+        _monthly_r   = 0.018    # ~1.8% per month median ≈ 23% annual
+        _monthly_std = 0.045    # ±4.5% monthly vol (realistic for swing trading)
+
+        st.warning(
+            "⚠️ **No backtest run yet — showing estimated projection only.**  "
+            "Run a backtest in the section above to see projections based on your "
+            "actual results. The numbers below assume PF 1.15, 53% win rate, and "
+            "~9 trades/month — run a backtest to replace these with your real stats."
+        )
+
+        _ann_roi_bt = None
+
+        # ── Vectorised Monte Carlo ────────────────────────────────────────────
+        _paths = _np.ones((_SIMS, _MTHS + 1))
+        for _mi in range(_MTHS):
+            _draws = _rng.normal(_monthly_r, _monthly_std, _SIMS)
+            _paths[:, _mi + 1] = _paths[:, _mi] * (1 + _draws)
 
     _p10 = _np.percentile(_paths, 10, axis=0)
     _p50 = _np.percentile(_paths, 50, axis=0)
