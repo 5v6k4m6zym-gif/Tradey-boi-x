@@ -8,3 +8,4 @@ requests>=2.31
 plotly>=5.18
 nest_asyncio>=1.6
 ta>=0.10
+streamlit-autorefresh>=1.0

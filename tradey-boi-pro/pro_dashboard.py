@@ -1422,5 +1422,9 @@ with tab_analysis:
 
 
 # ── Auto-refresh every 30s while bot is running ───────────────────────────────
+# Uses streamlit-autorefresh which refreshes via JS without killing the session.
+# The old <meta http-equiv='refresh'> caused a full page reload that wiped
+# st.session_state and disconnected the broker every 30 seconds.
 if bot.is_running():
-    st.markdown("<meta http-equiv='refresh' content='30'>", unsafe_allow_html=True)
+    from streamlit_autorefresh import st_autorefresh
+    st_autorefresh(interval=30_000, key="dashboard_autorefresh")
