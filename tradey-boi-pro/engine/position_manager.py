@@ -145,6 +145,7 @@ class PositionManager:
                              progress=False, auto_adjust=True)
             if df.empty:
                 return None
+            df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
             close = df["Close"].iloc[-1]
             if hasattr(close, "item"):
                 return float(close.item())

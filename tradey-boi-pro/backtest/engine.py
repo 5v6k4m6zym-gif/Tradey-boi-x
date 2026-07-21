@@ -234,12 +234,14 @@ def run_backtest(
             )
             if len(batch) == 1:
                 df = raw.dropna(how="all")
+                df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
                 if not df.empty:
                     all_data[batch[0]] = df
             else:
                 for t in batch:
                     try:
                         df = raw[t].dropna(how="all")
+                        df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
                         if not df.empty and len(df) >= 30:
                             all_data[t] = df
                     except (KeyError, TypeError):

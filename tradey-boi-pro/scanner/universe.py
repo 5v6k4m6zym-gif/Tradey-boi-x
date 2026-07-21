@@ -184,6 +184,7 @@ def filter_by_liquidity(
                     try:
                         df = raw[t] if len(batch) > 1 else raw
                         df = df.dropna(how="all")
+                        df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
                         if df.empty:
                             new_cache[t] = False
                             continue
