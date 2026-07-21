@@ -84,7 +84,10 @@ class IBKRClient:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         nest_asyncio.apply(self._loop)
-        self._loop.run_until_complete(self._async_main(host, port, client_id))
+        # Must run as a Task (not bare coroutine) so asyncio.timeout() works in Python 3.11+
+        self._loop.run_until_complete(
+            asyncio.ensure_future(self._async_main(host, port, client_id), loop=self._loop)
+        )
 
     async def _async_main(self, host, port, client_id):
         self._ib = IB()
