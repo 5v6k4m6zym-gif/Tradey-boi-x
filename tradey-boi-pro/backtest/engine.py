@@ -260,7 +260,7 @@ def run_backtest(
                     auto_adjust=True,
                     progress=False,
                     group_by="ticker",
-                    threads=True,
+                    threads=False,   # threads=True can deadlock on Windows
                 )
             if len(batch) == 1:
                 df = raw.dropna(how="all")

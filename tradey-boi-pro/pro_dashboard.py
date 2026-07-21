@@ -1041,7 +1041,9 @@ with tab_bt:
             st.session_state.pop("bt_results", None)
 
             from backtest.engine import run_backtest
+            import traceback as _tb, pathlib as _pl
             _bt_err = None
+            _bt_tb  = None
             _bt_results = None
             with st.spinner(""):
                 try:
@@ -1055,16 +1057,21 @@ with tab_bt:
                     )
                 except Exception as _e:
                     _bt_err = _e
+                    _bt_tb  = _tb.format_exc()
+                    # Write full traceback to file for easy debugging
+                    try:
+                        _log_path = _pl.Path(__file__).parent / "bt_error.log"
+                        _log_path.write_text(_bt_tb, encoding="utf-8")
+                    except Exception:
+                        pass
 
             if _bt_err is not None:
                 progress_bar.progress(1.0)
                 st.error(
-                    f"❌ **Backtest failed:** {_bt_err}\n\n"
-                    "Check your internet connection (yfinance downloads are required) "
-                    "and try again. If the error persists, try a shorter date range or "
-                    "fewer markets."
+                    f"❌ **Backtest crashed — full error below.**\n\n"
+                    f"Also saved to `tradey-boi-pro/bt_error.log`"
                 )
-                st.stop()
+                st.code(_bt_tb, language="text")
             else:
                 progress_bar.progress(1.0)
                 status_text.caption("✅ Backtest complete")
