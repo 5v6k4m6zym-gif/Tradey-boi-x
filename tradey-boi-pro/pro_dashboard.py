@@ -164,7 +164,8 @@ with tab_dash:
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Account Value",   f"${acct_val:,.0f}")
     c2.metric("Open Positions",  f"{len(open_pos)} / {cfg.get('max_positions') or 5}")
-    c3.metric("Signals Ready",   len(scanner.signals))
+    elite_n = len(scanner.elite_signals) if hasattr(scanner, "elite_signals") else len(scanner.signals)
+    c3.metric("ELITE Signals",  elite_n)
     c4.metric("Total P&L",       f"${metrics['total_pnl']:+,.0f}")
     c5.metric("Win Rate",        f"{metrics['win_rate']*100:.0f}%" if metrics["trade_count"] else "—")
 
@@ -176,23 +177,27 @@ with tab_dash:
     with col_sig:
         st.subheader("🎯 Top Signals")
         from engine.signal_bridge import get_pending_signals
-        pending = get_pending_signals(scanner_signals=scanner.signals)
+        actionable = scanner.actionable_signals if hasattr(scanner, "actionable_signals") else scanner.signals
+        pending = get_pending_signals(scanner_signals=actionable)
 
         if pending:
             for sig in pending[:6]:
-                src_icon = "🔍" if sig.get("source") == "pro_scanner" else "📡"
-                tier_color = "🟢" if sig.get("tier") == "STRONG BUY" else "🔵"
+                src_icon   = "🔍" if sig.get("source") == "pro_scanner" else "📡"
+                tier_icons = {"ELITE": "⭐", "STRONG BUY": "🟢", "BUY": "🔵"}
+                tier_icon  = tier_icons.get(sig.get("tier", ""), "⚪")
+                csc        = sig.get("composite_score", sig.get("score", 0))
+                ai_conf    = sig.get("ai_confidence",   sig.get("prob",  0))
                 with st.container(border=True):
                     h1, h2 = st.columns([3, 1])
                     h1.markdown(
-                        f"**{sig['ticker']}**  {tier_color} {sig['tier']}  {src_icon}"
+                        f"**{sig['ticker']}**  {tier_icon} {sig['tier']}  {src_icon}"
                     )
                     h1.caption(
-                        f"Score **{sig['score']:.0f}**  ·  "
-                        f"Prob **{sig['prob']*100:.0f}%**  ·  "
+                        f"Score **{csc:.1f}**  ·  "
+                        f"AI conf **{ai_conf*100:.0f}%**  ·  "
                         f"Entry **${sig['entry_price']:.3f}**  ·  "
-                        f"ATR {sig['atr_pct']:.1f}%"
-                        + (f"  ·  RSI {sig['rsi']:.0f}" if "rsi" in sig else "")
+                        f"R/R {sig.get('risk_reward', '?')}  ·  "
+                        f"Regime {sig.get('regime_alignment', '?')}"
                     )
                     if bot.is_running():
                         if h2.button("Trade", key=f"t_{sig['ticker']}",
@@ -210,7 +215,7 @@ with tab_dash:
             st.info(
                 "No qualifying signals yet.\n\n"
                 "Start the bot to begin scanning. Pro scans ASX + US stocks "
-                "every 15 minutes during market hours."
+                "continuously (Tier 1 every 60 min, Tier 2 every 15 min, Tier 3 every 5 min)."
             )
 
     with col_log:
@@ -223,119 +228,227 @@ with tab_dash:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — SCANNER
+# TAB 2 — SCANNER  (Tiered Continuous Monitor)
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_scan:
-    st.header("🔍 Live Scanner")
-
-    # ── Scanner controls ──────────────────────────────────────────────────────
-    col1, col2, col3, col4 = st.columns(4)
-    from scanner.watchlist_manager import (
-        get_all_active_tickers, get_watchlist, set_watchlist,
-        add_tickers, remove_tickers, set_enabled_markets,
+    st.header("🔍 Continuous Scanner")
+    st.caption(
+        "Tier 1 · Full universe every **60 min**  ·  "
+        "Tier 2 · Top-50 refresh every **15 min**  ·  "
+        "Tier 3 · Top-20 deep watch every **5 min**"
     )
 
-    total_tickers = len(get_all_active_tickers())
-    col1.metric("Watchlist Size",  f"{total_tickers} tickers")
-    col2.metric("Scanner Status",  scanner.status[:40] if scanner.status else "Idle")
-    col3.metric("Scans Completed", scanner.scan_count)
-    if scanner.last_scan:
-        ago = int((datetime.utcnow() - scanner.last_scan).total_seconds())
-        col4.metric("Last Scan",   f"{ago//60}m {ago%60}s ago")
-    else:
-        col4.metric("Last Scan",   "Never")
+    from scanner.universe import ASX_UNIVERSE, US_UNIVERSE
+    from scanner.market_regime import regime_summary
 
-    # Progress bar when scanning
-    if scanner.is_scanning:
-        done, total = scanner.progress
-        if total > 0:
-            st.progress(done / total, text=f"Scanning {done}/{total}…")
+    # ── Market regime cards ───────────────────────────────────────────────────
+    st.subheader("🌐 Market Regime")
+    live_regimes = scanner.regimes if hasattr(scanner, "regimes") else {}
+    rc1, rc2, rc3 = st.columns(3)
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if bot.is_running():
-            if st.button("🔍 Force Scan Now", type="primary", use_container_width=True):
-                bot.force_scan()
-                st.toast("Scan triggered — results will update shortly")
-        else:
-            st.warning("Start the bot to enable scanning.")
-
-    with col_b:
-        interval = st.selectbox(
-            "Scan every…",
-            [5, 10, 15, 30, 60, 120],
-            index=[5,10,15,30,60,120].index(int(cfg.get("scan_interval_mins") or 15)),
-            format_func=lambda x: f"{x} minutes"
+    def _regime_card(col, label, rd):
+        if rd is None:
+            col.metric(label, "—")
+            return
+        icons = {"BULL": "🟢", "NEUTRAL": "🟡", "BEAR": "🔴"}
+        icon  = icons.get(rd.regime.value, "⚪")
+        col.metric(
+            label,
+            f"{icon} {rd.regime.value}",
+            delta=f"conf {rd.confidence:.0%}",
+            delta_color="off",
         )
-        if st.button("Apply Interval", use_container_width=True):
-            cfg.set("scan_interval_mins", interval)
-            st.success(f"✅ Scan interval set to {interval} minutes")
+        col.caption(
+            (f"50EMA {rd.index_pct_50ema:+.1f}%  " if rd.index_pct_50ema else "") +
+            (f"VIX {rd.vix}" if rd.vix else "")
+        )
+
+    _regime_card(rc1, "🇦🇺 ASX",    live_regimes.get("ASX"))
+    _regime_card(rc2, "🇺🇸 US",     live_regimes.get("US"))
+    with rc3:
+        st.metric("Universe Size", f"{scanner.universe_size if hasattr(scanner, 'universe_size') and scanner.universe_size > 0 else len(ASX_UNIVERSE)+len(US_UNIVERSE)} tickers")
+        st.caption(f"ASX {len(ASX_UNIVERSE)}  ·  US {len(US_UNIVERSE)}")
 
     st.divider()
 
-    # ── Live scanner results ──────────────────────────────────────────────────
-    st.subheader("📋 Latest Scan Results")
-    all_signals = scanner.signals
+    # ── Scan tier status ──────────────────────────────────────────────────────
+    st.subheader("⏱ Scan Tier Status")
+    tc1, tc2, tc3, tc4 = st.columns(4)
+
+    last_scans = scanner.last_scans if hasattr(scanner, "last_scans") else {}
+
+    def _ago(dt):
+        if dt is None:
+            return "Never"
+        secs = int((datetime.utcnow() - dt).total_seconds())
+        return f"{secs//60}m {secs%60}s ago"
+
+    tc1.metric("Tier 1 (60m — full)",  _ago(last_scans.get("tier1")))
+    tc2.metric("Tier 2 (15m — top 50)", _ago(last_scans.get("tier2")))
+    tc3.metric("Tier 3  (5m — top 20)", _ago(last_scans.get("tier3")))
+    tc4.metric("Scans Run", scanner.scan_count if hasattr(scanner, "scan_count") else 0)
+
+    # Progress bar while scanning
+    if hasattr(scanner, "is_scanning") and scanner.is_scanning:
+        done, total = scanner.progress
+        if total > 0:
+            st.progress(done / total, text=f"{scanner.status}")
+    else:
+        st.caption(scanner.status if hasattr(scanner, "status") else "Idle")
+
+    col_a, col_b = st.columns([1, 2])
+    with col_a:
+        if bot.is_running():
+            if st.button("⚡ Force Tier 1 Scan Now", type="primary", use_container_width=True):
+                bot.force_scan()
+                st.toast("Full universe scan triggered — results update in ~60s")
+        else:
+            st.warning("Start the bot to enable continuous scanning.")
+
+    st.divider()
+
+    # ── Signal results by tier ────────────────────────────────────────────────
+    st.subheader("📋 Ranked Opportunities")
+
+    all_signals = scanner.signals if hasattr(scanner, "signals") else []
 
     if not all_signals:
-        st.info("No results yet — scanner hasn't run or found no setups meeting quality gates.")
+        st.info(
+            "No results yet.\n\n"
+            "Start the bot — the first Tier 1 scan runs immediately, covering the full "
+            f"~{len(ASX_UNIVERSE)+len(US_UNIVERSE)}-ticker universe."
+        )
     else:
-        # Quick filters
-        fcol1, fcol2 = st.columns(2)
-        min_score_filter = fcol1.slider("Min score filter", 1, 10, int(cfg.get("min_score") or 7))
-        show_asx = fcol2.checkbox("ASX only", value=False)
+        # Tier counts
+        tier_counts = {t: 0 for t in ["ELITE", "STRONG BUY", "BUY", "WATCH"]}
+        for s in all_signals:
+            tier_counts[s.get("tier", "WATCH")] = tier_counts.get(s.get("tier", "WATCH"), 0) + 1
 
-        filtered = [s for s in all_signals if s["score"] >= min_score_filter]
-        if show_asx:
-            filtered = [s for s in filtered if s.get("exchange") == "ASX"]
+        kc1, kc2, kc3, kc4 = st.columns(4)
+        kc1.metric("⭐ ELITE",       tier_counts["ELITE"],       help="Composite ≥ 8.5 — trade immediately")
+        kc2.metric("🟢 STRONG BUY", tier_counts["STRONG BUY"], help="Composite ≥ 7.0 — trade next open")
+        kc3.metric("🔵 BUY",        tier_counts["BUY"],         help="Composite ≥ 5.5 — watch only")
+        kc4.metric("⚪ WATCH",      tier_counts["WATCH"],        help="Below threshold — monitor")
+
+        # Tier filter
+        show_tiers = st.multiselect(
+            "Show tiers",
+            ["ELITE", "STRONG BUY", "BUY", "WATCH"],
+            default=["ELITE", "STRONG BUY"],
+        )
+        show_market = st.selectbox("Market", ["All", "ASX", "US"], index=0)
+
+        filtered = [
+            s for s in all_signals
+            if s.get("tier", "WATCH") in show_tiers
+            and (show_market == "All"
+                 or (show_market == "ASX" and s.get("ticker","").endswith(".AX"))
+                 or (show_market == "US"  and not s.get("ticker","").endswith(".AX")))
+        ]
 
         st.caption(f"Showing {len(filtered)} of {len(all_signals)} signals")
 
         if filtered:
-            df = pd.DataFrame(filtered)[[
-                "ticker","tier","score","prob","entry_price",
-                "atr_pct","exchange","signal_date","source"
-            ]].copy()
-            df["prob"]       = (df["prob"] * 100).round(1).astype(str) + "%"
-            df["entry_price"]= df["entry_price"].round(3)
-            df["atr_pct"]    = df["atr_pct"].round(1)
-            st.dataframe(
-                df.rename(columns={
-                    "entry_price": "Entry $", "atr_pct": "ATR %",
-                    "signal_date": "Found", "source": "Source"
-                }),
-                use_container_width=True, hide_index=True,
-            )
+            rows = []
+            for s in filtered:
+                rows.append({
+                    "Rank":       s.get("rank", "—"),
+                    "Ticker":     s.get("ticker"),
+                    "Tier":       s.get("tier", "?"),
+                    "Score":      round(float(s.get("composite_score", s.get("score", 0))), 1),
+                    "AI Conf":    f"{float(s.get('ai_confidence', s.get('prob', 0)))*100:.0f}%",
+                    "R/R":        s.get("risk_reward", "?"),
+                    "Entry $":    round(float(s.get("entry_price", 0)), 3),
+                    "Stop $":     round(float(s.get("stop_price", 0)), 3),
+                    "Target $":   round(float(s.get("target_price", 0)), 3),
+                    "ATR %":      round(float(s.get("atr_pct", 0)), 1),
+                    "Regime":     s.get("regime_alignment", "?"),
+                    "RSI":        round(float(s.get("rsi", 0)), 0) if s.get("rsi") else "—",
+                    "Vol Ratio":  round(float(s.get("vol_ratio", 0)), 1) if s.get("vol_ratio") else "—",
+                    "Source":     s.get("source", "pro"),
+                    "Found":      s.get("signal_date", "")[:16],
+                })
+            df_sigs = pd.DataFrame(rows)
+            st.dataframe(df_sigs, use_container_width=True, hide_index=True)
+
+            # Factor breakdown for top signal
+            if filtered and filtered[0].get("ranked_factors"):
+                with st.expander(f"🔬 Factor breakdown — #{filtered[0]['ticker']}"):
+                    factors = filtered[0]["ranked_factors"]
+                    factor_df = pd.DataFrame([
+                        {"Factor": k, "Score (0–1)": round(v, 3), "Weight": w}
+                        for (k, v), w in zip(
+                            factors.items(),
+                            [0.30, 0.20, 0.15, 0.20, 0.10, 0.05]
+                        )
+                    ])
+                    st.dataframe(factor_df, hide_index=True, use_container_width=True)
+
+            # Manual trade buttons for ELITE signals
+            elite = [s for s in filtered if s.get("tier") == "ELITE"]
+            if elite and bot.is_running():
+                st.subheader("⭐ ELITE — Trade Now")
+                for sig in elite[:3]:
+                    with st.container(border=True):
+                        ec1, ec2, ec3 = st.columns([3, 2, 1])
+                        ec1.markdown(f"**{sig['ticker']}**  ⭐ ELITE  — Score {sig.get('composite_score',0):.1f}")
+                        ec2.caption(
+                            f"Entry ${sig.get('entry_price',0):.3f}  ·  "
+                            f"Stop ${sig.get('stop_price',0):.3f}  ·  "
+                            f"Target ${sig.get('target_price',0):.3f}  ·  "
+                            f"R/R {sig.get('risk_reward','?')}"
+                        )
+                        if ec3.button("Trade", key=f"elite_{sig['ticker']}", type="primary"):
+                            from engine.executor import execute_signal
+                            res = execute_signal(sig, broker)
+                            if res["ok"]:
+                                st.success(f"✅ {sig['ticker']} order placed")
+                            else:
+                                st.error(f"❌ {res['reason']}")
+                            st.rerun()
 
     st.divider()
 
-    # ── Watchlist management ──────────────────────────────────────────────────
-    st.subheader("📝 Watchlist Management")
+    # ── Universe management ───────────────────────────────────────────────────
+    st.subheader("📝 Universe & Markets")
+
+    from scanner.watchlist_manager import (
+        get_all_active_tickers, get_watchlist, set_watchlist,
+        add_tickers, remove_tickers, set_enabled_markets,
+    )
 
     enabled_markets = cfg.get("enabled_markets") or ["ASX", "US"]
     new_markets = st.multiselect(
         "Markets to scan",
         ["ASX", "US"],
         default=enabled_markets,
-        help="Pro scans ASX and/or US markets. Deselect to disable."
+        help=f"Pro built-in universe: ASX {len(ASX_UNIVERSE)} + US {len(US_UNIVERSE)} tickers"
     )
     if st.button("Save Markets", use_container_width=False):
         cfg.set("enabled_markets", new_markets)
         set_enabled_markets(new_markets)
-        st.success("✅ Saved")
+        st.success("✅ Saved — new universe applies on next Tier 1 scan")
 
-    wl_tab1, wl_tab2, wl_tab3 = st.tabs(["ASX Watchlist", "US Watchlist", "Custom Tickers"])
+    wl_tab1, wl_tab2, wl_tab3 = st.tabs(["ASX Additions", "US Additions", "Custom Tickers"])
 
-    for market, tab in [("ASX", wl_tab1), ("US", wl_tab2), ("CUSTOM", wl_tab3)]:
+    for market, tab, placeholder in [
+        ("ASX",    wl_tab1, "e.g. CBA.AX, WBC.AX"),
+        ("US",     wl_tab2, "e.g. AAPL, MSFT"),
+        ("CUSTOM", wl_tab3, "Any ticker"),
+    ]:
         with tab:
             tickers = get_watchlist(market)
-            st.caption(f"{len(tickers)} tickers in {market} watchlist")
+            if market != "CUSTOM":
+                st.caption(
+                    f"**{len(tickers)}** custom additions to the built-in "
+                    f"{'ASX' if market=='ASX' else 'US'} universe"
+                )
+            else:
+                st.caption(f"{len(tickers)} custom tickers")
 
-            # Add
             new_raw = st.text_input(
-                f"Add tickers (comma-separated)",
-                key=f"add_{market}",
-                placeholder="e.g. CBA.AX, WBC.AX" if market == "ASX" else "e.g. AAPL, MSFT"
+                "Add tickers (comma-separated)",
+                key=f"add_{market}", placeholder=placeholder
             )
             if st.button(f"Add to {market}", key=f"addbtn_{market}"):
                 if new_raw.strip():
@@ -344,10 +457,8 @@ with tab_scan:
                     st.success(f"Added {len(new_list)} ticker(s)")
                     st.rerun()
 
-            # Remove
             remove_raw = st.text_input(
-                f"Remove tickers (comma-separated)",
-                key=f"rm_{market}",
+                "Remove tickers (comma-separated)", key=f"rm_{market}"
             )
             if st.button(f"Remove from {market}", key=f"rmbtn_{market}"):
                 if remove_raw.strip():
@@ -356,9 +467,9 @@ with tab_scan:
                     st.success(f"Removed {len(rm_list)} ticker(s)")
                     st.rerun()
 
-            # View
-            with st.expander(f"View {market} watchlist ({len(tickers)})"):
-                st.text(", ".join(tickers))
+            if tickers:
+                with st.expander(f"View ({len(tickers)})"):
+                    st.text(", ".join(tickers))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

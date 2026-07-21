@@ -1,9 +1,15 @@
 """
-Signal bridge — combines Pro's own live scanner results with optional
-Tradey Boi X signal_log.json as a secondary source.
+Signal bridge — merges Pro's ranked scanner output with optional
+Tradey Boi X signal_log.json as a secondary reference source.
 
-Primary source: ContinuousScanner (local yfinance scan, runs every 15–30 min)
+Primary source : TieredMonitor (ranked ELITE/STRONG BUY signals)
 Secondary source: X signal_log.json (GH Actions daily output — optional bonus)
+
+Key upgrade from v1:
+  - Filters on composite_score (multi-factor, 0-10) not just raw score
+  - Only ELITE and STRONG BUY tiers are execution candidates
+  - X signals are imported at BUY tier and only promoted if composite > threshold
+  - Regime veto: signals from a BEAR-regime market are blocked at execution
 """
 from __future__ import annotations
 
@@ -19,12 +25,15 @@ log = logging.getLogger("SignalBridge")
 
 X_DIR = Path(__file__).parent.parent.parent / "tradey-boi-x"
 
+# Only these tiers are actioned by the executor
+ACTIONABLE_TIERS = {"ELITE", "STRONG BUY"}
+
 
 # ── Already-handled tickers ────────────────────────────────────────────────────
 
 def _already_handled() -> set[str]:
-    open_tickers = {p["ticker"] for p in db.open_positions()}
-    recent_trades = {
+    open_tickers   = {p["ticker"] for p in db.open_positions()}
+    recent_trades  = {
         t["ticker"] for t in db.all_trades(limit=200)
         if t.get("entry_date", "")[:10] >= (
             datetime.utcnow() - timedelta(days=2)
@@ -33,39 +42,48 @@ def _already_handled() -> set[str]:
     return open_tickers | recent_trades
 
 
-# ── Merge + filter ─────────────────────────────────────────────────────────────
+# ── Main bridge ────────────────────────────────────────────────────────────────
 
 def get_pending_signals(
     scanner_signals: list[dict] | None = None,
-    lookback_hours: int = 48,
+    lookback_hours:  int = 48,
 ) -> list[dict]:
     """
-    Return actionable signals from both sources, deduplicated, quality-filtered,
-    sorted by score desc.
+    Return actionable signals (ELITE / STRONG BUY only), deduplicated, sorted by
+    composite_score desc then ai_confidence desc.
 
-    scanner_signals: pass the ContinuousScanner.signals list directly.
-                     If None, only X log is used.
+    scanner_signals: pre-filtered actionable list from TieredMonitor.actionable_signals
     """
-    min_prob  = float(cfg.get("min_prob")  or 0.53)
-    min_score = int(cfg.get("min_score")   or 7)
-    handled   = _already_handled()
+    min_prob        = float(cfg.get("min_prob")        or 0.53)
+    min_score       = int(cfg.get("min_score")         or 7)
+    min_composite   = float(cfg.get("min_composite")   or 7.0)
+    handled         = _already_handled()
 
-    combined: dict[str, dict] = {}   # ticker → best signal
+    combined: dict[str, dict] = {}
 
-    # ── 1. Pro local scanner (primary) ──────────────────────────────────────
+    # ── 1. Pro TieredMonitor output (primary, already ranked) ────────────────
     for sig in (scanner_signals or []):
         ticker = sig.get("ticker")
         if not ticker or ticker in handled:
             continue
-        if float(sig.get("prob", 0)) < min_prob:
+        if sig.get("tier") not in ACTIONABLE_TIERS:
             continue
-        if float(sig.get("score", 0)) < min_score:
+        # Regime veto
+        if sig.get("regime_alignment") == "BEAR":
+            log.debug(f"Regime veto: {ticker} skipped (BEAR)")
             continue
-        # Keep highest score if duplicate
-        if ticker not in combined or sig["score"] > combined[ticker]["score"]:
+        # Quality gates
+        composite = float(sig.get("composite_score", sig.get("score", 0)))
+        ai_conf   = float(sig.get("ai_confidence",  sig.get("prob",  0)))
+        if composite < min_composite:
+            continue
+        if ai_conf < min_prob:
+            continue
+        # Keep highest composite if duplicate
+        if ticker not in combined or composite > float(combined[ticker].get("composite_score", 0)):
             combined[ticker] = sig
 
-    # ── 2. Tradey Boi X signal_log.json (secondary) ──────────────────────────
+    # ── 2. Tradey Boi X signal_log.json (secondary reference) ────────────────
     log_path = _x_signal_log_path()
     if log_path and log_path.exists():
         try:
@@ -80,13 +98,15 @@ def get_pending_signals(
             ticker = rec.get("ticker")
             if not ticker or ticker in handled:
                 continue
+            # X signals: only pass-through tier STRONG BUY or ELITE from X
             if rec.get("tier") not in ("STRONG BUY", "ELITE"):
                 continue
             if rec.get("resolved"):
                 continue
-            if float(rec.get("prob", 0)) < min_prob:
-                continue
-            if float(rec.get("score", 0)) < min_score:
+            # Quality gates — use X's raw score since no composite available
+            x_prob  = float(rec.get("prob",  0))
+            x_score = float(rec.get("score", 0))
+            if x_prob < min_prob or x_score < min_score:
                 continue
             # Recency check
             sig_date = rec.get("date") or rec.get("signal_date") or ""
@@ -103,23 +123,37 @@ def get_pending_signals(
                     except ValueError:
                         pass
 
+            # Build a compatible signal dict from X data
             sig = {
-                "ticker":      ticker,
-                "entry_price": float(rec.get("entry_price", 0)),
-                "atr_pct":     float(rec.get("atr_pct", 2.0)),
-                "prob":        float(rec.get("prob", 0)),
-                "score":       float(rec.get("score", 0)),
-                "tier":        rec.get("tier", "STRONG BUY"),
-                "signal_date": sig_date,
-                "exchange":    "ASX" if ticker.endswith(".AX") else "SMART",
-                "currency":    "AUD" if ticker.endswith(".AX") else "USD",
-                "source":      "tradey_boi_x",
+                "ticker":          ticker,
+                "entry_price":     float(rec.get("entry_price", 0)),
+                "stop_price":      float(rec.get("stop_price",  0)),
+                "target_price":    float(rec.get("target_price", 0)),
+                "atr_pct":         float(rec.get("atr_pct",  2.0)),
+                "prob":            x_prob,
+                "score":           x_score,
+                "ai_confidence":   x_prob,
+                "composite_score": x_score,   # X doesn't have composite; use raw score
+                "tier":            rec.get("tier", "STRONG BUY"),
+                "signal_date":     sig_date,
+                "exchange":        "ASX" if ticker.endswith(".AX") else "SMART",
+                "currency":        "AUD" if ticker.endswith(".AX") else "USD",
+                "source":          "tradey_boi_x",
+                "regime_alignment": "UNKNOWN",
             }
-            # Prefer Pro scanner signal if already seen; X provides a second vote
-            if ticker not in combined or sig["score"] > combined[ticker]["score"]:
+            # Pro scanner takes precedence if it already has this ticker
+            if ticker not in combined:
                 combined[ticker] = sig
 
-    pending = sorted(combined.values(), key=lambda s: (s["score"], s["prob"]), reverse=True)
+    # Sort by composite_score desc, then ai_confidence
+    pending = sorted(
+        combined.values(),
+        key=lambda s: (
+            float(s.get("composite_score", s.get("score", 0))),
+            float(s.get("ai_confidence",   s.get("prob",  0))),
+        ),
+        reverse=True,
+    )
     return pending
 
 

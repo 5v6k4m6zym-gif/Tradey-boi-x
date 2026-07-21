@@ -1,6 +1,10 @@
 """
-Bot runner — orchestrates ContinuousScanner → SignalBridge → Executor.
-Runs as a background thread. Scanner runs independently on its own cadence.
+Bot runner — orchestrates TieredMonitor → SignalBridge → Executor.
+Runs as a background thread. The TieredMonitor handles its own 3-tier cadence
+independently. This loop just checks for actionable signals and executes them.
+
+Only ELITE and STRONG BUY signals from the ranked output are ever executed.
+BUY and WATCH tiers are displayed in the dashboard but not traded.
 """
 from __future__ import annotations
 
@@ -12,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import config.settings as cfg
 import db.database as db
-from scanner.market_scanner import ContinuousScanner
+from scanner.monitor import TieredMonitor
 from engine.signal_bridge import get_pending_signals
 from engine.executor import execute_signal
 from engine.position_manager import PositionManager
@@ -25,14 +29,14 @@ log = logging.getLogger("BotRunner")
 
 class BotRunner:
     def __init__(self, broker: "IBKRClient"):
-        self._broker   = broker
-        self._scanner  = ContinuousScanner()
-        self._pm       = PositionManager(broker)
-        self._thread:  threading.Thread | None = None
-        self._stop     = threading.Event()
-        self.status    = "STOPPED"
+        self._broker  = broker
+        self._monitor = TieredMonitor()
+        self._pm      = PositionManager(broker)
+        self._thread: threading.Thread | None = None
+        self._stop    = threading.Event()
+        self.status   = "STOPPED"
         self.last_trade_cycle: datetime | None = None
-        self.scan_log:  list[str] = []
+        self.scan_log: list[str] = []
 
     # ── Public lifecycle ──────────────────────────────────────────────────────
 
@@ -44,14 +48,14 @@ class BotRunner:
             target=self._loop, daemon=True, name="BotRunner"
         )
         self._thread.start()
-        self._scanner.start()
+        self._monitor.start()
         self._pm.start()
         self.status = "RUNNING"
-        log.info("BotRunner started")
+        log.info("BotRunner started — TieredMonitor active (Tier1=60m, Tier2=15m, Tier3=5m)")
 
     def stop(self):
         self._stop.set()
-        self._scanner.stop()
+        self._monitor.stop()
         self._pm.stop()
         self.status = "STOPPED"
         log.info("BotRunner stopped")
@@ -60,60 +64,87 @@ class BotRunner:
         return self._thread is not None and self._thread.is_alive()
 
     def force_scan(self):
-        """Trigger an immediate scanner run (non-blocking)."""
-        self._scanner.force_scan()
+        self._monitor.force_scan()
 
-    # ── Properties exposing scanner state for the dashboard ───────────────────
+    # ── Properties exposing monitor state to the dashboard ───────────────────
 
     @property
-    def scanner(self) -> ContinuousScanner:
-        return self._scanner
+    def scanner(self) -> TieredMonitor:
+        """Return monitor as 'scanner' for dashboard compatibility."""
+        return self._monitor
+
+    @property
+    def monitor(self) -> TieredMonitor:
+        return self._monitor
 
     @property
     def position_manager(self) -> PositionManager:
         return self._pm
 
-    # ── Trade execution loop (runs independently of scanner) ─────────────────
+    # ── Trade execution loop (checks every 5 min for new actionable signals) ──
 
     def _loop(self):
-        """
-        Check scanner results every 5 minutes and attempt to trade any new
-        qualifying signals. The scanner itself runs on its own cadence.
-        """
         while not self._stop.is_set():
             try:
                 self._trade_cycle()
             except Exception as e:
                 log.error(f"Trade cycle error: {e}")
                 db.log_error("BotRunner", str(e))
-            self._stop.wait(300)   # check every 5 minutes
+            self._stop.wait(300)
 
     def _trade_cycle(self):
         if not self._broker.connected:
             return
 
-        scanner_signals = self._scanner.signals   # thread-safe snapshot
-        pending = get_pending_signals(scanner_signals=scanner_signals)
+        # Only pass ELITE + STRONG BUY signals to the bridge
+        actionable = self._monitor.actionable_signals
+
+        pending = get_pending_signals(scanner_signals=actionable)
         if not pending:
             return
 
         self.last_trade_cycle = datetime.utcnow()
         mode = cfg.get("mode") or "PAPER"
-        self._log(f"Trade check — {len(pending)} qualifying signal(s)")
+        max_new = int(cfg.get("max_positions") or 5)
 
-        for sig in pending[:3]:    # max 3 new positions per cycle
+        # Apply regime size multiplier (reduces sizing in neutral environments)
+        regimes    = self._monitor.regimes
+        asx_regime = regimes.get("ASX")
+        us_regime  = regimes.get("US")
+
+        self._log(
+            f"Trade check — {len(pending)} qualifying signal(s)  "
+            f"ASX={asx_regime.regime.value if asx_regime else '?'}  "
+            f"US={us_regime.regime.value if us_regime else '?'}"
+        )
+
+        for sig in pending[:3]:
+            # Apply regime size multiplier to each signal
+            ticker = sig.get("ticker", "")
+            market = "ASX" if ticker.endswith(".AX") else "US"
+            regime = regimes.get(market)
+            if regime:
+                sig = {**sig, "_regime_size_mult": regime.size_multiplier}
+
             result = execute_signal(sig, self._broker)
             src    = sig.get("source", "pro_scanner")
+            tier   = sig.get("tier", "?")
+            csc    = sig.get("composite_score", sig.get("score", "?"))
+
             if result["ok"]:
                 self._log(
-                    f"[{mode}] TRADED {sig['ticker']} "
-                    f"qty={result['qty']:.0f} "
-                    f"stop=${result['stop']:.3f} "
-                    f"target=${result['target']:.3f} "
+                    f"[{mode}] TRADED {sig['ticker']}  "
+                    f"tier={tier}  score={csc}  "
+                    f"qty={result['qty']:.0f}  "
+                    f"stop=${result['stop']:.3f}  "
+                    f"target=${result['target']:.3f}  "
                     f"[{src}]"
                 )
             else:
-                self._log(f"SKIPPED {sig['ticker']}: {result['reason']} [{src}]")
+                self._log(
+                    f"SKIPPED {sig['ticker']}: {result['reason']}  "
+                    f"[{tier}  {src}]"
+                )
 
     def _log(self, msg: str):
         ts    = datetime.utcnow().strftime("%H:%M:%S")
