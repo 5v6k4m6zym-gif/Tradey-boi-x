@@ -86,15 +86,18 @@ def _detect_signal(df_slice: pd.DataFrame, ticker: str, params: dict) -> dict | 
     if df_slice is None or len(df_slice) < 30:
         return None
 
-    # ── Real scanner path (uses actual ML model) ─────────────────────────────
+    # ── Real scanner path — attempt ML model, fall through on any failure ────
     if _USE_REAL_SCANNER:
         try:
-            return _real_score(df_slice, ticker, params)
+            result = _real_score(df_slice, ticker, params)
+            if result is not None:
+                return result
+            # Real scorer returned None (no signal) — fall through to rule-based
         except Exception as e:
             log.debug(f"Real scorer failed for {ticker}: {e}")
-            return None
+            # Fall through to rule-based below
 
-    # ── Rule-based fallback (used only if scanner import failed) ─────────────
+    # ── Rule-based scorer — always runs as fallback ───────────────────────────
     try:
         close  = df_slice["Close"].squeeze()
         volume = df_slice["Volume"].squeeze()
