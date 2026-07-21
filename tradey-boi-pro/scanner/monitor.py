@@ -239,7 +239,7 @@ class TieredMonitor:
     def _tier2_loop(self):
         time.sleep(TIER2_INTERVAL)   # let Tier 1 run first
         while not self._stop.is_set():
-            if not self._stop.is_set() and market_is_open():
+            if not self._stop.is_set():
                 self._run_tier2()
             self._stop.wait(TIER2_INTERVAL)
 
@@ -284,7 +284,7 @@ class TieredMonitor:
     def _tier3_loop(self):
         time.sleep(TIER3_INTERVAL)
         while not self._stop.is_set():
-            if not self._stop.is_set() and market_is_open():
+            if not self._stop.is_set():
                 self._run_tier3()
             self._stop.wait(TIER3_INTERVAL)
 
