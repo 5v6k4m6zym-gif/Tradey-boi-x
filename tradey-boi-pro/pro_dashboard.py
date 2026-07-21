@@ -797,50 +797,51 @@ with tab_settings:
     with col1:
         st.subheader("Risk Management")
         risk_pct = st.slider("Risk per trade (%)", 0.5, 5.0,
-                              float(cfg.get("risk_pct") or 2.0), step=0.1)
+                              float(cfg.get("risk_pct") or 2.0), step=0.1, key="set_risk_pct")
         max_pos  = st.slider("Max open positions", 1, 20,
-                              int(cfg.get("max_positions") or 5))
+                              int(cfg.get("max_positions") or 5), key="set_max_pos")
         max_exp  = st.slider("Max total exposure (%)", 10.0, 100.0,
-                              float(cfg.get("max_exposure_pct") or 30.0), step=5.0)
+                              float(cfg.get("max_exposure_pct") or 30.0), step=5.0, key="set_max_exp")
         max_dl   = st.slider("Daily loss limit (%)", 1.0, 10.0,
-                              float(cfg.get("max_daily_loss_pct") or 3.0), step=0.5)
-        hold_d   = st.slider("Max hold days", 5, 30, int(cfg.get("hold_days") or 15))
+                              float(cfg.get("max_daily_loss_pct") or 3.0), step=0.5, key="set_max_dl")
+        hold_d   = st.slider("Max hold days", 5, 30, int(cfg.get("hold_days") or 15), key="set_hold_d")
 
         st.subheader("Circuit Breaker")
         cb_losses = st.slider("Losses to trigger", 2, 6,
-                               int(cfg.get("cb_consecutive_losses") or 3))
-        cb_pause  = st.slider("Pause days", 1, 14, int(cfg.get("cb_pause_days") or 7))
+                               int(cfg.get("cb_consecutive_losses") or 3), key="set_cb_losses")
+        cb_pause  = st.slider("Pause days", 1, 14, int(cfg.get("cb_pause_days") or 7), key="set_cb_pause")
 
     with col2:
         st.subheader("Signal Quality Gates")
         min_prob      = st.slider("Min probability", 0.50, 0.75,
-                                   float(cfg.get("min_prob") or 0.53), step=0.01)
+                                   float(cfg.get("min_prob") or 0.53), step=0.01, key="set_min_prob")
         min_score     = st.slider("Min score (X-style 0–10)", 5, 10,
-                                   int(cfg.get("min_score") or 7))
+                                   int(cfg.get("min_score") or 7), key="set_min_score")
         min_composite = st.slider("Min composite score (Pro ranking)", 5.0, 9.5,
                                    float(cfg.get("min_composite") or 7.0), step=0.5,
-                                   help="Only STRONG BUY (≥7.0) and ELITE (≥8.5) are traded")
+                                   help="Only STRONG BUY (≥7.0) and ELITE (≥8.5) are traded",
+                                   key="set_min_composite")
 
         st.subheader("Stop Loss (× ATR)")
         sl_hi  = st.slider("High-vol  (ATR ≥ 3%)", 0.5, 2.5,
-                            float(cfg.get("sl_mult_hi")  or 1.2), step=0.1)
+                            float(cfg.get("sl_mult_hi")  or 1.2), step=0.1, key="set_sl_hi")
         sl_mid = st.slider("Mid-vol   (1.5–3%)", 0.5, 2.5,
-                            float(cfg.get("sl_mult_mid") or 1.0), step=0.1)
+                            float(cfg.get("sl_mult_mid") or 1.0), step=0.1, key="set_sl_mid")
         sl_lo  = st.slider("Low-vol   (< 1.5%)", 0.5, 2.5,
-                            float(cfg.get("sl_mult_lo")  or 0.8), step=0.1)
+                            float(cfg.get("sl_mult_lo")  or 0.8), step=0.1, key="set_sl_lo")
 
         st.subheader("Profit Targets (%)")
         tgt_hi  = st.slider("High-vol target",  5.0, 25.0,
-                             float(cfg.get("target_hi")  or 12.0), step=1.0)
+                             float(cfg.get("target_hi")  or 12.0), step=1.0, key="set_tgt_hi")
         tgt_mid = st.slider("Mid-vol target",   3.0, 20.0,
-                             float(cfg.get("target_mid") or 8.0), step=1.0)
+                             float(cfg.get("target_mid") or 8.0), step=1.0, key="set_tgt_mid")
         tgt_lo  = st.slider("Low-vol target",   2.0, 15.0,
-                             float(cfg.get("target_lo")  or 5.0), step=1.0)
+                             float(cfg.get("target_lo")  or 5.0), step=1.0, key="set_tgt_lo")
 
         st.subheader("Brokerage")
         brokerage = st.number_input(
             "Brokerage per side ($)", value=float(cfg.get("brokerage") or 2.0),
-            min_value=0.0, step=0.5,
+            min_value=0.0, step=0.5, key="set_brokerage",
             help="Applied to both entry and exit in backtests and P&L calculations"
         )
 
@@ -934,21 +935,21 @@ with tab_bt:
                 f"US: {len(_BT_US)} tickers"
             )
             st.markdown("**Quality gates**")
-            bt_min_score = st.slider("Min score",       5, 10,  int(cfg.get("min_score") or 7))
+            bt_min_score = st.slider("Min score",       5, 10,  int(cfg.get("min_score") or 7), key="bt_min_score")
             bt_min_prob  = st.slider("Min probability", 0.50, 0.75,
-                                     float(cfg.get("min_prob") or 0.53), step=0.01)
+                                     float(cfg.get("min_prob") or 0.53), step=0.01, key="bt_min_prob")
 
         with col3:
             st.markdown("**Risk parameters**")
             bt_risk_pct  = st.slider("Risk per trade (%)", 0.5, 5.0,
-                                     float(cfg.get("risk_pct") or 2.0), step=0.1)
+                                     float(cfg.get("risk_pct") or 2.0), step=0.1, key="bt_risk_pct")
             bt_max_pos   = st.slider("Max positions",  1, 10,
-                                     int(cfg.get("max_positions") or 5))
+                                     int(cfg.get("max_positions") or 5), key="bt_max_pos")
             bt_hold      = st.slider("Max hold days",  5, 30,
-                                     int(cfg.get("hold_days") or 15))
+                                     int(cfg.get("hold_days") or 15), key="bt_hold")
             bt_brokerage = st.number_input("Brokerage per side ($)",
                                            value=float(cfg.get("brokerage") or 2.0),
-                                           step=0.5)
+                                           step=0.5, key="bt_brokerage")
 
     # ── Run button ────────────────────────────────────────────────────────────
     run_col, clear_col = st.columns([2, 1])
