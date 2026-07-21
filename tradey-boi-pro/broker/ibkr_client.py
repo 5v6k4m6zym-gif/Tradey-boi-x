@@ -1,22 +1,21 @@
 """
 IBKR broker client for Tradey Boi Pro.
 
-Thread-safety model:
-  - ONE background thread (IBKRThread) owns the IB object and calls ib.sleep()
-    to keep the heartbeat alive.
-  - All other threads submit work via a queue and block until IBKRThread
-    processes it. This prevents the event-loop corruption that causes drops.
+Architecture:
+  - One background thread runs its own asyncio event loop forever.
+  - ib_insync's async API runs on that loop — heartbeats fire automatically
+    as long as the loop is running (no manual ib.sleep() juggling needed).
+  - All calls from other threads use asyncio.run_coroutine_threadsafe(),
+    which schedules work onto the running loop safely without any race.
 """
 from __future__ import annotations
 
 import asyncio
-import queue
 import threading
 import time
 import logging
-from concurrent.futures import Future
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Optional
 
 log = logging.getLogger("IBKRClient")
 
@@ -29,14 +28,10 @@ except ImportError:
 
 
 class IBKRClient:
-    """
-    All ib_insync calls are executed on the single IBKRThread via a work queue.
-    ib.sleep(1) runs in a tight loop on that thread, processing heartbeats and
-    draining the work queue between each tick — connection never drops.
-    """
 
     def __init__(self):
         self._ib:       Optional[object] = None
+        self._loop:     Optional[asyncio.AbstractEventLoop] = None
         self._thread:   Optional[threading.Thread] = None
         self._lock      = threading.Lock()
         self._connected = False
@@ -45,153 +40,115 @@ class IBKRClient:
         self._host      = "127.0.0.1"
         self._port      = 4002
         self._client_id = 1
-
-        # Work queue: items are (callable, Future)
-        self._work: queue.Queue = queue.Queue()
+        self._stop_flag = False
 
         self.account_summary: dict = {}
         self.positions:       list = []
         self.open_orders:     list = []
 
-    # ── Internal: run a callable on IBKRThread and wait for the result ────────
-
-    def _dispatch(self, fn: Callable, timeout: float = 10.0):
-        """Submit fn() to IBKRThread and block until done. Returns result or raises."""
-        if not self._connected:
-            raise RuntimeError("Not connected")
-        fut: Future = Future()
-        self._work.put((fn, fut))
-        return fut.result(timeout=timeout)
-
-    # ── Connection ──────────────────────────────────────────────────────────
+    # ── Public lifecycle ─────────────────────────────────────────────────────
 
     def connect(self, host: str, port: int, client_id: int = 1) -> bool:
         if not IB_AVAILABLE:
             self._connected = True
             self._error_msg = ""
             self._start_sim_thread()
-            log.info("SIMULATION mode — no ib_insync")
             return True
 
         if self._connected:
             return True
 
         self._host, self._port, self._client_id = host, port, client_id
+        self._stop_flag = False
 
-        # Stop any old thread
+        # Kill any existing thread
         if self._thread and self._thread.is_alive():
-            try:
-                self._ib.disconnect()
-            except Exception:
-                pass
-            self._thread.join(timeout=5)
+            self._stop_flag = True
+            if self._loop:
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=8)
+            self._stop_flag = False
 
-        self._error_msg = ""
         self._thread = threading.Thread(
-            target=self._run_loop, daemon=True, name="IBKRThread"
+            target=self._thread_main, daemon=True, name="IBKRThread"
         )
         self._thread.start()
 
         # Wait up to 15 s for connection
         for _ in range(30):
             time.sleep(0.5)
-            if self._connected or self._error_msg:
+            if self._connected or self._error_msg.startswith("Fatal"):
                 break
         return self._connected
 
     def disconnect(self):
+        self._stop_flag = True
         self._connected = False
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+
+    # ── Background thread ────────────────────────────────────────────────────
+
+    def _thread_main(self):
+        """Creates a dedicated event loop and runs it forever."""
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
         try:
-            if self._ib:
-                self._ib.disconnect()
-        except Exception:
-            pass
-
-    # ── IBKRThread main loop ─────────────────────────────────────────────────
-
-    def _run_loop(self):
-        """
-        THE only thread that touches self._ib.
-        Uses ib.sleep(1) so TWS heartbeats are sent every second.
-        Between sleeps, drains the work queue so other threads can safely
-        make ib calls without touching the event loop themselves.
-        """
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        host, port, client_id = self._host, self._port, self._client_id
-        slow_tick = 0
-
-        while True:
+            self._loop.run_until_complete(self._async_main())
+        except Exception as e:
+            log.error(f"IBKRThread fatal: {e}")
+        finally:
             try:
-                self._ib = IB()
-                self._ib.connect(host, port, clientId=client_id, timeout=10)
+                self._loop.close()
+            except Exception:
+                pass
+
+    async def _async_main(self):
+        """
+        Async reconnect loop. The event loop is running the whole time,
+        so ib_insync heartbeats fire automatically — no ib.sleep() needed.
+        """
+        host, port, client_id = self._host, self._port, self._client_id
+
+        while not self._stop_flag:
+            self._ib = IB()
+            try:
+                await self._ib.connectAsync(host, port, clientId=client_id, timeout=10)
                 self._connected = True
                 self._error_msg = ""
                 log.info(f"Connected to IBKR {host}:{port} (client {client_id})")
 
-                # Subscribe and do an immediate refresh
-                self._ib.reqAccountUpdates(True)
-                self._ib.sleep(2)
-                self._do_refresh()
-                slow_tick = 0
+                # Immediate account data pull
+                await self._async_refresh()
 
-                while self._ib.isConnected():
-                    # ① process any queued work from other threads
-                    self._drain_queue()
-                    # ② heartbeat sleep — keeps TWS connection alive
-                    self._ib.sleep(1)
-                    # ③ periodic account refresh every 30 s
-                    slow_tick += 1
-                    if slow_tick >= 30:
-                        self._do_refresh()
-                        slow_tick = 0
+                # Stay alive — event loop running keeps heartbeats going
+                tick = 0
+                while self._ib.isConnected() and not self._stop_flag:
+                    await asyncio.sleep(5)
+                    tick += 1
+                    if tick >= 6:       # refresh every 30 s
+                        await self._async_refresh()
+                        tick = 0
 
-                log.warning("IB connection dropped — reconnecting in 5s…")
-                self._connected = False
-                self._error_msg = "Reconnecting…"
+                if not self._stop_flag:
+                    log.warning("IBKR disconnected — reconnecting in 5s…")
 
             except Exception as exc:
-                self._connected = False
                 self._error_msg = str(exc)
-                log.error(f"IBKR error: {exc} — retrying in 5s")
-
-            try:
-                self._ib.disconnect()
-            except Exception:
-                pass
-
-            # Fail any queued futures so callers don't hang forever
-            self._flush_queue_on_disconnect()
-            time.sleep(5)
-
-    def _drain_queue(self):
-        """Process all pending work items on the IBKRThread."""
-        try:
-            while True:
-                fn, fut = self._work.get_nowait()
-                if fut.cancelled():
-                    continue
+                log.error(f"IBKR connect error: {exc}")
+            finally:
+                self._connected = False
                 try:
-                    fut.set_result(fn())
-                except Exception as exc:
-                    fut.set_exception(exc)
-        except queue.Empty:
-            pass
+                    self._ib.disconnect()
+                except Exception:
+                    pass
 
-    def _flush_queue_on_disconnect(self):
-        """Fail all pending futures when the connection drops."""
-        try:
-            while True:
-                fn, fut = self._work.get_nowait()
-                if not fut.done():
-                    fut.set_exception(RuntimeError("IBKR disconnected"))
-        except queue.Empty:
-            pass
+            if not self._stop_flag:
+                await asyncio.sleep(5)
 
-    # ── Account refresh (runs on IBKRThread) ─────────────────────────────────
+    # ── Account refresh (runs on the event loop) ─────────────────────────────
 
-    def _do_refresh(self):
+    async def _async_refresh(self):
         try:
             vals = self._ib.accountValues()
             summary = {}
@@ -204,6 +161,20 @@ class IBKRClient:
                         summary[v.tag] = float(v.value)
                     except ValueError:
                         pass
+            # If empty, try requesting explicitly
+            if not summary:
+                await self._ib.reqAccountSummaryAsync()
+                await asyncio.sleep(1)
+                vals = self._ib.accountValues()
+                for v in vals:
+                    if v.tag in (
+                        "NetLiquidation", "TotalCashValue", "BuyingPower",
+                        "UnrealizedPnL", "RealizedPnL", "GrossPositionValue"
+                    ):
+                        try:
+                            summary[v.tag] = float(v.value)
+                        except ValueError:
+                            pass
             with self._lock:
                 self.account_summary = summary
         except Exception as e:
@@ -244,7 +215,16 @@ class IBKRClient:
 
         self._last_ping = datetime.utcnow()
 
-    # ── Simulation fallback ───────────────────────────────────────────────────
+    # ── Thread-safe dispatch to the event loop ────────────────────────────────
+
+    def _run_on_loop(self, coro, timeout: float = 15.0):
+        """Schedule a coroutine on the IBKRThread event loop and wait for result."""
+        if not self._loop or not self._loop.is_running():
+            raise RuntimeError("Event loop not running")
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result(timeout=timeout)
+
+    # ── Simulation mode ───────────────────────────────────────────────────────
 
     def _start_sim_thread(self):
         def _sim():
@@ -295,9 +275,9 @@ class IBKRClient:
             return {"entry_id": fake_id, "stop_id": fake_id + 1,
                     "target_id": fake_id + 2, "simulated": True}
 
-        def _place():
+        async def _place():
             contract = Stock(ticker, exchange, currency)
-            self._ib.qualifyContracts(contract)
+            await self._ib.qualifyContractsAsync(contract)
             bracket = self._ib.bracketOrder(
                 action="BUY",
                 quantity=round(quantity),
@@ -309,11 +289,11 @@ class IBKRClient:
             for order in bracket:
                 trade = self._ib.placeOrder(contract, order)
                 ids[order.orderType.lower().replace(" ", "_") + "_id"] = trade.order.orderId
-            self._ib.sleep(1)
+            await asyncio.sleep(1)
             return ids
 
         try:
-            return self._dispatch(_place, timeout=15)
+            return self._run_on_loop(_place(), timeout=20)
         except Exception as exc:
             log.error(f"place_bracket_order failed: {exc}")
             return {"error": str(exc), "simulated": False}
@@ -329,16 +309,16 @@ class IBKRClient:
             log.info(f"[SIM] Close: SELL {quantity:.0f} {ticker}")
             return {"order_id": int(time.time()), "simulated": True}
 
-        def _close():
+        async def _close():
             contract = Stock(ticker, exchange, currency)
-            self._ib.qualifyContracts(contract)
+            await self._ib.qualifyContractsAsync(contract)
             order = MarketOrder("SELL", round(quantity))
             trade = self._ib.placeOrder(contract, order)
-            self._ib.sleep(1)
+            await asyncio.sleep(1)
             return {"order_id": trade.order.orderId, "simulated": False}
 
         try:
-            return self._dispatch(_close, timeout=15)
+            return self._run_on_loop(_close(), timeout=20)
         except Exception as exc:
             log.error(f"close_position failed: {exc}")
             return {"error": str(exc), "simulated": False}
@@ -352,16 +332,16 @@ class IBKRClient:
         if not IB_AVAILABLE or not self._connected:
             return None
 
-        def _price():
+        async def _price():
             contract = Stock(ticker, exchange, currency)
-            self._ib.qualifyContracts(contract)
+            await self._ib.qualifyContractsAsync(contract)
             ticker_obj = self._ib.reqMktData(contract, "", False, False)
-            self._ib.sleep(2)
+            await asyncio.sleep(2)
             price = ticker_obj.last or ticker_obj.close
             self._ib.cancelMktData(contract)
             return float(price) if price and price == price else None
 
         try:
-            return self._dispatch(_price, timeout=10)
+            return self._run_on_loop(_price(), timeout=10)
         except Exception:
             return None
