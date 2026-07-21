@@ -215,8 +215,9 @@ class TieredMonitor:
 
             with self._lock:
                 self._all_signals   = ranked
-                # Seed tier-2 shortlist
+                # Seed both shortlists so Tier 2 and Tier 3 can run immediately
                 self._tier2_signals = ranked[:TIER2_SIZE]
+                self._tier3_signals = ranked[:TIER3_SIZE]
 
             self._scan_count  += 1
             self._tier1_last   = datetime.utcnow()
