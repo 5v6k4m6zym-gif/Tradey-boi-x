@@ -100,7 +100,7 @@ class IBKRClient:
         asyncio.run(_main())
 
     async def _async_main(self, host, port, client_id):
-        retry_delay = 30  # seconds between reconnect attempts
+        retry_delay = 5   # seconds between reconnect attempts
         while True:
             self._ib = IB()
             try:
@@ -127,21 +127,26 @@ class IBKRClient:
             self._ib.disconnect()
 
     async def _poll_loop(self):
+        slow_poll = 0
         while self._connected:
             try:
                 if not self._ib.isConnected():
-                    log.warning("IB connection lost — attempting reconnect…")
+                    log.warning("IB connection lost — will reconnect…")
                     self._connected = False
-                    self._error_msg = "Disconnected — reconnecting…"
+                    self._error_msg = "Reconnecting…"
                     break
-                await self._refresh_account()
-                await self._refresh_positions()
-                await self._refresh_orders()
-                self._last_ping = datetime.utcnow()
-                self._error_msg = ""
+                # Refresh account/positions every 5 ticks (25s) not every tick
+                slow_poll += 1
+                if slow_poll >= 5:
+                    await self._refresh_account()
+                    await self._refresh_positions()
+                    await self._refresh_orders()
+                    self._last_ping = datetime.utcnow()
+                    self._error_msg  = ""
+                    slow_poll = 0
             except Exception as e:
                 log.error(f"Poll error: {e}")
-            await asyncio.sleep(15)
+            await asyncio.sleep(5)
 
     # ── Simulation mode (no IBKR installed) ─────────────────────────────────
 
