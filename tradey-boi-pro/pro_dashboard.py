@@ -1265,12 +1265,9 @@ with tab_bt:
         _trades_raw = _bt["trades"]
 
         # ── Build actual monthly portfolio returns from individual trades ──────
-        # t.pnl is dollars; dividing by capital gives portfolio-level % impact.
-        # Summing within each month captures concurrent-position overlap
-        # correctly — this is what was missing from the old avg_win/capital model.
         _monthly_map: dict = {}
         for _t in _trades_raw:
-            _mo = str(_t.exit_date)[:7]      # "YYYY-MM"
+            _mo = str(_t.exit_date)[:7]
             _monthly_map[_mo] = _monthly_map.get(_mo, 0.0) + _t.pnl / max(_cap, 1)
 
         _mo_rets = list(_monthly_map.values())
@@ -1279,7 +1276,6 @@ with tab_bt:
             _monthly_r   = float(_np.mean(_mo_rets))
             _monthly_std = float(_np.std(_mo_rets, ddof=1))
         else:
-            # Only 1 month of data — fall back to aggregated stats
             _total_roi   = _bm["roi_pct"] / 100.0
             _monthly_r   = (1 + _total_roi) ** (1 / _pm) - 1
             _monthly_std = max(_bm["max_drawdown"] * 0.35, 0.015)
@@ -1302,22 +1298,28 @@ with tab_bt:
             _paths[:, _mi + 1] = _paths[:, _mi] * (1 + _draws)
 
     else:
-        # ── No backtest in session — show estimated projection with note ──────
+        # ── No usable trades — show estimated projection with note ────────────
         _cap = float(initial_cap)
-        # Defaults assume: 5 concurrent positions, 12-day avg hold → ~9 trades/month,
-        # PF 1.15 (better signal quality once scanner warms up), 53% win rate.
-        _monthly_r   = 0.018    # ~1.8% per month median ≈ 23% annual
-        _monthly_std = 0.045    # ±4.5% monthly vol (realistic for swing trading)
+        _monthly_r   = 0.018
+        _monthly_std = 0.045
+        _ann_roi_bt  = None
+        _tpm         = 9.0
 
-        st.warning(
-            "⚠️ **No backtest run yet — showing estimated projection only.**  "
-            "Run a backtest in the section above to see projections based on your "
-            "actual results. The numbers below assume PF 1.15, 53% win rate, and "
-            "~9 trades/month — run a backtest to replace these with your real stats."
-        )
-
-        _ann_roi_bt = None
-        _tpm        = 9.0   # assumed default (see warning above)
+        if _bt:
+            # Backtest ran but produced 0 trades
+            st.warning(
+                "⚠️ **Backtest ran but found 0 trades — showing estimated projection.**  "
+                "The scanner's conditions weren't triggered for any ticker in this period. "
+                "Try lowering **Min score** to 5 or 6, lowering **Min probability** to 0.50, "
+                "or extending the date range to 12 months, then re-run."
+            )
+        else:
+            # No backtest run yet
+            st.warning(
+                "⚠️ **No backtest run yet — showing estimated projection only.**  "
+                "Run a backtest above to replace these estimates with your real stats. "
+                "The numbers below assume PF 1.15, 53% win rate, ~9 trades/month."
+            )
 
         # ── Vectorised Monte Carlo ────────────────────────────────────────────
         _paths = _np.ones((_SIMS, _MTHS + 1))
