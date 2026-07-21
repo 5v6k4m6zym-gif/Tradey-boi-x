@@ -1,0 +1,428 @@
+Tradey Boi Pro Autonomous Upgrade — Full Build, Migration & Validation Prompt
+
+Role
+
+You are upgrading the existing Tradey Boi X trading system into a separate autonomous trading platform called Tradey Boi Pro.
+
+The goal is to create a production-style autonomous trading system while preserving the existing Tradey Boi X strategy baseline and alert system.
+
+Do NOT overwrite, remove, or damage the current Tradey Boi X system.
+
+Tradey Boi X must remain available as the original signal/alert-based system.
+
+Tradey Boi Pro must be created as a separate system that uses the same proven intelligence and logic but converts signals into controlled autonomous actions.
+
+⸻
+
+Phase 1 — Audit and Protection (Before Any Changes)
+
+Before modifying anything:
+
+1. Analyse the entire Tradey Boi X codebase.
+2. Document:
+    * Architecture
+    * Strategy logic
+    * Indicators
+    * AI components
+    * Data sources
+    * Risk systems
+    * Alert system
+    * Existing tests
+3. Create a complete backup.
+4. Create a separate Tradey Boi Pro project/branch.
+5. Confirm Tradey Boi X remains untouched.
+
+Do not begin development until the architecture plan is complete.
+
+⸻
+
+Phase 2 — Build Tradey Boi Pro Foundation
+
+Create a standalone autonomous version.
+
+Requirements:
+
+* Separate application
+* Separate database/logging
+* Separate configuration
+* Separate control panel
+* Separate testing environment
+
+Maintain the same core strategy behaviour as Tradey Boi X.
+
+The objective:
+
+Replace alerts with controlled actions.
+
+Do not redesign the strategy unless validated through testing.
+
+⸻
+
+Phase 3 — Autonomous Trading Engine
+
+Create an execution engine capable of:
+
+Trade Entry
+
+Automatically:
+
+* Evaluate opportunities
+* Confirm strategy requirements
+* Calculate confidence
+* Calculate position size
+* Submit orders through broker integration
+
+Trade Management
+
+Automatically:
+
+* Monitor open positions
+* Track profit/loss
+* Monitor stop levels
+* Monitor targets
+* Exit positions when conditions are reached
+
+The system must:
+
+* Set stop losses
+* Manage profit targets
+* Exit when strategy conditions fail
+* Exit when maximum profit objectives are reached
+* Reduce exposure during dangerous conditions
+
+⸻
+
+Phase 4 — Risk Management System
+
+Build:
+
+Account-Aware Position Sizing
+
+The bot must understand:
+
+* Account value
+* Available cash
+* Buying power
+* Current exposure
+
+Position sizes must be calculated based on account value and risk settings.
+
+Never exceed defined risk limits.
+
+⸻
+
+Phase 5 — IBKR Integration
+
+Implement official IBKR API integration.
+
+Create a user-friendly broker setup system.
+
+The user must NOT need to edit code.
+
+Create:
+
+Broker Setup Wizard
+
+Control Centre options:
+
+* Select Interactive Brokers
+* Select Paper Trading or Live Trading
+* Connect account
+* Test connection
+* View connection status
+
+Display:
+
+* Account value
+* Cash balance
+* Buying power
+* Current positions
+* Sync status
+
+IBKR remains the execution/account authority.
+
+Tradey Boi Pro becomes the primary interface.
+
+⸻
+
+Phase 6 — Tradey Boi Pro Control Centre
+
+Create a clean, simple dashboard.
+
+Use separate tabs.
+
+Main Dashboard
+
+Display:
+
+* Bot status
+* Start/stop controls
+* Pause trading button
+* Current market condition
+* AU/US market status
+* Top 5 opportunities today
+* Account summary
+* Current risk level
+
+Positions Tab
+
+Display:
+
+* Current holdings
+* Entry price
+* Current price
+* Quantity
+* Profit/loss
+* Percentage gain/loss
+* Stop level
+* Target
+* Time held
+* AI confidence
+
+Include:
+
+* Manual sell button
+* Position close confirmation
+
+Performance Tab
+
+Display:
+
+* Win rate
+* Profit factor
+* ROI
+* Drawdown
+* Sharpe ratio
+* AI accuracy
+* Trade history
+* Strategy performance
+
+Health Tab
+
+Display:
+
+* System status
+* Errors
+* Data quality
+* API connection
+* Last scan
+* Last trade
+* Recovery status
+
+⸻
+
+Phase 7 — Full Market Intelligence Scanner
+
+Expand Tradey Boi Pro beyond a fixed watchlist.
+
+Scan eligible:
+
+* ASX stocks
+* US stocks
+
+Use quality filters:
+
+* Liquidity
+* Volume
+* Spread quality
+* Market cap
+* Data availability
+
+Evaluate:
+
+* Technical setup
+* Trend strength
+* Momentum
+* News
+* Market regime
+* AI confidence
+* Risk/reward
+
+Do not trade everything.
+
+Process:
+
+Scan entire market → filter → rank → select highest-quality setups only.
+
+⸻
+
+Phase 8 — Advanced Protection Systems
+
+Implement:
+
+Data Quality Protection
+
+Before trading:
+
+Check:
+
+* Market data accuracy
+* Missing information
+* Delayed feeds
+* Indicator integrity
+
+Pause trading if data quality is unreliable.
+
+⸻
+
+Market Regime Detection
+
+Recognise:
+
+* Bull markets
+* Bear markets
+* Sideways markets
+* High volatility
+* Low liquidity
+
+Adjust:
+
+* Trade frequency
+* Confidence requirements
+* Exposure
+
+⸻
+
+Strategy Drift Prevention
+
+Prevent AI from damaging the original edge.
+
+Requirements:
+
+* Compare Tradey Boi Pro decisions with Tradey Boi X
+* Validate strategy changes
+* Maintain rollback capability
+* Never automatically replace profitable logic without testing
+
+⸻
+
+Emergency Market Protection
+
+Detect:
+
+* Market crashes
+* Extreme volatility
+* Trading halts
+* Major unexpected events
+
+Actions:
+
+* Stop new trades
+* Reduce exposure
+* Protect capital
+
+⸻
+
+Phase 9 — Recovery System
+
+After:
+
+* PC restart
+* Crash
+* Internet failure
+* API interruption
+
+The system must:
+
+* Reconnect
+* Restore positions
+* Check existing orders
+* Recalculate stops
+* Resume monitoring
+* Prevent duplicate trades
+
+⸻
+
+Phase 10 — Paper Trading Validation
+
+Before live trading:
+
+Run paper trading.
+
+Generate reports:
+
+Daily:
+
+* Trades taken
+* Trades avoided
+* Profit/loss
+* Risk
+* Errors
+
+Weekly/monthly:
+
+* Profit factor
+* Win rate
+* Drawdown
+* Comparison against Tradey Boi X
+* Execution quality
+* AI accuracy
+
+Do not enable live trading until validation requirements are met.
+
+⸻
+
+Phase 11 — Live vs Paper Comparison Engine
+
+Compare:
+
+* Entry differences
+* Exit differences
+* Slippage
+* Execution delay
+* Profit differences
+
+Track whether live conditions match expectations.
+
+⸻
+
+Phase 12 — Final Testing
+
+Before deployment:
+
+Run:
+
+* Full system audit
+* Backtesting comparison
+* Stress testing
+* Failure testing
+* API testing
+* Recovery testing
+
+Confirm:
+
+* Tradey Boi X still works
+* Tradey Boi Pro works independently
+* No critical bugs exist
+
+⸻
+
+Deployment Requirements
+
+Create Tradey Boi Pro as a downloadable PC application.
+
+The user should be able to:
+
+1. Install application
+2. Open control panel
+3. Connect IBKR
+4. Start paper trading
+5. Monitor everything from the dashboard
+
+No coding knowledge should be required.
+
+⸻
+
+Final Requirement
+
+Do not optimise for maximum returns at the expense of safety.
+
+Priorities:
+
+1. Capital protection
+2. Correct execution
+3. System reliability
+4. Consistent edge
+5. Performance improvement
+
+Build Tradey Boi Pro as a professional autonomous trading platform while preserving the original Tradey Boi X intelligence.
