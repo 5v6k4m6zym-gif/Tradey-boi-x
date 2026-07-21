@@ -206,7 +206,7 @@ class TieredMonitor:
 
         try:
             raw_signals, df_cache = scan_all(
-                universe, batch_size=50, progress_cb=_prog, return_cache=True
+                universe, batch_size=20, progress_cb=_prog, return_cache=True
             )
             with self._lock:
                 self._df_cache = df_cache

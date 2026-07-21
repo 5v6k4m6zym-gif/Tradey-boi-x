@@ -491,6 +491,10 @@ def scan_all(
         data = _download_batch(batch)
         df_cache.update(data)
 
+        # Throttle between batches so the PC stays responsive
+        if b_idx < len(batches) - 1:
+            time.sleep(3)
+
         for ticker, df in data.items():
             sig = _score_signal(df, ticker, params)
             if sig:
