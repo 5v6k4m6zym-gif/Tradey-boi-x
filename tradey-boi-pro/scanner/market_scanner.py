@@ -30,6 +30,7 @@ import pathlib
 import pickle
 import sys
 import threading
+import time
 from datetime import datetime
 from typing import Callable, Optional
 
@@ -86,6 +87,133 @@ def _is_us_open() -> bool:
 
 def market_is_open() -> bool:
     return _is_asx_open() or _is_us_open()
+
+
+# ── Higher-timeframe confirmation cache (30-min TTL) ──────────────────────────
+_htf_cache: dict[str, tuple[float, tuple]] = {}   # ticker → (timestamp, result)
+_HTF_TTL   = 1800   # seconds
+
+
+def _weekly_trend_ok(df: pd.DataFrame) -> bool:
+    """
+    Weekly EMA20 > EMA50 — computed by resampling the existing daily df.
+    No extra download. Fails open (returns True) if data is insufficient.
+    """
+    try:
+        df = df.copy()
+        df.index = pd.to_datetime(df.index)
+        weekly = df["Close"].resample("W").last().dropna()
+        if len(weekly) < 50:
+            return True
+        ema20 = weekly.ewm(span=20, adjust=False).mean().iloc[-1]
+        ema50 = weekly.ewm(span=50, adjust=False).mean().iloc[-1]
+        return bool(ema20 > ema50)
+    except Exception:
+        return True
+
+
+def _vwap_mtf_check(ticker: str) -> tuple[int, bool]:
+    """
+    Downloads 5-day 1h data (cached 30 min) and returns:
+      vwap_score : +2 cross-above on volume surge, +1 above VWAP, -1 below VWAP, 0 unavailable
+      mtf_ok     : True when 1h EMA20 > EMA50 AND 1h MACD > 0 (or data unavailable)
+    Fails open on both dimensions when data is missing.
+    """
+    now = time.time()
+    if ticker in _htf_cache:
+        ts, cached = _htf_cache[ticker]
+        if now - ts < _HTF_TTL:
+            return cached
+
+    try:
+        df1h = yf.download(ticker, period="5d", interval="1h",
+                           progress=False, auto_adjust=True)
+        if df1h.empty or len(df1h) < 26:
+            result = (0, True)
+            _htf_cache[ticker] = (now, result)
+            return result
+
+        df1h.columns = [c.title() if isinstance(c, str) else c for c in df1h.columns]
+        close = df1h["Close"].squeeze().astype(float)
+        vol   = df1h["Volume"].squeeze().astype(float)
+        high  = df1h["High"].squeeze().astype(float)
+        low   = df1h["Low"].squeeze().astype(float)
+
+        # VWAP (intraday, today only — reset at day boundary)
+        typical = (high + low + close) / 3
+        vwap = (typical * vol).cumsum() / vol.cumsum()
+        last_close = float(close.iloc[-1])
+        last_vwap  = float(vwap.iloc[-1])
+        prev_close = float(close.iloc[-2])
+        prev_vwap  = float(vwap.iloc[-2])
+        last_vol   = float(vol.iloc[-1])
+        avg_vol    = float(vol.mean())
+
+        crossed_above = prev_close < prev_vwap and last_close > last_vwap
+        above         = last_close > last_vwap
+        vol_surge     = last_vol > avg_vol * 1.2
+
+        if crossed_above and vol_surge:
+            vwap_score = 2
+        elif above:
+            vwap_score = 1
+        else:
+            vwap_score = -1
+
+        # Multi-timeframe (1h EMA + MACD)
+        ema20_1h  = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
+        ema50_1h  = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
+        macd_1h   = float(
+            (close.ewm(span=12, adjust=False).mean()
+             - close.ewm(span=26, adjust=False).mean()).iloc[-1]
+        )
+        mtf_ok = bool(ema20_1h > ema50_1h and macd_1h > 0)
+
+        result = (vwap_score, mtf_ok)
+    except Exception:
+        result = (0, True)   # fail open
+
+    _htf_cache[ticker] = (now, result)
+    return result
+
+
+def _apply_live_filters(signals: list[dict], min_score: int) -> list[dict]:
+    """
+    Post-filter applied only during live scanning (NOT in the backtest).
+    Applies VWAP and multi-timeframe checks with per-ticker yfinance calls.
+    Kept as a separate step so the backtest path (which calls _score_signal
+    directly) is never contaminated with today's intraday data.
+    """
+    kept = []
+    for sig in signals:
+        ticker      = sig["ticker"]
+        score       = sig["score"]
+        vwap_score, mtf_ok = _vwap_mtf_check(ticker)
+
+        # Below VWAP AND 1h misaligned — veto
+        if vwap_score < 0 and not mtf_ok:
+            log.debug(f"HTF veto {ticker}: below VWAP + 1h misaligned")
+            continue
+
+        # Below VWAP alone — require one extra score point
+        if vwap_score < 0 and score < min_score + 1:
+            log.debug(f"HTF filter {ticker}: below VWAP, score {score} < {min_score+1}")
+            continue
+
+        # 1h misaligned alone — require one extra score point
+        if not mtf_ok and score < min_score + 1:
+            log.debug(f"HTF filter {ticker}: 1h misaligned, score {score} < {min_score+1}")
+            continue
+
+        sig = dict(sig)
+        sig["vwap_score"] = vwap_score
+        sig["mtf_ok"]     = mtf_ok
+        kept.append(sig)
+
+    removed = len(signals) - len(kept)
+    if removed:
+        log.info(f"_apply_live_filters: removed {removed}/{len(signals)} signals via VWAP/MTF")
+    return kept
 
 
 def next_open_seconds() -> int:
@@ -387,6 +515,10 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         # ── Expected-value gate (X's formula) ─────────────────────────────────
         expected_r = _expected_value_r(curr_price, atr, prob, is_breakout)
 
+        # ── Weekly trend gate (X's hard gate — uses existing daily data) ────────
+        if not _weekly_trend_ok(df):
+            return None   # Weekly EMA20 < EMA50 — fighting the larger trend
+
         # ── Tier classification (X's thresholds) ──────────────────────────────
         if   score >= elite_min and prob >= prob_floor and expected_r > 0:
             tier = "ELITE"
@@ -508,8 +640,13 @@ def scan_all(
                 )
 
     signals.sort(key=lambda s: (s["score"], s["prob"]), reverse=True)
-    log.info(f"scan_all: {len(signals)} signals from {len(tickers)} tickers")
+    log.info(f"scan_all: {len(signals)} raw signals from {len(tickers)} tickers")
 
+    # VWAP + multi-timeframe post-filter (live only — not called from backtest)
+    min_score = params.get("min_score", 7)
+    signals = _apply_live_filters(signals, min_score)
+
+    log.info(f"scan_all: {len(signals)} signals after HTF filter")
     return (signals, df_cache) if return_cache else signals
 
 
@@ -533,6 +670,11 @@ def scan_batch(
             signals.append(sig)
 
     signals.sort(key=lambda s: (s["score"], s["prob"]), reverse=True)
+
+    # VWAP + multi-timeframe post-filter (live only)
+    min_score = params.get("min_score", 7)
+    signals = _apply_live_filters(signals, min_score)
+
     return (signals, data) if return_cache else signals
 
 
