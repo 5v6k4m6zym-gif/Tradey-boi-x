@@ -222,7 +222,10 @@ def build_universe(
     from db.database import get_setting
     tickers: list[str] = []
     for mkt in markets:
-        stored = get_setting(f"watchlist_{mkt.upper()}")
+        try:
+            stored = get_setting(f"watchlist_{mkt.upper()}")
+        except Exception:
+            stored = None
         if stored is not None:
             tickers.extend(stored)
         else:
