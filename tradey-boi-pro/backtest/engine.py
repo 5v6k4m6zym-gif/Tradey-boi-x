@@ -343,7 +343,7 @@ def run_backtest(
                 mask = df.index <= pd.Timestamp(sim_date)
             df_slice = df[mask]
             sig = _detect_signal(df_slice, ticker, p)
-            if sig and sig.get("score", 0) >= p["min_score"] and sig.get("prob", 0) >= p["min_prob"]:
+            if sig and sig.get("score", 0) >= p["min_score"]:
                 new_signals.append(sig)
 
         # Sort by score desc, take top slots

@@ -457,11 +457,17 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
             prob = None
 
         # Heuristic fallback (only used when model is unavailable)
+        # Stocks that reach this point have already passed all hard filters
+        # (EMA uptrend x2, MACD positive x2, RSI 25-72, vol_ratio >= 0.5),
+        # so the base probability should reflect that pre-qualification.
         if prob is None:
             rsi_raw = float(row["rsi"])
             vr_raw  = float(row["vol_ratio"])
-            prob = min(0.40 + (rsi_raw - 50) / 200 + (vr_raw - 1) * 0.05, 0.82)
-            prob = max(prob, 0.35)
+            # RSI 40-70 maps to 0.00-0.25 contribution; VR 0.5-3+ maps to 0.00-0.15
+            rsi_component = max(0.0, (rsi_raw - 40) / 120)
+            vr_component  = min((max(vr_raw - 0.5, 0)) / 20, 0.15)
+            prob = min(0.52 + rsi_component + vr_component, 0.82)
+            prob = max(prob, 0.40)
 
         # ── Hard filters (X's decide() gates, unchanged) ──────────────────────
         if float(row["ema20"])     <= float(row["ema50"]):          return None  # uptrend today
