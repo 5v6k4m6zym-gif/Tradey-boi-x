@@ -122,12 +122,23 @@ def _load_x_model():
 
 # ── X's adaptive thresholds (auto-updated by X's weekly learning cycle) ───────
 
+_PRO_ADAPTIVE = _PRO_DIR / "config" / "adaptive_thresholds.json"
+
+
 def _load_x_adaptive_cfg() -> dict:
-    """Read X's adaptive_thresholds.json — the same file X's engine updates weekly."""
-    try:
-        return json.loads(_X_ADAPTIVE.read_text())
-    except Exception:
-        return {"prob_floor": 0.53, "sb_base_score": 7}
+    """
+    Load adaptive thresholds. Priority:
+      1. Pro's own config (written by engine/adaptive.py after live trades)
+      2. X's config (inherited until Pro has ≥10 resolved trades of its own)
+      3. Hard-coded defaults
+    """
+    for path in (_PRO_ADAPTIVE, _X_ADAPTIVE):
+        try:
+            if path.exists():
+                return json.loads(path.read_text())
+        except Exception:
+            continue
+    return {"prob_floor": 0.53, "sb_base_score": 7}
 
 
 def _regime_score_thresholds(sb_base: int) -> tuple[int, int]:

@@ -20,6 +20,7 @@ from scanner.monitor import TieredMonitor
 from engine.signal_bridge import get_pending_signals
 from engine.executor import execute_signal
 from engine.position_manager import PositionManager
+from engine.adaptive import adaptive_threshold_update
 
 if TYPE_CHECKING:
     from broker.ibkr_client import IBKRClient
@@ -35,8 +36,9 @@ class BotRunner:
         self._thread: threading.Thread | None = None
         self._stop    = threading.Event()
         self.status   = "STOPPED"
-        self.last_trade_cycle: datetime | None = None
-        self.scan_log: list[str] = []
+        self.last_trade_cycle: datetime | None   = None
+        self.scan_log: list[str]                 = []
+        self._last_adaptive_run: datetime | None = None
 
     # ── Public lifecycle ──────────────────────────────────────────────────────
 
@@ -87,10 +89,26 @@ class BotRunner:
         while not self._stop.is_set():
             try:
                 self._trade_cycle()
+                self._maybe_run_adaptive_update()
             except Exception as e:
                 log.error(f"Trade cycle error: {e}")
                 db.log_error("BotRunner", str(e))
             self._stop.wait(300)
+
+    def _maybe_run_adaptive_update(self):
+        """Run adaptive threshold learning once per week (or on first start)."""
+        now = datetime.utcnow()
+        if (
+            self._last_adaptive_run is None
+            or (now - self._last_adaptive_run).days >= 7
+        ):
+            try:
+                result = adaptive_threshold_update()
+                self._last_adaptive_run = now
+                reason = result.get("reason", "")
+                self._log(f"[ADAPTIVE LEARNING] {reason}")
+            except Exception as e:
+                log.warning(f"Adaptive update failed (non-fatal): {e}")
 
     def _trade_cycle(self):
         if not self._broker.connected:
