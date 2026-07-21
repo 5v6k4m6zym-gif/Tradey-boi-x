@@ -8,29 +8,34 @@ echo    Tradey Boi Pro — Windows Installer
 echo  =========================================
 echo.
 
-:: ── Check Python ─────────────────────────────────────────────────────────────
+:: ── Check Python (try python, then py launcher) ───────────────────────────────
+set PYCMD=python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo  ERROR: Python not found.
-    echo.
-    echo  Please install Python 3.10 or newer from:
-    echo  https://www.python.org/downloads/
-    echo.
-    echo  IMPORTANT: Tick "Add Python to PATH" during install.
-    echo.
-    pause
-    start https://www.python.org/downloads/
-    exit /b 1
+    py --version >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo  ERROR: Python not found.
+        echo.
+        echo  Please install Python 3.10 or newer from:
+        echo  https://www.python.org/downloads/
+        echo.
+        echo  IMPORTANT: Tick "Add Python to PATH" during install.
+        echo.
+        pause
+        start https://www.python.org/downloads/
+        exit /b 1
+    )
+    set PYCMD=py
 )
 
-for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set PYVER=%%v
+for /f "tokens=2 delims= " %%v in ('%PYCMD% --version 2^>^&1') do set PYVER=%%v
 echo  Found Python %PYVER%
 echo.
 
 :: ── Create virtual environment ────────────────────────────────────────────────
 if not exist ".venv" (
     echo  Creating virtual environment...
-    python -m venv .venv
+    %PYCMD% -m venv .venv
     if %errorlevel% neq 0 (
         echo  ERROR: Could not create virtual environment.
         pause
