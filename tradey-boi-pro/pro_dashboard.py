@@ -84,13 +84,23 @@ with st.sidebar:
             st.button("▶ Start Bot", disabled=True, use_container_width=True,
                       help="Connect to IBKR first")
 
+    # ── Regime summary ────────────────────────────────────────────────────────
+    _sr = scanner.regimes
+    if _sr:
+        st.divider()
+        _regime_icons = {"BULL": "🟢", "NEUTRAL": "🟡", "BEAR": "🔴"}
+        for _mkt, _rd in _sr.items():
+            _icon = _regime_icons.get(_rd.regime.value, "⚪")
+            st.caption(f"{_icon} {_mkt} {_rd.regime.value}  conf {_rd.confidence:.0%}")
+
     st.divider()
     if st.button("🔄 Refresh", use_container_width=True):
         st.rerun()
 
-    if scanner.last_scan:
-        ago = int((datetime.utcnow() - scanner.last_scan).total_seconds())
-        st.caption(f"Last scan: {ago//60}m {ago%60}s ago  ·  #{scanner.scan_count}")
+    _last_t1 = scanner.last_scans.get("tier1")
+    if _last_t1:
+        _ago = int((datetime.utcnow() - _last_t1).total_seconds())
+        st.caption(f"Last scan: {_ago//60}m {_ago%60}s ago  ·  #{scanner.scan_count}")
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_dash, tab_scan, tab_pos, tab_perf, tab_health, tab_settings, tab_bt = st.tabs([
@@ -164,8 +174,7 @@ with tab_dash:
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Account Value",   f"${acct_val:,.0f}")
     c2.metric("Open Positions",  f"{len(open_pos)} / {cfg.get('max_positions') or 5}")
-    elite_n = len(scanner.elite_signals) if hasattr(scanner, "elite_signals") else len(scanner.signals)
-    c3.metric("ELITE Signals",  elite_n)
+    c3.metric("ELITE Signals",  len(scanner.elite_signals))
     c4.metric("Total P&L",       f"${metrics['total_pnl']:+,.0f}")
     c5.metric("Win Rate",        f"{metrics['win_rate']*100:.0f}%" if metrics["trade_count"] else "—")
 
@@ -177,8 +186,7 @@ with tab_dash:
     with col_sig:
         st.subheader("🎯 Top Signals")
         from engine.signal_bridge import get_pending_signals
-        actionable = scanner.actionable_signals if hasattr(scanner, "actionable_signals") else scanner.signals
-        pending = get_pending_signals(scanner_signals=actionable)
+        pending = get_pending_signals(scanner_signals=scanner.actionable_signals)
 
         if pending:
             for sig in pending[:6]:
@@ -243,7 +251,7 @@ with tab_scan:
 
     # ── Market regime cards ───────────────────────────────────────────────────
     st.subheader("🌐 Market Regime")
-    live_regimes = scanner.regimes if hasattr(scanner, "regimes") else {}
+    live_regimes = scanner.regimes
     rc1, rc2, rc3 = st.columns(3)
 
     def _regime_card(col, label, rd):
@@ -266,7 +274,8 @@ with tab_scan:
     _regime_card(rc1, "🇦🇺 ASX",    live_regimes.get("ASX"))
     _regime_card(rc2, "🇺🇸 US",     live_regimes.get("US"))
     with rc3:
-        st.metric("Universe Size", f"{scanner.universe_size if hasattr(scanner, 'universe_size') and scanner.universe_size > 0 else len(ASX_UNIVERSE)+len(US_UNIVERSE)} tickers")
+        univ_n = scanner.universe_size if scanner.universe_size > 0 else len(ASX_UNIVERSE) + len(US_UNIVERSE)
+        st.metric("Universe Size", f"{univ_n} tickers")
         st.caption(f"ASX {len(ASX_UNIVERSE)}  ·  US {len(US_UNIVERSE)}")
 
     st.divider()
@@ -275,26 +284,25 @@ with tab_scan:
     st.subheader("⏱ Scan Tier Status")
     tc1, tc2, tc3, tc4 = st.columns(4)
 
-    last_scans = scanner.last_scans if hasattr(scanner, "last_scans") else {}
-
     def _ago(dt):
         if dt is None:
             return "Never"
         secs = int((datetime.utcnow() - dt).total_seconds())
         return f"{secs//60}m {secs%60}s ago"
 
-    tc1.metric("Tier 1 (60m — full)",  _ago(last_scans.get("tier1")))
+    last_scans = scanner.last_scans
+    tc1.metric("Tier 1 (60m — full)",   _ago(last_scans.get("tier1")))
     tc2.metric("Tier 2 (15m — top 50)", _ago(last_scans.get("tier2")))
     tc3.metric("Tier 3  (5m — top 20)", _ago(last_scans.get("tier3")))
-    tc4.metric("Scans Run", scanner.scan_count if hasattr(scanner, "scan_count") else 0)
+    tc4.metric("Scans Run", scanner.scan_count)
 
     # Progress bar while scanning
-    if hasattr(scanner, "is_scanning") and scanner.is_scanning:
+    if scanner.is_scanning:
         done, total = scanner.progress
         if total > 0:
-            st.progress(done / total, text=f"{scanner.status}")
+            st.progress(done / total, text=scanner.status)
     else:
-        st.caption(scanner.status if hasattr(scanner, "status") else "Idle")
+        st.caption(scanner.status or "Idle")
 
     col_a, col_b = st.columns([1, 2])
     with col_a:
@@ -310,7 +318,7 @@ with tab_scan:
     # ── Signal results by tier ────────────────────────────────────────────────
     st.subheader("📋 Ranked Opportunities")
 
-    all_signals = scanner.signals if hasattr(scanner, "signals") else []
+    all_signals = scanner.signals
 
     if not all_signals:
         st.info(
@@ -626,9 +634,14 @@ with tab_health:
                 st.caption(f"Last ping: {ago}s ago")
             st.markdown(f"**Bot Runner:** {'🟢 Running' if bot.is_running() else '⚫ Stopped'}")
             st.markdown(f"**Scanner:** {'🟢 Running' if scanner.is_running() else '⚫ Stopped'}")
-            if scanner.last_scan:
-                ago = int((datetime.utcnow() - scanner.last_scan).total_seconds())
-                st.caption(f"Last scan: {ago//60}m ago · {scanner.scan_count} total scans")
+            _t1_last = scanner.last_scans.get("tier1")
+            if _t1_last:
+                _t1_ago = int((datetime.utcnow() - _t1_last).total_seconds())
+                st.caption(
+                    f"Tier 1: {_t1_ago//60}m ago  ·  "
+                    f"Tier 2: {_ago(scanner.last_scans.get('tier2'))}  ·  "
+                    f"{scanner.scan_count} scans total"
+                )
             pm = bot.position_manager
             st.markdown(f"**Position Manager:** {'🟢 Running' if pm.is_running() else '⚫ Stopped'}")
             if pm.last_run:
@@ -650,19 +663,27 @@ with tab_health:
             st.progress(min(op / mx, 1.0))
 
     with col2:
-        st.subheader("Watchlist & Signals")
+        st.subheader("Universe & Signals")
         with st.container(border=True):
-            tickers = get_all_active_tickers()
+            from scanner.universe import ASX_UNIVERSE as _ASX_U, US_UNIVERSE as _US_U
+            from scanner.watchlist_manager import get_watchlist as _gwl
             enabled_mkt = cfg.get("enabled_markets") or ["ASX", "US"]
             st.markdown(f"**Active markets:** {', '.join(enabled_mkt)}")
-            st.markdown(f"**Total tickers:** {len(tickers)}")
-            from scanner.watchlist_manager import get_watchlist
+            _built_in = (len(_ASX_U) if "ASX" in enabled_mkt else 0) + \
+                        (len(_US_U)  if "US"  in enabled_mkt else 0)
+            st.markdown(f"**Built-in universe:** {_built_in} tickers")
             for mkt in enabled_mkt:
-                st.caption(f"  {mkt}: {len(get_watchlist(mkt))} tickers")
-            custom = get_watchlist("CUSTOM")
-            if custom:
-                st.caption(f"  CUSTOM: {len(custom)} tickers")
-            st.markdown(f"**Live signals:** {len(scanner.signals)}")
+                _add = _gwl(mkt)
+                if _add:
+                    st.caption(f"  + {len(_add)} custom {mkt} additions")
+            _custom = _gwl("CUSTOM")
+            if _custom:
+                st.caption(f"  + {len(_custom)} custom tickers")
+            st.divider()
+            _sigs    = scanner.signals
+            _elite   = len([s for s in _sigs if s.get("tier") == "ELITE"])
+            _sbuy    = len([s for s in _sigs if s.get("tier") == "STRONG BUY"])
+            st.markdown(f"**Live signals:** {len(_sigs)}  ·  ⭐ {_elite}  🟢 {_sbuy}")
 
         st.subheader("Recent Errors")
         errors = db.recent_errors(limit=10)
@@ -706,9 +727,13 @@ with tab_settings:
 
     with col2:
         st.subheader("Signal Quality Gates")
-        min_prob  = st.slider("Min probability", 0.50, 0.75,
-                               float(cfg.get("min_prob") or 0.53), step=0.01)
-        min_score = st.slider("Min score", 5, 10, int(cfg.get("min_score") or 7))
+        min_prob      = st.slider("Min probability", 0.50, 0.75,
+                                   float(cfg.get("min_prob") or 0.53), step=0.01)
+        min_score     = st.slider("Min score (X-style 0–10)", 5, 10,
+                                   int(cfg.get("min_score") or 7))
+        min_composite = st.slider("Min composite score (Pro ranking)", 5.0, 9.5,
+                                   float(cfg.get("min_composite") or 7.0), step=0.5,
+                                   help="Only STRONG BUY (≥7.0) and ELITE (≥8.5) are traded")
 
         st.subheader("Stop Loss (× ATR)")
         sl_hi  = st.slider("High-vol  (ATR ≥ 3%)", 0.5, 2.5,
@@ -726,6 +751,13 @@ with tab_settings:
         tgt_lo  = st.slider("Low-vol target",   2.0, 15.0,
                              float(cfg.get("target_lo")  or 5.0), step=1.0)
 
+        st.subheader("Brokerage")
+        brokerage = st.number_input(
+            "Brokerage per side ($)", value=float(cfg.get("brokerage") or 2.0),
+            min_value=0.0, step=0.5,
+            help="Applied to both entry and exit in backtests and P&L calculations"
+        )
+
     if st.button("💾 Save All Settings", type="primary", use_container_width=True):
         cfg.set("risk_pct",              risk_pct)
         cfg.set("max_positions",         max_pos)
@@ -736,12 +768,14 @@ with tab_settings:
         cfg.set("cb_pause_days",         cb_pause)
         cfg.set("min_prob",              min_prob)
         cfg.set("min_score",             min_score)
+        cfg.set("min_composite",         min_composite)
         cfg.set("sl_mult_hi",            sl_hi)
         cfg.set("sl_mult_mid",           sl_mid)
         cfg.set("sl_mult_lo",            sl_lo)
         cfg.set("target_hi",             tgt_hi)
         cfg.set("target_mid",            tgt_mid)
         cfg.set("target_lo",             tgt_lo)
+        cfg.set("brokerage",             brokerage)
         st.success("✅ Settings saved!")
 
     st.divider()
@@ -803,14 +837,15 @@ with tab_bt:
 
         with col2:
             st.markdown("**Markets to test**")
-            from scanner.watchlist_manager import get_watchlist, get_all_active_tickers, ASX_TOP200, SP500_SAMPLE
+            from scanner.universe import ASX_UNIVERSE as _BT_ASX, US_UNIVERSE as _BT_US
+            from scanner.watchlist_manager import get_watchlist as _bt_gwl
             bt_markets = st.multiselect(
                 "Markets", ["ASX", "US", "Custom"],
                 default=["ASX", "US"],
             )
             st.caption(
-                f"ASX: {len(ASX_TOP200)} tickers  ·  "
-                f"US: {len(SP500_SAMPLE)} tickers"
+                f"ASX: {len(_BT_ASX)} tickers  ·  "
+                f"US: {len(_BT_US)} tickers"
             )
             st.markdown("**Quality gates**")
             bt_min_score = st.slider("Min score",       5, 10,  int(cfg.get("min_score") or 7))
@@ -839,18 +874,16 @@ with tab_bt:
         st.rerun()
 
     if run_bt:
-        # Build ticker list
-        bt_tickers: list[str] = []
-        if "ASX" in bt_markets:
-            bt_tickers.extend(get_watchlist("ASX"))
-        if "US" in bt_markets:
-            bt_tickers.extend(get_watchlist("US"))
+        # Build ticker list from the full Pro universe (not just watchlist additions)
+        from scanner.universe import build_universe
+        selected_mkts = [m for m in bt_markets if m in ("ASX", "US")]
+        bt_tickers: list[str] = build_universe(markets=selected_mkts, apply_liquidity=False)
         if "Custom" in bt_markets:
-            bt_tickers.extend(get_watchlist("CUSTOM"))
-        bt_tickers = list(dict.fromkeys(bt_tickers))   # deduplicate
+            bt_tickers.extend(_bt_gwl("CUSTOM"))
+        bt_tickers = list(dict.fromkeys(bt_tickers))
 
         if not bt_tickers:
-            st.error("No tickers in selected markets. Add some in the Scanner tab first.")
+            st.error("No tickers in selected markets.")
         else:
             bt_params = {
                 "min_score":      bt_min_score,
