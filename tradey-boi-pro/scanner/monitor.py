@@ -248,7 +248,11 @@ class TieredMonitor:
             t2_tickers = [s["ticker"] for s in self._tier2_signals]
             regimes    = dict(self._regimes)
 
+        # Always stamp so the dashboard countdown resets, even with no signals yet
+        self._tier2_last = datetime.utcnow()
+
         if not t2_tickers:
+            log.debug("Tier 2: no signals yet — skipping scan, countdown reset")
             return
 
         self._tier2_scanning = True
@@ -293,7 +297,11 @@ class TieredMonitor:
             t3_tickers = [s["ticker"] for s in self._tier3_signals]
             regimes    = dict(self._regimes)
 
+        # Always stamp so the dashboard countdown resets, even with no signals yet
+        self._tier3_last = datetime.utcnow()
+
         if not t3_tickers:
+            log.debug("Tier 3: no signals yet — skipping scan, countdown reset")
             return
 
         self._tier3_scanning = True
