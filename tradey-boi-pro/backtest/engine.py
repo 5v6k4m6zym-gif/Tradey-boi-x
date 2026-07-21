@@ -239,10 +239,12 @@ def run_backtest(
     batch_size = 50
     batches    = [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
 
+    _total_units = len(tickers) * 2   # first half = download, second half = simulation
+
     for b_idx, batch in enumerate(batches):
         if progress_cb:
-            done = b_idx * batch_size
-            progress_cb(done, len(tickers), f"Downloading batch {b_idx+1}/{len(batches)}…")
+            done = b_idx * batch_size          # 0 → len(tickers) covers first 50%
+            progress_cb(done, _total_units, f"Downloading batch {b_idx+1}/{len(batches)}…")
         try:
             _sink = io.StringIO()
             with contextlib.redirect_stderr(_sink), _warnings.catch_warnings():
@@ -305,11 +307,10 @@ def run_backtest(
 
     for day_idx, sim_date in enumerate(trading_days):
         if progress_cb and day_idx % 5 == 0:
-            progress_cb(
-                len(all_data),  # download done, reuse field
-                len(tickers),
-                f"Simulating day {day_idx+1}/{total_days}  ({sim_date})…",
-            )
+            # Second half of progress: len(tickers) → len(tickers)*2
+            sim_done = len(tickers) + int(day_idx / max(total_days, 1) * len(tickers))
+            progress_cb(sim_done, _total_units,
+                        f"Simulating day {day_idx+1}/{total_days}  ({sim_date})…")
 
         # ── 1. Close positions that stop/target/expire today ────────────────
         still_open = []

@@ -1037,6 +1037,9 @@ with tab_bt:
                     progress_bar.progress(min(done / total, 1.0))
                 status_text.caption(msg)
 
+            # Clear previous results immediately so stale data isn't shown during the run
+            st.session_state.pop("bt_results", None)
+
             from backtest.engine import run_backtest
             try:
                 with st.spinner(""):
