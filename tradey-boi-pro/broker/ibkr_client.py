@@ -89,17 +89,27 @@ class IBKRClient:
         asyncio.run(_main())
 
     async def _async_main(self, host, port, client_id):
-        self._ib = IB()
-        try:
-            await self._ib.connectAsync(host, port, clientId=client_id, timeout=10)
-            self._connected = True
-            self._error_msg = ""
-            log.info(f"Connected to IBKR {host}:{port}")
-            await self._poll_loop()
-        except Exception as e:
-            self._error_msg = str(e)
-            self._connected = False
-            log.error(f"IBKR connection failed: {e}")
+        retry_delay = 30  # seconds between reconnect attempts
+        while True:
+            self._ib = IB()
+            try:
+                await self._ib.connectAsync(host, port, clientId=client_id, timeout=10)
+                self._connected = True
+                self._error_msg = ""
+                log.info(f"Connected to IBKR {host}:{port}")
+                await self._poll_loop()
+                # poll_loop exited — connection dropped, retry
+                log.warning(f"Connection dropped — retrying in {retry_delay}s…")
+                self._error_msg = f"Reconnecting in {retry_delay}s…"
+            except Exception as e:
+                self._error_msg = str(e)
+                self._connected = False
+                log.error(f"IBKR connection error: {e} — retrying in {retry_delay}s")
+            try:
+                self._ib.disconnect()
+            except Exception:
+                pass
+            await asyncio.sleep(retry_delay)
 
     async def _async_disconnect(self):
         if self._ib:
@@ -108,10 +118,16 @@ class IBKRClient:
     async def _poll_loop(self):
         while self._connected:
             try:
+                if not self._ib.isConnected():
+                    log.warning("IB connection lost — attempting reconnect…")
+                    self._connected = False
+                    self._error_msg = "Disconnected — reconnecting…"
+                    break
                 await self._refresh_account()
                 await self._refresh_positions()
                 await self._refresh_orders()
                 self._last_ping = datetime.utcnow()
+                self._error_msg = ""
             except Exception as e:
                 log.error(f"Poll error: {e}")
             await asyncio.sleep(15)
