@@ -103,9 +103,9 @@ with st.sidebar:
         st.caption(f"Last scan: {_ago//60}m {_ago%60}s ago  ·  #{scanner.scan_count}")
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_dash, tab_scan, tab_pos, tab_perf, tab_health, tab_settings, tab_bt = st.tabs([
+tab_dash, tab_scan, tab_pos, tab_perf, tab_health, tab_settings, tab_bt, tab_analysis = st.tabs([
     "📊 Dashboard", "🔍 Scanner", "📋 Positions",
-    "📈 Performance", "🔧 Health", "⚙️ Settings", "🧪 Backtest"
+    "📈 Performance", "🔧 Health", "⚙️ Settings", "🧪 Backtest", "🔭 Stock Analysis"
 ])
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -561,24 +561,50 @@ with tab_perf:
     metrics = performance_metrics()
 
     if metrics["trade_count"] == 0:
-        st.info("No completed trades yet.")
+        st.info(
+            "No completed trades yet.\n\n"
+            "Pro records every trade automatically — once the bot executes "
+            "and the position closes (stop hit, target hit, or max hold), "
+            "full institutional metrics appear here."
+        )
     else:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Trades",        metrics["trade_count"])
-        c2.metric("Win Rate",      f"{metrics['win_rate']*100:.1f}%")
-        c3.metric("Profit Factor", f"{metrics['profit_factor']:.2f}")
-        c4.metric("Total P&L",     f"${metrics['total_pnl']:+,.0f}")
+        # ── Row 1: Primary stats ──────────────────────────────────────────────
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Trades",            metrics["trade_count"])
+        c2.metric("Win Rate",          f"{metrics['win_rate']*100:.1f}%")
+        c3.metric("Profit Factor",     f"{metrics['profit_factor']:.3f}",
+                  help="Gross profit ÷ gross loss. >1.2 = good, >1.5 = strong")
+        c4.metric("Expectancy R",      f"{metrics['expectancy_r']:+.3f}",
+                  help="Expected profit per $1 risked. Positive = edge exists")
+        c5.metric("Total P&L",         f"${metrics['total_pnl']:+,.0f}")
+        c6.metric("Annualised",        f"{metrics['annualised_return_pct']:+.1f}%",
+                  help="Return annualised by hold-day weighting")
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Avg Win",       f"${metrics['avg_win']:,.0f}")
-        c2.metric("Avg Loss",      f"${metrics['avg_loss']:,.0f}")
-        c3.metric("Max Drawdown",  f"{metrics['max_drawdown']*100:.1f}%")
-        c4.metric("Sharpe",        f"{metrics['sharpe']:.2f}")
+        # ── Row 2: Risk-adjusted stats ────────────────────────────────────────
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Sharpe",            f"{metrics['sharpe']:.2f}",
+                  help="Risk-adjusted return (penalises all volatility)")
+        c2.metric("Sortino",           f"{metrics['sortino']:.2f}",
+                  help="Like Sharpe but only penalises downside volatility")
+        c3.metric("Max Drawdown",      f"{metrics['max_drawdown']*100:.1f}%")
+        c4.metric("Avg Win",           f"${metrics['avg_win']:,.0f}  ({metrics['avg_gain_pct']:+.1f}%)")
+        c5.metric("Avg Loss",          f"${metrics['avg_loss']:,.0f}  ({metrics['avg_loss_pct']:.1f}%)")
+        c6.metric("Avg Hold",          f"{metrics['avg_hold_days']:.0f}d")
+
+        # ── Row 3: Streak stats ───────────────────────────────────────────────
+        c1, c2, _, _, _, _ = st.columns(6)
+        c1.metric("Win Streak (max)",  metrics["win_streak"],
+                  help="Longest consecutive winning run")
+        c2.metric("Loss Streak (max)", metrics["loss_streak"],
+                  help="Longest consecutive losing run — circuit breaker fires at "
+                       f"{int(metrics.get('cb_threshold', 3))}")
 
         st.divider()
-        trades = db.all_trades(limit=500)
-        if len(trades) >= 2:
-            df = pd.DataFrame(trades)
+
+        # ── Equity curve ─────────────────────────────────────────────────────
+        perf_trades = db.all_trades(limit=500)
+        if len(perf_trades) >= 2:
+            df = pd.DataFrame(perf_trades)
             df["exit_date"] = pd.to_datetime(df["exit_date"])
             df = df.sort_values("exit_date")
             df["cum_pnl"] = df["pnl"].cumsum()
@@ -595,25 +621,79 @@ with tab_perf:
             fig.update_layout(
                 title="Equity Curve", xaxis_title="Date", yaxis_title="P&L ($)",
                 plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
-                font=dict(color="white"), height=350,
+                font=dict(color="white"), height=340,
             )
             st.plotly_chart(fig, use_container_width=True)
 
             col1, col2 = st.columns(2)
             with col1:
-                oc = df["outcome"].value_counts()
+                oc   = df["outcome"].value_counts()
                 fig2 = px.pie(values=oc.values, names=oc.index, title="Outcomes",
-                              color_discrete_map={"WIN":"#00d4aa","LOSS":"#ff4b4b"})
+                              color_discrete_map={"WIN": "#00d4aa", "LOSS": "#ff4b4b"})
                 fig2.update_layout(plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
-                                   font=dict(color="white"), height=300)
+                                   font=dict(color="white"), height=280)
                 st.plotly_chart(fig2, use_container_width=True)
             with col2:
-                fig3 = px.histogram(df, x="pnl_pct", nbins=20, title="P&L Distribution",
+                fig3 = px.histogram(df, x="pnl_pct", nbins=20,
+                                    title="P&L % Distribution",
                                     color_discrete_sequence=["#00d4aa"])
                 fig3.add_vline(x=0, line_dash="dash", line_color="gray")
                 fig3.update_layout(plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
-                                   font=dict(color="white"), height=300)
+                                   font=dict(color="white"), height=280)
                 st.plotly_chart(fig3, use_container_width=True)
+
+        st.divider()
+
+        # ── Monte Carlo simulation ────────────────────────────────────────────
+        with st.expander("🎲 Monte Carlo Risk Analysis", expanded=False):
+            st.caption(
+                "Resamples your actual trade returns 1 000 times to estimate "
+                "the range of possible outcomes and risk of ruin."
+            )
+            import random as _rand
+
+            _rets = [t["pnl_pct"] for t in perf_trades]
+            if len(_rets) >= 5:
+                N_SIMS   = 1000
+                N_TRADES = len(_rets)
+                _ruin_thresh = 0.50   # account drops to ≤50%
+                _sim_finals  = []
+                _sim_maxdds  = []
+                for _ in range(N_SIMS):
+                    _sample  = _rand.choices(_rets, k=N_TRADES)
+                    _eq      = 1.0; _pk = 1.0; _mdd = 0.0
+                    for _r in _sample:
+                        _eq *= (1 + _r)
+                        if _eq > _pk: _pk = _eq
+                        _dd = (_pk - _eq) / _pk if _pk > 0 else 0.0
+                        if _dd > _mdd: _mdd = _dd
+                    _sim_finals.append(_eq)
+                    _sim_maxdds.append(_mdd)
+
+                _sorted_f = sorted(_sim_finals)
+                _sorted_d = sorted(_sim_maxdds)
+                _n = len(_sorted_f)
+                _ror = sum(1 for f in _sim_finals if f <= _ruin_thresh) / N_SIMS * 100
+
+                mc1, mc2, mc3 = st.columns(3)
+                mc1.metric("Return — median",
+                           f"{(_sorted_f[_n//2]-1)*100:+.1f}%",
+                           help=f"p5: {(_sorted_f[_n//20]-1)*100:+.1f}%  ·  "
+                                f"p95: {(_sorted_f[_n*19//20]-1)*100:+.1f}%")
+                mc2.metric("Max Drawdown — median",
+                           f"{_sorted_d[_n//2]*100:.1f}%",
+                           help=f"p95 worst-case: {_sorted_d[_n*19//20]*100:.1f}%")
+                mc3.metric("Risk of Ruin",
+                           f"{_ror:.1f}%",
+                           help="Probability account halves over this trade count")
+
+                _mc_caption = (
+                    f"{N_SIMS:,} simulations  ·  {N_TRADES} trades resampled per sim  ·  "
+                    "Ruin = account ≤ 50%"
+                )
+                st.caption(_mc_caption)
+            else:
+                st.info("Need at least 5 closed trades for Monte Carlo.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1101,6 +1181,238 @@ with tab_bt:
                 file_name=f"backtest_trades_{date.today()}.csv",
                 mime="text/csv",
             )
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 8 — STOCK ANALYSIS  (same deep-dive as Tradey Boi X, bot executes instead)
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab_analysis:
+    st.header("🔭 Stock Analysis")
+    st.caption(
+        "Deep-dive any ticker using the same scoring engine the scanner runs. "
+        "When ELITE or STRONG BUY — the bot executes automatically. "
+        "No manual alerts needed."
+    )
+
+    from scanner.universe import ASX_UNIVERSE as _AU, US_UNIVERSE as _UU
+    from scanner.market_scanner import _score_signal, _download_batch, _default_params
+
+    _all_tickers = sorted(_AU + _UU)
+
+    col_sel, col_period, col_btn = st.columns([4, 1, 1])
+    with col_sel:
+        _sel = st.selectbox(
+            "Ticker", _all_tickers,
+            help="Type to search. ASX tickers end in .AX"
+        )
+    with col_period:
+        _period = st.selectbox("Period", ["3mo", "6mo", "1y"], index=1, key="analysis_period")
+    with col_btn:
+        st.write("")   # vertical align
+        _run_analysis = st.button("🔬 Analyse", type="primary", use_container_width=True)
+
+    if _run_analysis or st.session_state.get("_analysis_ticker") == _sel:
+        st.session_state["_analysis_ticker"] = _sel
+        with st.spinner(f"Fetching {_sel}…"):
+            _data = _download_batch([_sel], period=_period)
+        _df = _data.get(_sel)
+
+        if _df is None or _df.empty:
+            st.error(f"No data for {_sel}. It may be delisted or the ticker is wrong.")
+        else:
+            _params = _default_params()
+            _params["min_score"] = 0      # lower gate so we always get a result
+            _params["min_prob"]  = 0.0    # same
+            _sig = _score_signal(_df, _sel, _params)
+
+            _row   = _df.iloc[-1]
+            _prev  = _df.iloc[-2]
+            _close = float(_row["Close"])
+            _chg   = (_close - float(_prev["Close"])) / float(_prev["Close"]) * 100
+
+            # ── Indicator math (independent of signal gate) ──────────────────
+            import numpy as _np
+            _vol   = _df["Volume"].squeeze().dropna()
+            _cls   = _df["Close"].squeeze().dropna()
+            _hi    = _df["High"].squeeze().dropna()
+            _lo    = _df["Low"].squeeze().dropna()
+            _avg_vol20 = float(_vol.iloc[-21:-1].mean())
+            _vr    = float(_vol.iloc[-1]) / _avg_vol20 if _avg_vol20 > 0 else 1.0
+            _ema20 = float(_cls.ewm(span=20, adjust=False).mean().iloc[-1])
+            _ema50 = float(_cls.ewm(span=50, adjust=False).mean().iloc[-1])
+            _delta = _cls.diff()
+            _avg_g = _delta.clip(lower=0).rolling(14).mean().iloc[-1]
+            _avg_l = (-_delta).clip(lower=0).rolling(14).mean().iloc[-1]
+            _rsi   = 100 - 100 / (1 + _avg_g / _avg_l) if _avg_l > 0 else 100
+            _tr    = [max(float(_hi.iloc[i]) - float(_lo.iloc[i]),
+                          abs(float(_hi.iloc[i]) - float(_cls.iloc[i-1])),
+                          abs(float(_lo.iloc[i]) - float(_cls.iloc[i-1])))
+                      for i in range(-15, 0)]
+            _atr   = float(_np.mean(_tr))
+            _atr_pct = _atr / _close * 100
+            _high20  = float(_hi.iloc[-21:-1].max())
+            _bp      = (_close - _high20) / _high20 * 100 if _high20 > 0 else 0
+
+            # ── Score reconstruction (for display even when filtered) ────────
+            if _sig:
+                _score = _sig["score"]
+                _prob  = _sig["prob"]
+                _tier  = _sig["tier"]
+            else:
+                _score = 0
+                _prob  = min(0.50 + _score * 0.025, 0.82)
+                _tier  = "GATED"
+
+            _quality = min(int((_score / 10) * 100), 100)
+
+            # ── Regime for this market ────────────────────────────────────────
+            _market      = "ASX" if _sel.endswith(".AX") else "US"
+            _live_regime = scanner.regimes.get(_market)
+            _reg_icons   = {"BULL": "📈", "NEUTRAL": "↔️", "BEAR": "📉"}
+            _reg_label   = (
+                f"{_reg_icons.get(_live_regime.regime.value, '⚪')} {_live_regime.regime.value}"
+                if _live_regime else "—"
+            )
+            _rr = (
+                round((_sig["target_price"] - _sig["entry_price"]) /
+                      max(_sig["entry_price"] - _sig["stop_price"], 0.0001), 2)
+                if _sig else "—"
+            )
+
+            # ── 7 key metrics (same as X's layout) ───────────────────────────
+            mc1, mc2, mc3, mc4, mc5, mc6, mc7 = st.columns(7)
+            mc1.metric("Price",          f"${_close:.3f}", f"{_chg:+.2f}%")
+            mc2.metric("AI Confidence",  f"{_prob*100:.1f}%")
+            mc3.metric("RSI",            f"{_rsi:.1f}")
+            mc4.metric("Vol Ratio",      f"{_vr:.2f}×")
+            mc5.metric("Quality Score",  f"{_quality}/100",
+                       help="0-100 composite: breakout strength, volume, trend, RSI, momentum")
+            mc6.metric("Regime",         _reg_label)
+            mc7.metric("R/R",            f"{_rr}R" if isinstance(_rr, float) else _rr,
+                       help="Reward-to-risk ratio")
+
+            # ── Signal label ─────────────────────────────────────────────────
+            _tier_styles = {
+                "ELITE":      ("🟡 ELITE",      "success"),
+                "STRONG BUY": ("🟢 STRONG BUY", "success"),
+                "BUY":        ("🔵 BUY",         "info"),
+                "GATED":      ("🚫 GATED",        "warning"),
+            }
+            _tier_label, _tier_type = _tier_styles.get(_tier, (f"⚪ {_tier}", "info"))
+
+            if _tier in ("ELITE", "STRONG BUY"):
+                st.success(
+                    f"### {_tier_label}  —  Score **{_score}/10**  ·  Quality **{_quality}/100**\n\n"
+                    f"🤖 **Bot will auto-execute this signal** — "
+                    f"Entry ${_sig['entry_price']:.3f}  ·  "
+                    f"Stop ${_sig['stop_price']:.3f}  ·  "
+                    f"Target ${_sig['target_price']:.3f}  ·  "
+                    f"R/R {_rr}  ·  ATR {_atr_pct:.1f}%"
+                )
+            elif _tier == "BUY":
+                st.info(
+                    f"### {_tier_label}  —  Score **{_score}/10**  ·  Quality **{_quality}/100**\n\n"
+                    f"Qualifies as BUY tier — bot only executes ELITE & STRONG BUY. "
+                    f"Entry ${_sig['entry_price']:.3f}  ·  Stop ${_sig['stop_price']:.3f}  ·  "
+                    f"Target ${_sig['target_price']:.3f}"
+                )
+            else:
+                st.warning(
+                    f"### {_tier_label}  —  Score **{_score}/10**\n\n"
+                    f"Does not meet hard filters — no position will be opened."
+                )
+
+            # ── Chart: Candlestick + RSI + MACD ──────────────────────────────
+            from plotly.subplots import make_subplots
+
+            _df2 = _df.copy()
+            _df2.columns = _df2.columns.get_level_values(0) if hasattr(_df2.columns, 'get_level_values') else _df2.columns
+            _c   = _df2["Close"].squeeze()
+            _fig = make_subplots(
+                rows=3, cols=1, shared_xaxes=True,
+                row_heights=[0.55, 0.25, 0.20], vertical_spacing=0.03,
+                subplot_titles=(f"{_sel} Price", "RSI (14)", "MACD"),
+            )
+            _fig.add_trace(go.Candlestick(
+                x=_df2.index,
+                open=_df2["Open"].squeeze(), high=_df2["High"].squeeze(),
+                low=_df2["Low"].squeeze(),   close=_c,
+            ), row=1, col=1)
+            _ema20s = _c.ewm(span=20, adjust=False).mean()
+            _ema50s = _c.ewm(span=50, adjust=False).mean()
+            for _y, _nm, _col in [(_ema20s, "EMA20", "orange"), (_ema50s, "EMA50", "royalblue")]:
+                _fig.add_trace(go.Scatter(x=_df2.index, y=_y, name=_nm,
+                                          line=dict(color=_col, width=1)), row=1, col=1)
+            _bb_mid = _c.rolling(20).mean()
+            _bb_std = _c.rolling(20).std()
+            _fig.add_trace(go.Scatter(x=_df2.index, y=_bb_mid + 2 * _bb_std,
+                                       line=dict(color="gray", dash="dot", width=1)), row=1, col=1)
+            _fig.add_trace(go.Scatter(x=_df2.index, y=_bb_mid - 2 * _bb_std,
+                                       line=dict(color="gray", dash="dot", width=1),
+                                       fill="tonexty", fillcolor="rgba(128,128,128,0.05)"), row=1, col=1)
+            _dlt  = _c.diff()
+            _ag   = _dlt.clip(lower=0).rolling(14).mean()
+            _al   = (-_dlt).clip(lower=0).rolling(14).mean()
+            _rsi_s = 100 - 100 / (1 + _ag / _al.replace(0, float("nan")))
+            _fig.add_trace(go.Scatter(x=_df2.index, y=_rsi_s,
+                                       line=dict(color="purple", width=1.5)), row=2, col=1)
+            for _lvl, _dash in [(70, "dash"), (30, "dash"), (65, "dot"), (35, "dot")]:
+                _fig.add_hline(y=_lvl, line_dash=_dash,
+                               line_color="red" if _lvl >= 65 else "green", row=2, col=1)
+            _macd   = _c.ewm(span=12, adjust=False).mean() - _c.ewm(span=26, adjust=False).mean()
+            _macd_s = _macd.ewm(span=9, adjust=False).mean()
+            _macd_h = _macd - _macd_s
+            _colors = ["green" if v >= 0 else "red" for v in _macd_h]
+            _fig.add_trace(go.Bar(x=_df2.index, y=_macd_h, marker_color=_colors), row=3, col=1)
+            _fig.add_trace(go.Scatter(x=_df2.index, y=_macd,   line=dict(color="royalblue", width=1)), row=3, col=1)
+            _fig.add_trace(go.Scatter(x=_df2.index, y=_macd_s, line=dict(color="orange",    width=1)), row=3, col=1)
+            _fig.update_layout(
+                height=600, showlegend=False, xaxis_rangeslider_visible=False,
+                margin=dict(l=0, r=0, t=30, b=0),
+                plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                font=dict(color="white"),
+            )
+            st.plotly_chart(_fig, use_container_width=True)
+
+            # ── Filter & Score breakdown (same as X) ─────────────────────────
+            with st.expander("🔍 Filter & Score Breakdown"):
+                st.write("**Hard Filters**")
+                _filters = [
+                    ("20-day high breakout",      _close > _high20 * 1.001),
+                    ("Above 50-day EMA (≥ 97%)",  _close >= _ema50 * 0.97),
+                    ("RSI not overbought (< 80)",  _rsi < 80),
+                    ("Volume confirmation (≥ 1.1×)", _vr >= 1.1),
+                    ("ATR sufficient (≥ 0.3%)",   _atr_pct >= 0.3),
+                ]
+                for _fname, _passed in _filters:
+                    st.write(("✅ " if _passed else "❌ ") + _fname)
+
+                if _tier != "GATED":
+                    st.write("**Score breakdown (0–10)**")
+                    _score_items = [
+                        (2 if _bp > 3 else 1 if _bp > 1 else 0,
+                         f"Breakout strength ({_bp:+.1f}% above 20d high)", _bp > 0),
+                        (2 if _vr > 3 else 1 if _vr > 2 else 0,
+                         f"Volume surge ({_vr:.1f}×)", _vr > 2),
+                        (2 if _close > _ema20 > _ema50 else 1 if _close > _ema50 else 0,
+                         f"EMA uptrend (EMA20 {'>' if _ema20 > _ema50 else '<'} EMA50)", _close > _ema50),
+                        (2 if 55 <= _rsi <= 70 else 1 if 50 <= _rsi < 55 else 0,
+                         f"RSI sweet spot ({_rsi:.1f} → ideal 55–70)", 50 <= _rsi <= 70),
+                        (1 if (_close - float(_prev["Close"])) / float(_prev["Close"]) * 100 > 2 else 0,
+                         f"Day momentum ({(_close - float(_prev['Close'])) / float(_prev['Close']) * 100:+.1f}%)", False),
+                    ]
+                    for _pts, _name, _met in _score_items:
+                        _mk = "✅" if _pts > 0 else "—"
+                        st.write(f"{_mk} `+{_pts}` {_name}")
+                    st.write(f"**Total: {_score}/10  ·  AI confidence: {_prob*100:.1f}%  ·  Quality: {_quality}/100**")
+                    st.write(f"**Regime:** {_reg_label}")
+
+    else:
+        st.info(
+            "Select a ticker above and click **Analyse** to see the full breakdown — "
+            "the same analysis the scanner uses 24/7, including chart, "
+            "score breakdown, and whether the bot would execute this signal."
+        )
+
 
 # ── Auto-refresh every 30s while bot is running ───────────────────────────────
 if bot.is_running():
