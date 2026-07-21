@@ -239,7 +239,7 @@ def run_backtest(
     # Suppress yfinance console noise (delisted/missing tickers print to stderr)
     import contextlib, io, warnings as _warnings
     all_data: dict[str, pd.DataFrame] = {}
-    batch_size = 50
+    batch_size = 20                     # smaller batches = more reliable on slow connections
     batches    = [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
 
     _total_units = len(tickers) * 2   # first half = download, second half = simulation

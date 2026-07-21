@@ -969,9 +969,8 @@ with tab_bt:
                 f"US: {len(_BT_US)} tickers"
             )
             st.markdown("**Quality gates**")
-            bt_min_score = st.slider("Min score",       5, 10,  int(cfg.get("min_score") or 7), key="bt_min_score")
-            bt_min_prob  = st.slider("Min probability", 0.50, 0.75,
-                                     float(cfg.get("min_prob") or 0.53), step=0.01, key="bt_min_prob")
+            bt_min_score = st.slider("Min score",       1, 10,  5, key="bt_min_score")
+            bt_min_prob  = st.slider("Min probability", 0.50, 0.75, 0.50, step=0.01, key="bt_min_prob")
 
         with col3:
             st.markdown("**Risk parameters**")
@@ -1125,17 +1124,26 @@ with tab_bt:
         trades = results["trades"]
         eq_crv = results["equity_curve"]
 
+        _scanned = results.get("tickers_scanned", 0)
         if not trades:
-            st.warning(
-                "⚠️ **No trades were generated in this backtest period.**\n\n"
-                "The scanner found no tickers that met all conditions simultaneously "
-                "(confirmed uptrend, positive MACD, breakout setup, and minimum score). "
-                "Try one or more of these:\n"
-                "- Lower **Min score** to 5 or 6\n"
-                "- Lower **Min probability** to 0.50\n"
-                "- Extend the **date range** to 12 months\n"
-                "- Add more markets (ASX + US)"
-            )
+            if _scanned == 0:
+                st.error(
+                    "❌ **No price data downloaded — possible internet or firewall issue.**\n\n"
+                    "yfinance couldn't fetch any historical data. Try:\n"
+                    "- Check your internet connection\n"
+                    "- Disable VPN or firewall temporarily\n"
+                    "- Try selecting only **ASX** market and running again\n"
+                    "- Restart the dashboard and try with a shorter date range (3 months)"
+                )
+            else:
+                st.warning(
+                    f"⚠️ **Backtest ran on {_scanned} tickers but found 0 qualifying trades.**\n\n"
+                    "The signal score threshold is too strict for this period. Fix:\n"
+                    "- **Lower Min score** — try 3 or 4 (currently set above the results)\n"
+                    "- **Lower Min probability** to 0.50\n"
+                    "- **Extend the date range** to 12 months to capture more setups\n"
+                    "- Try a different period — some market conditions produce fewer breakouts"
+                )
 
         chart_col1, chart_col2 = st.columns([2, 1])
 
