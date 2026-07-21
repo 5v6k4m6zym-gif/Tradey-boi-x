@@ -111,6 +111,12 @@ class IBKRClient:
                 self._error_msg = ""
                 log.info(f"Connected to IBKR {host}:{port} (client {client_id})")
 
+                # Subscribe so TWS pushes account data automatically
+                self._ib.reqAccountUpdates(True)
+                self._ib.sleep(2)              # let TWS push initial data
+                self._refresh_sync()           # immediate first refresh
+                slow_tick = 0
+
                 # ib.sleep() keeps the event loop alive and sends TWS heartbeats
                 while self._ib.isConnected():
                     slow_tick += 1
