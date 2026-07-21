@@ -1038,20 +1038,28 @@ with tab_bt:
                 status_text.caption(msg)
 
             from backtest.engine import run_backtest
-            with st.spinner(""):
-                results = run_backtest(
-                    tickers         = bt_tickers,
-                    test_start      = bt_start,
-                    test_end        = bt_end,
-                    initial_capital = float(initial_cap),
-                    params          = bt_params,
-                    progress_cb     = _progress,
+            try:
+                with st.spinner(""):
+                    results = run_backtest(
+                        tickers         = bt_tickers,
+                        test_start      = bt_start,
+                        test_end        = bt_end,
+                        initial_capital = float(initial_cap),
+                        params          = bt_params,
+                        progress_cb     = _progress,
+                    )
+                progress_bar.progress(1.0)
+                status_text.caption("✅ Backtest complete")
+                st.session_state["bt_results"] = results
+                st.rerun()
+            except Exception as _bt_err:
+                progress_bar.progress(1.0)
+                st.error(
+                    f"❌ **Backtest failed:** {_bt_err}\n\n"
+                    "Check your internet connection (yfinance downloads are required) "
+                    "and try again. If the error persists, try a shorter date range or "
+                    "fewer markets."
                 )
-
-            progress_bar.progress(1.0)
-            status_text.caption("✅ Backtest complete")
-            st.session_state["bt_results"] = results
-            st.rerun()
 
     # ── Display results ───────────────────────────────────────────────────────
     results = st.session_state.get("bt_results")
@@ -1092,6 +1100,18 @@ with tab_bt:
         # ── Charts ────────────────────────────────────────────────────────────
         trades = results["trades"]
         eq_crv = results["equity_curve"]
+
+        if not trades:
+            st.warning(
+                "⚠️ **No trades were generated in this backtest period.**\n\n"
+                "The scanner found no tickers that met all conditions simultaneously "
+                "(confirmed uptrend, positive MACD, breakout setup, and minimum score). "
+                "Try one or more of these:\n"
+                "- Lower **Min score** to 5 or 6\n"
+                "- Lower **Min probability** to 0.50\n"
+                "- Extend the **date range** to 12 months\n"
+                "- Add more markets (ASX + US)"
+            )
 
         chart_col1, chart_col2 = st.columns([2, 1])
 
