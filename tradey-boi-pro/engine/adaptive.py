@@ -39,6 +39,8 @@ _PRO_DIR      = pathlib.Path(__file__).parent.parent
 _X_DIR        = _PRO_DIR.parent / "tradey-boi-x"
 _PRO_CFG_PATH = _PRO_DIR / "config" / "adaptive_thresholds.json"
 _X_CFG_PATH   = _X_DIR   / "config" / "adaptive_thresholds.json"
+# Bundled X defaults — included in the standalone zip for PC installs
+_BUNDLED_X_CFG = _PRO_DIR / "config" / "adaptive_thresholds_x_defaults.json"
 
 # Outcome strings that count as wins
 _WIN_OUTCOMES = ("TARGET_HIT", "WIN", "HIT_TARGET", "EXPIRED_GAIN")
@@ -51,10 +53,13 @@ def _load_pro_cfg() -> dict:
             return json.loads(_PRO_CFG_PATH.read_text())
         except Exception:
             pass
-    # Cold-start — inherit X's current thresholds
-    if _X_CFG_PATH.exists():
+    # Cold-start — inherit X's thresholds (bundled copy first, then dev-env live copy)
+    for x_cfg in (_BUNDLED_X_CFG, _X_CFG_PATH):
+        if x_cfg.exists():
+            break
+    if x_cfg.exists():
         try:
-            base = json.loads(_X_CFG_PATH.read_text())
+            base = json.loads(x_cfg.read_text())
             return {
                 "prob_floor":    base.get("prob_floor",    0.53),
                 "sb_base_score": base.get("sb_base_score", 7),

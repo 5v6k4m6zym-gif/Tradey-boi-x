@@ -52,9 +52,12 @@ def _get_ticker_adj(ticker: str) -> int:
 _ASX_TZ = pytz.timezone("Australia/Sydney")
 _US_TZ  = pytz.timezone("America/New_York")
 
-# ── Paths to X's shared artefacts ─────────────────────────────────────────────
+# ── Paths ──────────────────────────────────────────────────────────────────────
 _SCANNER_DIR   = pathlib.Path(__file__).parent
 _PRO_DIR       = _SCANNER_DIR.parent
+
+# Model search order: bundled inside Pro's data/ → dev env X cache
+_BUNDLED_MODEL = _PRO_DIR / "data" / "model.pkl"
 _X_DIR         = _PRO_DIR.parent / "tradey-boi-x"
 _X_MODEL_PATH  = _X_DIR / ".cache" / "backtest_checkpoint" / "model.pkl"
 _X_ADAPTIVE    = _X_DIR / "config" / "adaptive_thresholds.json"
@@ -105,7 +108,10 @@ _X_MODEL_LOCK = threading.Lock()
 
 def _load_x_model():
     """
-    Load X's trained XGBoost+RF EnsembleModel from the shared cache.
+    Load the trained XGBoost+RF EnsembleModel (60/40 blend).
+    Search order:
+      1. Bundled model at data/model.pkl  (standalone PC install)
+      2. Dev-env X cache at ../tradey-boi-x/.cache/...  (Replit / dev)
     Thread-safe singleton — loads exactly once per process.
     Falls back to None if unavailable (heuristic prob used instead).
     """
@@ -115,16 +121,39 @@ def _load_x_model():
     with _X_MODEL_LOCK:
         if _X_MODEL is not None:
             return _X_MODEL
+
+        # Register the EnsembleModel class so pickle can deserialise it.
+        # Try the bundled stub first; fall back to X's full engine.py.
+        _stub_dir = str(_PRO_DIR / "data")
+        if _stub_dir not in sys.path:
+            sys.path.insert(0, _stub_dir)
         try:
-            if str(_X_DIR) not in sys.path:
-                sys.path.insert(0, str(_X_DIR))
-            import engine as _x_engine  # noqa: F401 — needed so pickle can resolve EnsembleModel
-            with open(_X_MODEL_PATH, "rb") as fh:
-                _X_MODEL = pickle.load(fh)
-            log.info("X EnsembleModel loaded from cache — using real AI probability")
-        except Exception as exc:
-            log.warning(f"Could not load X model ({exc}) — heuristic prob fallback active")
-            _X_MODEL = None
+            import engine_stub as engine  # noqa: F401
+            import sys as _sys
+            _sys.modules.setdefault("engine", engine)
+        except Exception:
+            pass
+        if str(_X_DIR) not in sys.path:
+            sys.path.insert(0, str(_X_DIR))
+        try:
+            import engine as _x_engine  # noqa: F401
+        except Exception:
+            pass
+
+        # Try bundled model first (standalone install), then dev-env path
+        for model_path in (_BUNDLED_MODEL, _X_MODEL_PATH):
+            if not model_path.exists():
+                continue
+            try:
+                with open(model_path, "rb") as fh:
+                    _X_MODEL = pickle.load(fh)
+                log.info(f"EnsembleModel loaded from {model_path.name} — real AI probability active")
+                break
+            except Exception as exc:
+                log.warning(f"Model load failed ({model_path.name}): {exc}")
+
+        if _X_MODEL is None:
+            log.warning("No model found — heuristic probability fallback active")
     return _X_MODEL
 
 
