@@ -1041,9 +1041,11 @@ with tab_bt:
             st.session_state.pop("bt_results", None)
 
             from backtest.engine import run_backtest
-            try:
-                with st.spinner(""):
-                    results = run_backtest(
+            _bt_err = None
+            _bt_results = None
+            with st.spinner(""):
+                try:
+                    _bt_results = run_backtest(
                         tickers         = bt_tickers,
                         test_start      = bt_start,
                         test_end        = bt_end,
@@ -1051,11 +1053,10 @@ with tab_bt:
                         params          = bt_params,
                         progress_cb     = _progress,
                     )
-                progress_bar.progress(1.0)
-                status_text.caption("✅ Backtest complete")
-                st.session_state["bt_results"] = results
-                st.rerun()
-            except Exception as _bt_err:
+                except Exception as _e:
+                    _bt_err = _e
+
+            if _bt_err is not None:
                 progress_bar.progress(1.0)
                 st.error(
                     f"❌ **Backtest failed:** {_bt_err}\n\n"
@@ -1063,6 +1064,11 @@ with tab_bt:
                     "and try again. If the error persists, try a shorter date range or "
                     "fewer markets."
                 )
+                st.stop()
+            else:
+                progress_bar.progress(1.0)
+                status_text.caption("✅ Backtest complete")
+                st.session_state["bt_results"] = _bt_results
 
     # ── Display results ───────────────────────────────────────────────────────
     results = st.session_state.get("bt_results")
