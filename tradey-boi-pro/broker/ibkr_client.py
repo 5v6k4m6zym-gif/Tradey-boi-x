@@ -80,13 +80,13 @@ class IBKRClient:
         self._connected = False
 
     def _run_loop(self, host: str, port: int, client_id: int):
-        import nest_asyncio
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-        nest_asyncio.apply(self._loop)
-        self._loop.run_until_complete(
-            self._loop.create_task(self._async_main(host, port, client_id))
-        )
+        # asyncio.run() wraps the coroutine in a proper Task automatically,
+        # which satisfies asyncio.timeout() on Python 3.11/3.12+.
+        # We grab the running loop reference from inside so disconnect() can use it.
+        async def _main():
+            self._loop = asyncio.get_running_loop()
+            await self._async_main(host, port, client_id)
+        asyncio.run(_main())
 
     async def _async_main(self, host, port, client_id):
         self._ib = IB()
