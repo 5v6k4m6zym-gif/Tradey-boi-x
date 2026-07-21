@@ -23,11 +23,17 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 import db.database as db
 
 log = logging.getLogger("ProAdaptive")
+
+# ── Per-ticker score adjustments — refreshed every 15 min ─────────────────────
+_ticker_adj_cache: dict[str, int] = {}
+_ticker_adj_ts: datetime | None   = None
+_TICKER_ADJ_TTL_MINUTES           = 15
 
 _PRO_DIR      = pathlib.Path(__file__).parent.parent
 _X_DIR        = _PRO_DIR.parent / "tradey-boi-x"
@@ -223,6 +229,63 @@ def adaptive_threshold_update() -> dict:
     _save_pro_cfg(cfg)
     log.info(f"Adaptive update complete: {reason}")
     return result
+
+
+def get_per_ticker_adjustments() -> dict[str, int]:
+    """
+    Per-ticker score adjustments learned from Pro's own closed trade outcomes.
+    Identical algorithm to X's performance_adjustments().
+
+    Rolling window: last 20 resolved trades per ticker, min 3 before applying.
+
+    weighted_expectancy = avg_win_R × win_rate − avg_loss_R × 1.3 × (1 − win_rate)
+
+    Expectancy  →  adj
+    ≥ +1.0R     →  +2  (strong positive expectancy)
+    ≥ +0.2R     →  +1  (positive)
+    −0.2..+0.2  →   0  (noise zone)
+    ≤ −0.2R     →  -1  (slight negative)
+    ≤ −1.0R     →  -2  (deeply negative)
+
+    Cached for 15 minutes — safe to call on every ticker eval without DB spam.
+    """
+    global _ticker_adj_cache, _ticker_adj_ts
+    now = datetime.utcnow()
+    if (
+        _ticker_adj_ts is not None
+        and (now - _ticker_adj_ts).total_seconds() < _TICKER_ADJ_TTL_MINUTES * 60
+    ):
+        return _ticker_adj_cache
+
+    try:
+        all_t    = db.all_trades(limit=2000)
+        resolved = [t for t in all_t if t.get("outcome") or t.get("exit_reason")]
+        bucket: dict[str, list] = defaultdict(list)
+        for t in resolved:
+            ticker = t.get("ticker", "")
+            if ticker:
+                bucket[ticker].append(t)
+
+        adj: dict[str, int] = {}
+        for ticker, trades in bucket.items():
+            recent = trades[-20:]
+            if len(recent) < 3:
+                continue
+            win_rate, avg_win_R, avg_loss_R, expectancy = _expectancy_stats(recent)
+            if   expectancy >= 1.0:  adj[ticker] = +2
+            elif expectancy >= 0.2:  adj[ticker] = +1
+            elif expectancy <= -1.0: adj[ticker] = -2
+            elif expectancy <= -0.2: adj[ticker] = -1
+            else:                    adj[ticker] =  0
+
+        _ticker_adj_cache = adj
+        _ticker_adj_ts    = now
+        if adj:
+            log.debug(f"Per-ticker adjustments refreshed: {len(adj)} tickers")
+    except Exception as e:
+        log.warning(f"Per-ticker adjustment fetch failed (non-fatal): {e}")
+
+    return _ticker_adj_cache
 
 
 def get_pro_thresholds() -> dict:

@@ -41,6 +41,14 @@ import ta
 
 log = logging.getLogger("MarketScanner")
 
+# deferred import — avoids circular import during scanner module load
+def _get_ticker_adj(ticker: str) -> int:
+    try:
+        from engine.adaptive import get_per_ticker_adjustments
+        return get_per_ticker_adjustments().get(ticker, 0)
+    except Exception:
+        return 0
+
 _ASX_TZ = pytz.timezone("Australia/Sydney")
 _US_TZ  = pytz.timezone("America/New_York")
 
@@ -319,7 +327,14 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         elif rsi < 70:       score += 1
         if float(row["ema20"]) > float(row["ema50"]): score += 1   # always True here but mirrors X
 
-        # ── Adaptive thresholds from X's weekly learning cycle ────────────────
+        # ── Per-ticker learning adjustment (identical to X's performance_adjustments) ──
+        # Pro learns from its OWN live trade outcomes — +2 to -2 based on rolling
+        # expectancy of the last 20 resolved trades for this specific ticker.
+        # Cache is refreshed every 15 min; safe to call on every ticker eval.
+        ticker_adj = _get_ticker_adj(ticker)
+        score      = max(0, score + ticker_adj)
+
+        # ── Adaptive thresholds from Pro's own learning (falls back to X's) ───
         acfg        = _load_x_adaptive_cfg()
         prob_floor  = float(acfg.get("prob_floor",    params.get("min_prob",  0.53)))
         sb_base     = int(  acfg.get("sb_base_score", params.get("min_score", 7)))

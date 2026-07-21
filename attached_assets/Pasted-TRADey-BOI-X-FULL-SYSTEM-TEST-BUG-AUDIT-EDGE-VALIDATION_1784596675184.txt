@@ -1,0 +1,185 @@
+TRADey BOI X — FULL SYSTEM TEST, BUG AUDIT & EDGE VALIDATION PROTOCOL
+
+Objective:
+Perform a complete audit of the latest Tradey Boi X build to confirm that all recent upgrades, AI learning changes, adaptive gates, optimisation systems, and new features have not weakened the original trading edge.
+
+The goal is NOT simply to increase returns. The priority is preserving or improving the proven edge:
+- Profit Factor
+- Win Rate
+- Risk-adjusted returns
+- Drawdown control
+- Trade quality
+- Strategy consistency
+
+Current baseline to protect:
+- Win Rate: ~46%
+- Profit Factor: ~1.28
+- ROI: ~28.1%
+- Maximum Drawdown: ~-7.7%
+- Sharpe Ratio: ~1.27
+
+PHASE 1 — FULL CODE & SYSTEM BUG AUDIT
+
+Run a complete technical audit across the entire codebase.
+
+Check for:
+- Broken functions
+- Incorrect calculations
+- Data leakage
+- Look-ahead bias
+- Overfitting
+- Incorrect indicator calculations
+- API/data feed issues
+- Execution logic errors
+- Risk management bugs
+- AI model prediction errors
+- Logging failures
+- Memory/performance issues
+- Any upgrade accidentally overriding existing strategy logic
+
+Confirm:
+- All 24 filters are still functioning correctly
+- Original entry and exit logic is preserved
+- Risk management rules are unchanged unless intentionally upgraded
+- No hidden changes reduced trade quality
+
+Create a bug report:
+- Critical issues
+- Medium issues
+- Minor issues
+- Recommended fixes
+
+
+PHASE 2 — STRATEGY EDGE COMPARISON TEST
+
+Run a direct comparison:
+
+Version A:
+Previous stable Tradey Boi X baseline
+
+Version B:
+Current upgraded Tradey Boi X
+
+Use identical:
+- Markets
+- Time periods
+- Starting capital
+- Risk settings
+- Trading frequency
+- Data sources
+
+Compare:
+
+Performance:
+- Total return
+- CAGR
+- Profit Factor
+- Win Rate
+- Average win
+- Average loss
+- Expectancy per trade
+- Number of trades
+- Maximum drawdown
+- Sharpe ratio
+- Recovery factor
+
+Trade quality:
+- Best trades
+- Worst trades
+- Average setup score
+- Filter pass rates
+- False signals
+- Missed opportunities
+
+
+PHASE 3 — OUT OF SAMPLE VALIDATION
+
+Do not only test on historical data used during development.
+
+Run:
+
+1. In-sample testing
+2. Out-of-sample testing
+3. Walk-forward testing
+4. Different market regimes:
+
+- Bull markets
+- Bear markets
+- Sideways markets
+- High volatility periods
+- Low volatility periods
+
+
+PHASE 4 — AI LEARNING VALIDATION
+
+Audit the AI systems.
+
+Confirm:
+- AI improvements are based on real performance data
+- AI is not overfitting past trades
+- Parameter changes improve future expectancy
+- Learning system does not remove profitable setups
+- AI confidence scores are calibrated correctly
+
+Test:
+- Before AI adaptation
+- After AI adaptation
+
+Report whether learning improves:
+- Win rate
+- Profit factor
+- Risk-adjusted returns
+
+
+PHASE 5 — STRESS TESTING
+
+Run simulations with:
+
+- Different starting capital amounts
+- Different risk levels
+- Increased market volatility
+- Reduced market liquidity
+- Missing data scenarios
+- Randomised trade order
+
+Confirm the system remains stable.
+
+
+PHASE 6 — EDGE PRESERVATION RULES
+
+DO NOT approve any upgrade that:
+
+- Reduces Profit Factor below baseline
+- Increases maximum drawdown significantly
+- Reduces expectancy
+- Creates unstable results
+- Only works in one market condition
+
+If performance decreases:
+- Identify the exact cause
+- Roll back the harmful component
+- Preserve the profitable components
+
+
+PHASE 7 — FINAL REPORT
+
+Provide a complete audit report:
+
+1. System health score /100
+2. Bugs found and fixes applied
+3. Baseline vs upgraded performance table
+4. Proof that trading edge is preserved
+5. Areas improved
+6. Areas unchanged
+7. Areas needing further optimisation
+8. Recommendation:
+   - Keep upgrade
+   - Modify upgrade
+   - Roll back upgrade
+
+After approval:
+- Run final regression test
+- Confirm all features work
+- Commit stable version to GitHub
+- Tag release version
+- Document changes
