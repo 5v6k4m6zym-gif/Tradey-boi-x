@@ -150,33 +150,42 @@ class IBKRClient:
 
     async def _async_refresh(self):
         try:
-            vals = self._ib.accountValues()
-            summary = {}
-            for v in vals:
-                if v.tag in (
-                    "NetLiquidation", "TotalCashValue", "BuyingPower",
-                    "UnrealizedPnL", "RealizedPnL", "GrossPositionValue"
-                ):
-                    try:
-                        summary[v.tag] = float(v.value)
-                    except ValueError:
-                        pass
-            # If empty, try requesting explicitly
-            if not summary:
-                await self._ib.reqAccountSummaryAsync()
-                await asyncio.sleep(1)
-                vals = self._ib.accountValues()
+            TAGS = {
+                "NetLiquidation", "TotalCashValue", "BuyingPower",
+                "UnrealizedPnL", "RealizedPnL", "GrossPositionValue"
+            }
+
+            def _parse(vals):
+                out = {}
                 for v in vals:
-                    if v.tag in (
-                        "NetLiquidation", "TotalCashValue", "BuyingPower",
-                        "UnrealizedPnL", "RealizedPnL", "GrossPositionValue"
-                    ):
+                    if v.tag in TAGS:
                         try:
-                            summary[v.tag] = float(v.value)
-                        except ValueError:
+                            out[v.tag] = float(v.value)
+                        except (ValueError, TypeError):
                             pass
+                return out
+
+            # First try: cached account values (already pushed by TWS)
+            summary = _parse(self._ib.accountValues())
+
+            # Second try: explicit account summary request
+            if not summary:
+                acct_vals = await self._ib.reqAccountSummaryAsync()
+                await asyncio.sleep(1)
+                summary = _parse(acct_vals) or _parse(self._ib.accountValues())
+
+            # Third try: managed accounts + per-account update
+            if not summary:
+                accounts = self._ib.managedAccounts()
+                if accounts:
+                    self._ib.reqAccountUpdates(True, accounts[0])
+                    await asyncio.sleep(2)
+                    summary = _parse(self._ib.accountValues())
+
             with self._lock:
                 self.account_summary = summary
+            if summary:
+                log.info(f"Account: ${summary.get('NetLiquidation', 0):,.0f}")
         except Exception as e:
             log.error(f"Account refresh error: {e}")
 

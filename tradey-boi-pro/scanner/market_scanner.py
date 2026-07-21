@@ -224,11 +224,11 @@ def _compute_x_features(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     """
     try:
         df = df.copy()
-        df.columns = (
-            df.columns.get_level_values(0)
-            if hasattr(df.columns, "levels") and df.columns.nlevels > 1
-            else df.columns
-        )
+        # Flatten MultiIndex columns (newer yfinance returns (Price, Ticker) tuples)
+        if hasattr(df.columns, "levels") and df.columns.nlevels > 1:
+            df.columns = df.columns.get_level_values(0)
+        # Normalise to Title Case — newer yfinance versions return lowercase
+        df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
         close = df["Close"].squeeze().astype(float)
         high  = df["High"].squeeze().astype(float)
         low   = df["Low"].squeeze().astype(float)
