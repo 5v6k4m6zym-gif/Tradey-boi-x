@@ -194,23 +194,37 @@ def _fetch_regime(market: str) -> RegimeData:
     if breadth_close is not None and len(breadth_close) >= 200:
         b_curr   = float(breadth_close.iloc[-1])
         b_ema200 = float(breadth_close.ewm(span=200, adjust=False).mean().iloc[-1])
-        # Also check if breadth is declining (divergence warning)
         b_ema50  = float(breadth_close.ewm(span=50, adjust=False).mean().iloc[-1])
         if b_curr > b_ema200 and b_ema50 > b_ema200:
             bull_points += 1   # broad market healthy and trending
         elif b_curr < b_ema200:
             bear_points += 1   # broad market below long-term average
 
-    # ── Regime classification ─────────────────────────────────────────────────
-    total = bull_points + bear_points
-    confidence = max(bull_points, bear_points) / total if total > 0 else 0.5
+    # 8. RSI(14): healthy uptrend momentum vs overbought/weak (max 1 bull / 1 bear)
+    #    Uses existing daily data — no extra download.
+    if len(index_close) >= 15:
+        _delta = index_close.diff()
+        _gain  = _delta.clip(lower=0).ewm(com=13, adjust=False).mean().iloc[-1]
+        _loss  = (-_delta.clip(upper=0)).ewm(com=13, adjust=False).mean().iloc[-1]
+        _rsi   = 100.0 if _loss == 0 else 100 - (100 / (1 + _gain / _loss))
+        if _rsi > 75:              bear_points += 1   # overbought — caution even in uptrend
+        elif _rsi < 45:            bear_points += 1   # weak/deteriorating momentum
+        elif 52 <= _rsi <= 72:     bull_points  += 1  # healthy bullish momentum band
+
+    # ── Confidence uses a fixed denominator (max possible bull points = 12) ──
+    # This prevents the artificial 100% that occurs when every metric fires the
+    # same direction (old formula: max/total → 100% whenever bear_points == 0).
+    MAX_BULL = 12   # theoretical maximum: 2+2+1+2+1+1+1+1 = 11, rounded to 12 for headroom
 
     if bull_points >= bear_points * 1.5:
-        regime = Regime.BULL
+        regime     = Regime.BULL
+        confidence = round(min(bull_points / MAX_BULL, 1.0), 2)
     elif bear_points >= bull_points * 1.5:
-        regime = Regime.BEAR
+        regime     = Regime.BEAR
+        confidence = round(min(bear_points / MAX_BULL, 1.0), 2)
     else:
-        regime = Regime.NEUTRAL
+        regime     = Regime.NEUTRAL
+        confidence = 0.5   # genuinely uncertain — don't inflate
 
     log.info(
         f"Regime [{market}]: {regime.value}  conf={confidence:.2f}  "

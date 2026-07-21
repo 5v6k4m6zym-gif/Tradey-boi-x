@@ -20,6 +20,7 @@ from datetime import datetime
 import db.database as db
 import config.settings as cfg
 from engine.risk import performance_metrics, current_exposure, circuit_breaker_active
+from scanner.monitor import TIER1_INTERVAL, TIER2_INTERVAL, TIER3_INTERVAL
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -296,10 +297,43 @@ with tab_scan:
         secs = int((datetime.utcnow() - dt).total_seconds())
         return f"{secs//60}m {secs%60}s ago"
 
+    def _next_in(last_dt, interval_secs, fallback_anchor=None):
+        """Return human-readable time until next run of a tier."""
+        now = datetime.utcnow()
+        if last_dt is not None:
+            elapsed   = (now - last_dt).total_seconds()
+            remaining = max(0.0, interval_secs - elapsed)
+        elif fallback_anchor is not None:
+            # Tier hasn't run yet — count from when Tier 1 finished + interval
+            elapsed   = (now - fallback_anchor).total_seconds()
+            remaining = max(0.0, interval_secs - elapsed)
+        else:
+            return "Waiting…"
+        if remaining < 5:
+            return "Any moment…"
+        m, s = int(remaining) // 60, int(remaining) % 60
+        return f"{m}m {s:02d}s"
+
     last_scans = scanner.last_scans
-    tc1.metric("Tier 1 (60m — full)",   _ago(last_scans.get("tier1")))
-    tc2.metric("Tier 2 (15m — top 50)", _ago(last_scans.get("tier2")))
-    tc3.metric("Tier 3  (5m — top 20)", _ago(last_scans.get("tier3")))
+    _t1_last   = last_scans.get("tier1")
+    _t2_last   = last_scans.get("tier2")
+    _t3_last   = last_scans.get("tier3")
+
+    tc1.metric(
+        "Tier 1 (60m — full)",
+        _ago(_t1_last),
+        delta=f"next in {_next_in(_t1_last, TIER1_INTERVAL)}",
+    )
+    tc2.metric(
+        "Tier 2 (15m — top 50)",
+        _ago(_t2_last),
+        delta=f"next in {_next_in(_t2_last, TIER2_INTERVAL, _t1_last)}",
+    )
+    tc3.metric(
+        "Tier 3  (5m — top 20)",
+        _ago(_t3_last),
+        delta=f"next in {_next_in(_t3_last, TIER3_INTERVAL, _t1_last)}",
+    )
     tc4.metric("Scans Run", scanner.scan_count)
 
     # Progress bar while scanning
