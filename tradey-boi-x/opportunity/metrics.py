@@ -55,6 +55,28 @@ def compute_metrics(trades: Sequence[dict], *, account_start: float = 10_000) ->
     expectancy = wr * avg_win + (1 - wr) * avg_loss
     rr         = abs(avg_win / avg_loss) if avg_loss else 99.0
 
+    # R-multiple expectancy — matches engine.py _expectancy_stats() formula exactly.
+    # Uses same 1.3× asymmetric loss penalty so this value is directly comparable
+    # to the adaptive-gate tighten/ease thresholds (−0.30R / +0.80R).
+    def _r(t: dict) -> float:
+        try:
+            actual   = float(t.get("actual_pct") or 0.0)
+            entry_px = float(t.get("entry_price") or 0.0)
+            stop_px  = t.get("stop_price")
+            if entry_px > 0 and stop_px and float(stop_px) > 0:
+                risk_pct = abs(entry_px - float(stop_px)) / entry_px
+            else:
+                risk_pct = max(abs(float(t.get("target_pct") or 0.06)), 0.001)
+            return max(-5.0, min(5.0, actual / max(risk_pct, 0.001)))
+        except Exception:
+            return 0.0
+
+    win_Rs  = [_r(t) for t in resolved if float(t.get("actual_pct", 0)) >= 0]
+    loss_Rs = [abs(_r(t)) for t in resolved if float(t.get("actual_pct", 0)) < 0]
+    avg_win_R  = sum(win_Rs)  / len(win_Rs)  if win_Rs  else 0.0
+    avg_loss_R = sum(loss_Rs) / len(loss_Rs) if loss_Rs else 0.0
+    expectancy_r = avg_win_R * wr - avg_loss_R * 1.3 * (1 - wr)
+
     dates: list[datetime] = []
     for t in resolved:
         ds = t.get("signal_date", "")
@@ -114,27 +136,29 @@ def compute_metrics(trades: Sequence[dict], *, account_start: float = 10_000) ->
 
     return {
         "n":                 n,
-        "win_rate":          round(wr,          4),
-        "profit_factor":     round(pf,          3),
-        "expectancy":        round(expectancy,  4),
-        "cagr":              round(cagr,        4),
-        "max_drawdown":      round(max_dd,      4),
-        "sharpe":            round(sharpe,      3),
-        "sortino":           round(sortino,     3),
-        "calmar":            min(round(calmar,  3), 99.0),
-        "avg_win":           round(avg_win,     4),
-        "avg_loss":          round(avg_loss,    4),
-        "avg_hold_days":     round(avg_hold,    1),
-        "rr_ratio":          min(round(rr,      3), 99.0),
-        "trade_freq_month":  round(trade_freq,  2),
-        "equity_stability":  round(r2,          4),
-        "final_equity":      round(final_eq,    2),
+        "win_rate":          round(wr,             4),
+        "profit_factor":     round(pf,             3),
+        "expectancy":        round(expectancy,     4),
+        "expectancy_r":      round(expectancy_r,   4),
+        "cagr":              round(cagr,           4),
+        "max_drawdown":      round(max_dd,         4),
+        "sharpe":            round(sharpe,         3),
+        "sortino":           round(sortino,        3),
+        "calmar":            min(round(calmar,     3), 99.0),
+        "avg_win":           round(avg_win,        4),
+        "avg_loss":          round(avg_loss,       4),
+        "avg_hold_days":     round(avg_hold,       1),
+        "rr_ratio":          min(round(rr,         3), 99.0),
+        "trade_freq_month":  round(trade_freq,     2),
+        "equity_stability":  round(r2,             4),
+        "final_equity":      round(final_eq,       2),
     }
 
 
 def _empty() -> dict:
     return {
-        "n": 0, "win_rate": 0.0, "profit_factor": 0.0, "expectancy": 0.0,
+        "n": 0, "win_rate": 0.0, "profit_factor": 0.0,
+        "expectancy": 0.0, "expectancy_r": 0.0,
         "cagr": 0.0, "max_drawdown": 0.0, "sharpe": 0.0, "sortino": 0.0,
         "calmar": 0.0, "avg_win": 0.0, "avg_loss": 0.0, "avg_hold_days": 0.0,
         "rr_ratio": 0.0, "trade_freq_month": 0.0, "equity_stability": 0.0,
