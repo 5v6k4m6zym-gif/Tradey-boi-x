@@ -5,6 +5,12 @@ Run with: streamlit run pro_dashboard.py
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
+import asyncio, sys as _sys
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
