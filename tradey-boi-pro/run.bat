@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0"
 title Tradey Boi Pro
 color 0A
 
