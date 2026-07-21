@@ -93,9 +93,9 @@ with st.sidebar:
         st.caption(f"Last scan: {ago//60}m {ago%60}s ago  ·  #{scanner.scan_count}")
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_dash, tab_scan, tab_pos, tab_perf, tab_health, tab_settings = st.tabs([
+tab_dash, tab_scan, tab_pos, tab_perf, tab_health, tab_settings, tab_bt = st.tabs([
     "📊 Dashboard", "🔍 Scanner", "📋 Positions",
-    "📈 Performance", "🔧 Health", "⚙️ Settings"
+    "📈 Performance", "🔧 Health", "⚙️ Settings", "🧪 Backtest"
 ])
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -650,6 +650,313 @@ with tab_settings:
             ok = broker.connect(host, port, cid)
             st.success("Reconnected ✅") if ok else st.error("Failed ❌")
             st.rerun()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 7 — BACKTEST
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab_bt:
+    st.header("🧪 Walk-Forward Backtest")
+    st.caption(
+        "Simulates the Pro scanner day-by-day on real historical data. "
+        "No lookahead bias — each day's signal only uses data available at that point. "
+        "Entry at next day's open. Exits at stop, target, or max hold days."
+    )
+
+    # ── Configuration ─────────────────────────────────────────────────────────
+    with st.expander("⚙️ Backtest Configuration", expanded=True):
+        col1, col2, col3 = st.columns(3)
+
+        from datetime import date, timedelta
+        today = date.today()
+
+        with col1:
+            st.markdown("**Date Range**")
+            period_choice = st.selectbox(
+                "Test period",
+                ["1 Month", "3 Months", "6 Months", "12 Months", "Custom"],
+                index=2,
+            )
+            if period_choice == "Custom":
+                bt_start = st.date_input("Start date", value=today - timedelta(days=180))
+                bt_end   = st.date_input("End date",   value=today - timedelta(days=1))
+            else:
+                days_map = {"1 Month": 30, "3 Months": 90, "6 Months": 180, "12 Months": 365}
+                bt_start = today - timedelta(days=days_map[period_choice])
+                bt_end   = today - timedelta(days=1)
+                st.caption(f"{bt_start}  →  {bt_end}")
+
+            initial_cap = st.number_input(
+                "Starting capital ($)",
+                value=10_000, min_value=1_000, step=1_000
+            )
+
+        with col2:
+            st.markdown("**Markets to test**")
+            from scanner.watchlist_manager import get_watchlist, get_all_active_tickers, ASX_TOP200, SP500_SAMPLE
+            bt_markets = st.multiselect(
+                "Markets", ["ASX", "US", "Custom"],
+                default=["ASX", "US"],
+            )
+            st.caption(
+                f"ASX: {len(ASX_TOP200)} tickers  ·  "
+                f"US: {len(SP500_SAMPLE)} tickers"
+            )
+            st.markdown("**Quality gates**")
+            bt_min_score = st.slider("Min score",       5, 10,  int(cfg.get("min_score") or 7))
+            bt_min_prob  = st.slider("Min probability", 0.50, 0.75,
+                                     float(cfg.get("min_prob") or 0.53), step=0.01)
+
+        with col3:
+            st.markdown("**Risk parameters**")
+            bt_risk_pct  = st.slider("Risk per trade (%)", 0.5, 5.0,
+                                     float(cfg.get("risk_pct") or 2.0), step=0.1)
+            bt_max_pos   = st.slider("Max positions",  1, 10,
+                                     int(cfg.get("max_positions") or 5))
+            bt_hold      = st.slider("Max hold days",  5, 30,
+                                     int(cfg.get("hold_days") or 15))
+            bt_brokerage = st.number_input("Brokerage per side ($)",
+                                           value=float(cfg.get("brokerage") or 2.0),
+                                           step=0.5)
+
+    # ── Run button ────────────────────────────────────────────────────────────
+    run_col, clear_col = st.columns([2, 1])
+    run_bt  = run_col.button("▶ Run Backtest", type="primary", use_container_width=True)
+    clear_bt = clear_col.button("🗑 Clear Results", use_container_width=True)
+
+    if clear_bt:
+        st.session_state.pop("bt_results", None)
+        st.rerun()
+
+    if run_bt:
+        # Build ticker list
+        bt_tickers: list[str] = []
+        if "ASX" in bt_markets:
+            bt_tickers.extend(get_watchlist("ASX"))
+        if "US" in bt_markets:
+            bt_tickers.extend(get_watchlist("US"))
+        if "Custom" in bt_markets:
+            bt_tickers.extend(get_watchlist("CUSTOM"))
+        bt_tickers = list(dict.fromkeys(bt_tickers))   # deduplicate
+
+        if not bt_tickers:
+            st.error("No tickers in selected markets. Add some in the Scanner tab first.")
+        else:
+            bt_params = {
+                "min_score":      bt_min_score,
+                "min_prob":       bt_min_prob,
+                "risk_pct":       bt_risk_pct,
+                "max_positions":  bt_max_pos,
+                "hold_days":      bt_hold,
+                "brokerage":      bt_brokerage,
+                "sl_mult_hi":     float(cfg.get("sl_mult_hi")  or 1.2),
+                "sl_mult_mid":    float(cfg.get("sl_mult_mid") or 1.0),
+                "sl_mult_lo":     float(cfg.get("sl_mult_lo")  or 0.8),
+                "target_hi":      float(cfg.get("target_hi")   or 12.0),
+                "target_mid":     float(cfg.get("target_mid")  or 8.0),
+                "target_lo":      float(cfg.get("target_lo")   or 5.0),
+                "cb_consecutive_losses": int(cfg.get("cb_consecutive_losses") or 3),
+                "cb_pause_days":  int(cfg.get("cb_pause_days") or 7),
+            }
+
+            st.info(
+                f"Running backtest on **{len(bt_tickers)} tickers** "
+                f"from **{bt_start}** to **{bt_end}**…  "
+                f"(this takes 1–3 minutes while data downloads)"
+            )
+
+            progress_bar  = st.progress(0.0)
+            status_text   = st.empty()
+
+            def _progress(done: int, total: int, msg: str):
+                if total > 0:
+                    progress_bar.progress(min(done / total, 1.0))
+                status_text.caption(msg)
+
+            from backtest.engine import run_backtest
+            with st.spinner(""):
+                results = run_backtest(
+                    tickers         = bt_tickers,
+                    test_start      = bt_start,
+                    test_end        = bt_end,
+                    initial_capital = float(initial_cap),
+                    params          = bt_params,
+                    progress_cb     = _progress,
+                )
+
+            progress_bar.progress(1.0)
+            status_text.caption("✅ Backtest complete")
+            st.session_state["bt_results"] = results
+            st.rerun()
+
+    # ── Display results ───────────────────────────────────────────────────────
+    results = st.session_state.get("bt_results")
+    if results:
+        m  = results["metrics"]
+        pf = m["profit_factor"]
+        wr = m["win_rate"] * 100
+
+        st.divider()
+
+        # ── Pass / Fail banner ────────────────────────────────────────────────
+        if pf >= 1.2 and wr >= 45:
+            st.success(f"✅ **PASSES** — Profit Factor {pf:.2f}  ·  Win Rate {wr:.0f}%  ·  ROI {m['roi_pct']:+.1f}%")
+        elif pf >= 1.0:
+            st.warning(f"⚠️ **MARGINAL** — Profit Factor {pf:.2f}  ·  Win Rate {wr:.0f}%  ·  ROI {m['roi_pct']:+.1f}%")
+        else:
+            st.error(f"❌ **FAILS** — Profit Factor {pf:.2f}  ·  Win Rate {wr:.0f}%  ·  ROI {m['roi_pct']:+.1f}%")
+
+        # ── Key metrics ───────────────────────────────────────────────────────
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Trades",          m["trade_count"])
+        c2.metric("Win Rate",        f"{wr:.1f}%")
+        c3.metric("Profit Factor",   f"{pf:.2f}")
+        c4.metric("ROI",             f"{m['roi_pct']:+.1f}%")
+        c5.metric("Max Drawdown",    f"{m['max_drawdown']*100:.1f}%")
+        c6.metric("Sharpe",          f"{m['sharpe']:.2f}")
+
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Total P&L",       f"${m['total_pnl']:+,.0f}")
+        c2.metric("Avg Win",         f"${m['avg_win']:,.0f}")
+        c3.metric("Avg Loss",        f"${m['avg_loss']:,.0f}")
+        c4.metric("Avg Hold",        f"{m['avg_hold_days']:.0f}d")
+        c5.metric("Tickers Scanned", results.get("tickers_scanned", "—"))
+        c6.metric("Trading Days",    results.get("trading_days", "—"))
+
+        st.divider()
+
+        # ── Charts ────────────────────────────────────────────────────────────
+        trades = results["trades"]
+        eq_crv = results["equity_curve"]
+
+        chart_col1, chart_col2 = st.columns([2, 1])
+
+        with chart_col1:
+            if eq_crv:
+                df_eq = pd.DataFrame(eq_crv)
+                df_eq["date"] = pd.to_datetime(df_eq["date"])
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=df_eq["date"], y=df_eq["equity"],
+                    mode="lines", name="Equity",
+                    line=dict(color="#00d4aa", width=2),
+                    fill="tozeroy", fillcolor="rgba(0,212,170,0.08)"
+                ))
+                fig.add_hline(y=float(initial_cap), line_dash="dash",
+                              line_color="gray", annotation_text="Starting capital")
+                fig.update_layout(
+                    title="Equity Curve (Account + Open P&L)",
+                    xaxis_title="Date", yaxis_title="Equity ($)",
+                    plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                    font=dict(color="white"), height=380,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+        with chart_col2:
+            if trades:
+                # Exit reasons pie
+                reasons = m.get("exit_reasons", {})
+                colour_map = {
+                    "TARGET_HIT":   "#00d4aa",
+                    "STOP_HIT":     "#ff4b4b",
+                    "MAX_HOLD":     "#ffa500",
+                    "END_OF_TEST":  "#888888",
+                }
+                fig2 = px.pie(
+                    values=list(reasons.values()),
+                    names=list(reasons.keys()),
+                    title="Exit Reasons",
+                    color=list(reasons.keys()),
+                    color_discrete_map=colour_map,
+                )
+                fig2.update_layout(
+                    plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                    font=dict(color="white"), height=380,
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+
+        # ── Monthly P&L bar chart ─────────────────────────────────────────────
+        if trades:
+            df_t = pd.DataFrame([{
+                "exit_date":  t.exit_date,
+                "pnl":        t.pnl,
+                "pnl_pct":    t.pnl_pct * 100,
+                "ticker":     t.ticker,
+                "outcome":    t.outcome,
+                "exit_reason": t.exit_reason,
+                "score":      t.score,
+                "prob":       t.prob,
+                "hold_days":  t.hold_days,
+                "entry_price": t.entry_price,
+                "exit_price":  t.exit_price,
+            } for t in trades])
+            df_t["exit_date"] = pd.to_datetime(df_t["exit_date"])
+            df_t["month"] = df_t["exit_date"].dt.to_period("M").astype(str)
+
+            monthly = df_t.groupby("month")["pnl"].sum().reset_index()
+            monthly["color"] = monthly["pnl"].apply(lambda x: "#00d4aa" if x >= 0 else "#ff4b4b")
+
+            fig3 = go.Figure(go.Bar(
+                x=monthly["month"], y=monthly["pnl"],
+                marker_color=monthly["color"],
+                name="Monthly P&L"
+            ))
+            fig3.update_layout(
+                title="Monthly P&L ($)",
+                plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                font=dict(color="white"), height=280,
+            )
+            st.plotly_chart(fig3, use_container_width=True)
+
+        st.divider()
+
+        # ── Best / Worst trades ───────────────────────────────────────────────
+        if trades:
+            best_col, worst_col = st.columns(2)
+            df_t_sorted_win  = df_t.sort_values("pnl", ascending=False).head(5)
+            df_t_sorted_loss = df_t.sort_values("pnl", ascending=True).head(5)
+
+            with best_col:
+                st.subheader("🏆 Best Trades")
+                st.dataframe(
+                    df_t_sorted_win[["ticker","exit_date","pnl","pnl_pct","hold_days","exit_reason"]].rename(
+                        columns={"pnl": "P&L $", "pnl_pct": "P&L %", "hold_days": "Days",
+                                 "exit_date": "Date", "exit_reason": "Exit"}
+                    ).round(2),
+                    hide_index=True, use_container_width=True
+                )
+
+            with worst_col:
+                st.subheader("📉 Worst Trades")
+                st.dataframe(
+                    df_t_sorted_loss[["ticker","exit_date","pnl","pnl_pct","hold_days","exit_reason"]].rename(
+                        columns={"pnl": "P&L $", "pnl_pct": "P&L %", "hold_days": "Days",
+                                 "exit_date": "Date", "exit_reason": "Exit"}
+                    ).round(2),
+                    hide_index=True, use_container_width=True
+                )
+
+        # ── Full trade table ──────────────────────────────────────────────────
+        st.subheader("📋 All Trades")
+        if trades:
+            display_cols = ["ticker","exit_date","pnl","pnl_pct","hold_days",
+                            "outcome","exit_reason","score","prob"]
+            st.dataframe(
+                df_t[display_cols].rename(columns={
+                    "pnl": "P&L $", "pnl_pct": "P&L %",
+                    "hold_days": "Days", "exit_date": "Date",
+                    "exit_reason": "Exit",
+                }).round(3).sort_values("Date", ascending=False),
+                use_container_width=True, hide_index=True,
+            )
+
+            # Download button
+            csv = df_t.to_csv(index=False)
+            st.download_button(
+                "⬇️ Download trades as CSV",
+                data=csv,
+                file_name=f"backtest_trades_{date.today()}.csv",
+                mime="text/csv",
+            )
 
 # ── Auto-refresh every 30s while bot is running ───────────────────────────────
 if bot.is_running():
