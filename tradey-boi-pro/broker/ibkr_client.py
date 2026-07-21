@@ -95,6 +95,11 @@ class IBKRClient:
         this is the correct way to maintain a stable ib_insync connection.
         Auto-reconnects on drop.
         """
+        import asyncio
+        # ib_insync needs an event loop in this thread even in sync mode
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
         host, port, client_id = self._host, self._port, self._client_id
         slow_tick = 0
 
