@@ -1189,6 +1189,115 @@ with tab_bt:
                 mime="text/csv",
             )
 
+    # ════════════════════════════════════════════════════════════════════════════
+    # ROI PROJECTION — Monte Carlo forward simulation
+    # Always visible; uses real backtest stats when available, optimised defaults
+    # when no backtest has been run yet.
+    # ════════════════════════════════════════════════════════════════════════════
+    st.divider()
+    st.subheader("📊 Forward ROI Projection")
+
+    _bt = st.session_state.get("bt_results")
+    if _bt:
+        _bm   = _bt["metrics"]
+        _td   = _bt.get("trading_days", 126)
+        _cap  = float(_bm["initial_capital"]) or float(initial_cap)
+        _pm   = max(_td / 21.0, 0.5)
+        _tpm  = _bm["trade_count"] / _pm                  # trades per month (actual)
+        _wr   = _bm["win_rate"]
+        _w_f  = _bm["avg_win"]  / max(_cap, 1)            # win as fraction of capital
+        _l_f  = _bm["avg_loss"] / max(_cap, 1)            # loss as fraction of capital
+        st.caption(
+            f"Based on your last backtest — {_bm['trade_count']} trades over "
+            f"~{_pm:.0f} months  ·  {_wr*100:.0f}% win rate  ·  "
+            f"PF {_bm['profit_factor']:.2f}  ·  Avg hold {_bm['avg_hold_days']:.0f}d"
+        )
+    else:
+        _cap  = float(initial_cap)
+        _wr   = 0.52
+        _w_f  = 0.0195   # avg win ≈ 1.95% of capital
+        _l_f  = 0.0200   # avg loss ≈ 2.00% (2% risk rule)
+        _tpm  = 6.0      # ~6 trades/month: 5 max positions, 15-day avg hold
+        st.caption(
+            "ℹ️ No backtest run yet — using optimised defaults from parameter sweep "
+            "(PF 1.054 · 52% win rate · 6 trades/month · 2% risk per trade). "
+            "Run a backtest above for personalised projections."
+        )
+
+    import numpy as _np
+    _rng   = _np.random.default_rng(42)
+    _SIMS  = 1_000
+    _MTHS  = 12
+
+    # ── Vectorised Monte Carlo ────────────────────────────────────────────────
+    _paths = _np.ones((_SIMS, _MTHS + 1))
+    for _mi in range(_MTHS):
+        _counts  = _rng.poisson(max(_tpm, 0.1), _SIMS).astype(int)
+        _max_t   = max(int(_counts.max()), 1)
+        _rolls   = _rng.random((_SIMS, _max_t))
+        _wins    = _rolls < _wr
+        _mult    = _np.where(_wins, 1.0 + _w_f, 1.0 - _l_f)
+        _active  = _np.arange(_max_t)[None, :] < _counts[:, None]
+        _mult    = _np.where(_active, _mult, 1.0)
+        _paths[:, _mi + 1] = _paths[:, _mi] * _np.prod(_mult, axis=1)
+
+    _p10 = _np.percentile(_paths, 10, axis=0)
+    _p50 = _np.percentile(_paths, 50, axis=0)
+    _p90 = _np.percentile(_paths, 90, axis=0)
+    _ax  = list(range(_MTHS + 1))
+
+    # ── Fan chart ─────────────────────────────────────────────────────────────
+    _fig_mc = go.Figure()
+    _fig_mc.add_trace(go.Scatter(
+        x=_ax, y=(_p90 - 1) * 100, fill=None, mode="lines",
+        line=dict(color="rgba(0,212,170,0.35)", width=1), name="Optimistic (P90)",
+    ))
+    _fig_mc.add_trace(go.Scatter(
+        x=_ax, y=(_p10 - 1) * 100, fill="tonexty", mode="lines",
+        line=dict(color="rgba(255,75,75,0.35)", width=1),
+        fillcolor="rgba(100,200,170,0.10)", name="Conservative (P10)",
+    ))
+    _fig_mc.add_trace(go.Scatter(
+        x=_ax, y=(_p50 - 1) * 100, mode="lines",
+        line=dict(color="#00d4aa", width=2.5), name="Expected (P50)",
+    ))
+    _fig_mc.add_hline(y=0, line_dash="dash", line_color="gray",
+                      annotation_text="Break-even")
+    _fig_mc.update_layout(
+        title=f"Monte Carlo ROI Projection — 1,000 simulations  ·  ${_cap:,.0f} starting capital",
+        xaxis_title="Months", yaxis_title="Portfolio ROI (%)",
+        xaxis=dict(tickmode="linear", dtick=1),
+        plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+        font=dict(color="white"), height=380,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(_fig_mc, use_container_width=True)
+
+    # ── Summary table + KPIs ──────────────────────────────────────────────────
+    _tbl_col, _kpi_col = st.columns([3, 1])
+    with _tbl_col:
+        _rows = []
+        for _mth in [3, 6, 12]:
+            _r10 = (_p10[_mth] - 1) * 100
+            _r50 = (_p50[_mth] - 1) * 100
+            _r90 = (_p90[_mth] - 1) * 100
+            _rows.append({
+                "Horizon":              f"{_mth} month{'s' if _mth > 1 else ''}",
+                "Conservative (P10)":   f"{_r10:+.1f}%   (${_r10/100*_cap:+,.0f})",
+                "Expected (P50)":       f"{_r50:+.1f}%   (${_r50/100*_cap:+,.0f})",
+                "Optimistic (P90)":     f"{_r90:+.1f}%   (${_r90/100*_cap:+,.0f})",
+            })
+        st.dataframe(pd.DataFrame(_rows).set_index("Horizon"), use_container_width=True)
+
+    with _kpi_col:
+        _ann_roi   = (_p50[12] - 1) * 100
+        _loss_prob = float(_np.mean(_paths[:, 6] < 1.0)) * 100
+        _ruin_prob = float(_np.mean(_paths[:, 12] < 0.8)) * 100   # >20% drawdown by year end
+        st.metric("Expected 12-month ROI",  f"{_ann_roi:+.1f}%")
+        st.metric("Prob. of loss at 6 mo.", f"{_loss_prob:.0f}%")
+        st.metric("Prob. >20% loss at 12m", f"{_ruin_prob:.0f}%")
+        st.metric("Trades/month",           f"{_tpm:.1f}")
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 8 — STOCK ANALYSIS  (same deep-dive as Tradey Boi X, bot executes instead)
 # ═══════════════════════════════════════════════════════════════════════════════
