@@ -55,6 +55,17 @@ class IBKRClient:
         if self._connected:
             return True
 
+        # Stop any existing connection thread before starting a new one
+        if self._thread and self._thread.is_alive():
+            log.info("Stopping existing connection thread before reconnect…")
+            try:
+                self._ib.disconnect()
+            except Exception:
+                pass
+            self._connected = False
+            self._thread.join(timeout=5)
+
+        self._error_msg = ""
         self._thread = threading.Thread(
             target=self._run_loop,
             args=(host, port, client_id),
@@ -62,8 +73,8 @@ class IBKRClient:
             name="IBKRThread"
         )
         self._thread.start()
-        # Wait up to 10 s for connection
-        for _ in range(20):
+        # Wait up to 15 s for connection
+        for _ in range(30):
             time.sleep(0.5)
             if self._connected or self._error_msg:
                 break
