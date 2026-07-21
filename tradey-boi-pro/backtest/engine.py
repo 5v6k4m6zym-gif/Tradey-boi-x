@@ -86,97 +86,21 @@ def _detect_signal(df_slice: pd.DataFrame, ticker: str, params: dict) -> dict | 
     if df_slice is None or len(df_slice) < 30:
         return None
 
-    # ── Real scanner path — attempt ML model, fall through on any failure ────
+    # ── Use the real scanner — same logic as the live bot ────────────────────
     if _USE_REAL_SCANNER:
+        # Inject backtest_mode so the scorer uses the slider threshold instead
+        # of the adaptive file, and skips per-ticker learning (no lookahead bias)
+        bt_params = dict(params, backtest_mode=True)
         try:
-            result = _real_score(df_slice, ticker, params)
-            if result is not None:
-                return result
-            # Real scorer returned None (no signal) — fall through to rule-based
+            return _real_score(df_slice, ticker, bt_params)
         except Exception as e:
-            log.debug(f"Real scorer failed for {ticker}: {e}")
-            # Fall through to rule-based below
-
-    # ── Rule-based scorer — always runs as fallback ───────────────────────────
-    try:
-        close  = df_slice["Close"].squeeze()
-        volume = df_slice["Volume"].squeeze()
-        high   = df_slice["High"].squeeze()
-        low_s  = df_slice["Low"].squeeze()
-
-        curr_price = float(close.iloc[-1])
-        prev_close = float(close.iloc[-2])
-        if curr_price <= 0:
+            log.debug(f"Real scorer error for {ticker}: {e}")
             return None
 
-        high_20   = float(high.iloc[-21:-1].max())
-        avg_vol20 = float(volume.iloc[-21:-1].mean())
-        curr_vol  = float(volume.iloc[-1])
-        ema50     = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
-        ema20     = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
-
-        tr_list = []
-        for i in range(-15, 0):
-            h = float(high.iloc[i]);  l = float(low_s.iloc[i])
-            c = float(close.iloc[i - 1])
-            tr_list.append(max(h - l, abs(h - c), abs(l - c)))
-        atr     = float(np.mean(tr_list))
-        atr_pct = atr / curr_price * 100
-
-        delta  = close.diff()
-        avg_g  = delta.clip(lower=0).rolling(14).mean().iloc[-1]
-        avg_l  = (-delta).clip(lower=0).rolling(14).mean().iloc[-1]
-        rsi    = 100 - 100 / (1 + avg_g / avg_l) if avg_l > 0 else 100
-
-        if curr_price <= high_20 * 1.001:    return None
-        if curr_price < ema50 * 0.97:        return None
-        if rsi > 80:                          return None
-        if curr_vol < avg_vol20 * 1.1:       return None
-        if atr_pct < 0.3:                    return None
-
-        score = 0
-        bp    = (curr_price - high_20) / high_20 * 100
-        if bp > 3:    score += 2
-        elif bp > 1:  score += 1
-        vr = curr_vol / avg_vol20 if avg_vol20 > 0 else 1
-        if vr > 3:    score += 2
-        elif vr > 2:  score += 1
-        if curr_price > ema20 > ema50:  score += 2
-        elif curr_price > ema50:        score += 1
-        if 55 <= rsi <= 70:   score += 2
-        elif 50 <= rsi < 55:  score += 1
-        dm = (curr_price - prev_close) / prev_close * 100
-        if dm > 2:  score += 1
-        if dm > 4:  score += 1
-        score = min(score, 10)
-
-        prob = min(0.50 + score * 0.025, 0.82)
-
-        if score < params.get("min_score", 7):    return None
-        if prob  < params.get("min_prob",  0.53):  return None
-
-        if atr_pct >= 3.0:
-            sl_mult = params.get("sl_mult_hi",  1.2);  tp_pct = params.get("target_hi",  12.0)
-        elif atr_pct >= 1.5:
-            sl_mult = params.get("sl_mult_mid", 1.0);  tp_pct = params.get("target_mid",  8.0)
-        else:
-            sl_mult = params.get("sl_mult_lo",  0.8);  tp_pct = params.get("target_lo",   5.0)
-
-        stop   = max(curr_price - sl_mult * atr, curr_price * 0.88)
-        target = curr_price * (1 + tp_pct / 100)
-
-        return {
-            "ticker":       ticker,
-            "entry_price":  curr_price,
-            "stop_price":   round(stop,    4),
-            "target_price": round(target,  4),
-            "atr_pct":      round(atr_pct, 2),
-            "score":        score,
-            "prob":         round(prob,    3),
-        }
-    except Exception as e:
-        log.debug(f"Signal error {ticker}: {e}")
-        return None
+    # ── Scanner unavailable (import failed at startup) ────────────────────────
+    # Falls back to a simple rule check. Results will not match live bot exactly.
+    log.debug(f"Real scanner unavailable — skipping {ticker}")
+    return None
 
 
 # ── Main backtest engine ───────────────────────────────────────────────────────

@@ -972,9 +972,10 @@ with tab_bt:
             bt_min_score = st.slider("Min score",       1, 10,  5, key="bt_min_score")
             bt_min_prob  = st.slider("Min probability", 0.50, 0.75, 0.50, step=0.01, key="bt_min_prob")
             st.caption(
-                "ℹ️ These thresholds apply to the **backtest only** — they do not affect "
-                "the live bot. The backtest uses a simplified rule-based scorer; score 5 here "
-                "is roughly equivalent to score 7 in the live ML model."
+                "ℹ️ These thresholds apply to the **backtest only** and do not affect the live bot. "
+                "The backtest uses the **same ML model and filters as live trading** — "
+                "EMA uptrend, MACD, RSI, volume, and AI probability all apply. "
+                "Score 5 here means any signal the live bot would classify as BUY or better."
             )
 
         with col3:

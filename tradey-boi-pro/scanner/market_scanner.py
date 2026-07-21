@@ -486,17 +486,21 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         elif rsi < 70:       score += 1
         if float(row["ema20"]) > float(row["ema50"]): score += 1   # always True here but mirrors X
 
-        # ── Per-ticker learning adjustment (identical to X's performance_adjustments) ──
-        # Pro learns from its OWN live trade outcomes — +2 to -2 based on rolling
-        # expectancy of the last 20 resolved trades for this specific ticker.
-        # Cache is refreshed every 15 min; safe to call on every ticker eval.
-        ticker_adj = _get_ticker_adj(ticker)
-        score      = max(0, score + ticker_adj)
+        # ── Per-ticker learning adjustment ────────────────────────────────────
+        # Skip in backtest mode — applying today's learned adjustments to
+        # historical data would be lookahead bias.
+        if not params.get("backtest_mode"):
+            ticker_adj = _get_ticker_adj(ticker)
+            score      = max(0, score + ticker_adj)
 
-        # ── Adaptive thresholds from Pro's own learning (falls back to X's) ───
-        acfg        = _load_x_adaptive_cfg()
-        prob_floor  = float(acfg.get("prob_floor",    params.get("min_prob",  0.53)))
-        sb_base     = int(  acfg.get("sb_base_score", params.get("min_score", 7)))
+        # ── Thresholds: backtest uses slider value; live uses adaptive file ───
+        if params.get("backtest_mode"):
+            prob_floor = float(params.get("min_prob",  0.50))
+            sb_base    = int(  params.get("min_score", 5))
+        else:
+            acfg       = _load_x_adaptive_cfg()
+            prob_floor = float(acfg.get("prob_floor",    params.get("min_prob",  0.53)))
+            sb_base    = int(  acfg.get("sb_base_score", params.get("min_score", 7)))
         elite_min, sb_min = _regime_score_thresholds(sb_base)
 
         # ── ATR / stop / target ───────────────────────────────────────────────
