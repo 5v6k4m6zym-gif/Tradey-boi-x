@@ -233,6 +233,8 @@ def run_backtest(
         progress_cb(0, len(tickers), "Downloading historical data…")
 
     # Batch download — 50 tickers at a time
+    # Suppress yfinance console noise (delisted/missing tickers print to stderr)
+    import contextlib, io, warnings as _warnings
     all_data: dict[str, pd.DataFrame] = {}
     batch_size = 50
     batches    = [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
@@ -242,16 +244,19 @@ def run_backtest(
             done = b_idx * batch_size
             progress_cb(done, len(tickers), f"Downloading batch {b_idx+1}/{len(batches)}…")
         try:
-            raw = yf.download(
-                " ".join(batch),
-                start=download_start.isoformat(),
-                end=(test_end + timedelta(days=2)).isoformat(),
-                interval="1d",
-                auto_adjust=True,
-                progress=False,
-                group_by="ticker",
-                threads=True,
-            )
+            _sink = io.StringIO()
+            with contextlib.redirect_stderr(_sink), _warnings.catch_warnings():
+                _warnings.simplefilter("ignore")
+                raw = yf.download(
+                    " ".join(batch),
+                    start=download_start.isoformat(),
+                    end=(test_end + timedelta(days=2)).isoformat(),
+                    interval="1d",
+                    auto_adjust=True,
+                    progress=False,
+                    group_by="ticker",
+                    threads=True,
+                )
             if len(batch) == 1:
                 df = raw.dropna(how="all")
                 df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
@@ -269,8 +274,9 @@ def run_backtest(
         except Exception as e:
             log.error(f"Batch download error: {e}")
 
-    available = list(all_data.keys())
-    log.info(f"Got data for {len(available)}/{len(tickers)} tickers")
+    available    = list(all_data.keys())
+    skipped      = len(tickers) - len(available)
+    log.info(f"Got data for {len(available)}/{len(tickers)} tickers  ({skipped} skipped — no data/delisted)")
 
     if not available:
         return {"trades": [], "equity_curve": [], "metrics": _empty_metrics(), "params_used": p}
@@ -499,12 +505,13 @@ def run_backtest(
         closed.append(trade)
 
     return {
-        "trades":       closed,
-        "equity_curve": equity_crv,
-        "metrics":      _calc_metrics(closed, initial_capital, account),
-        "params_used":  p,
-        "tickers_scanned": len(available),
-        "trading_days":    len(trading_days),
+        "trades":           closed,
+        "equity_curve":     equity_crv,
+        "metrics":          _calc_metrics(closed, initial_capital, account),
+        "params_used":      p,
+        "tickers_scanned":  len(available),
+        "tickers_skipped":  skipped,
+        "trading_days":     len(trading_days),
     }
 
 

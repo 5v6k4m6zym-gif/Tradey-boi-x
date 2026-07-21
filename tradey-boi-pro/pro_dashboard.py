@@ -1095,6 +1095,14 @@ with tab_bt:
         c5.metric("Tickers Scanned", results.get("tickers_scanned", "—"))
         c6.metric("Trading Days",    results.get("trading_days", "—"))
 
+        _skipped = results.get("tickers_skipped", 0)
+        if _skipped:
+            st.caption(
+                f"ℹ️ {_skipped} ticker{'s' if _skipped != 1 else ''} skipped — "
+                "no price data available (likely delisted or not yet listed in the test period). "
+                "This is normal and doesn't affect the backtest accuracy."
+            )
+
         st.divider()
 
         # ── Charts ────────────────────────────────────────────────────────────
