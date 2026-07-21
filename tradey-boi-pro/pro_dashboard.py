@@ -1156,23 +1156,35 @@ with tab_bt:
         with chart_col2:
             if trades:
                 # Exit reasons pie
-                reasons = m.get("exit_reasons", {})
-                colour_map = {
-                    "TARGET_HIT":   "#00d4aa",
-                    "STOP_HIT":     "#ff4b4b",
-                    "MAX_HOLD":     "#ffa500",
-                    "END_OF_TEST":  "#888888",
+                reasons_raw = m.get("exit_reasons", {})
+                label_map = {
+                    "STOP_HIT":     "Hit Stop Loss",
+                    "TARGET_HIT":   "Hit Target",
+                    "ABOVE_TARGET": "Ran Above Target",
+                    "MAX_HOLD":     "Ran Out of Time",
+                    "END_OF_TEST":  "Open at End",
                 }
+                colour_map = {
+                    "Hit Stop Loss":     "#ff4b4b",
+                    "Hit Target":        "#00d4aa",
+                    "Ran Above Target":  "#00aaff",
+                    "Ran Out of Time":   "#ffa500",
+                    "Open at End":       "#888888",
+                }
+                labels = [label_map.get(k, k) for k in reasons_raw]
+                values = list(reasons_raw.values())
                 fig2 = px.pie(
-                    values=list(reasons.values()),
-                    names=list(reasons.keys()),
-                    title="Exit Reasons",
-                    color=list(reasons.keys()),
+                    values=values,
+                    names=labels,
+                    title="How Trades Exited",
+                    color=labels,
                     color_discrete_map=colour_map,
                 )
+                fig2.update_traces(textinfo="label+percent")
                 fig2.update_layout(
                     plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
                     font=dict(color="white"), height=380,
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.25),
                 )
                 st.plotly_chart(fig2, use_container_width=True)
 

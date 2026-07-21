@@ -341,7 +341,8 @@ def run_backtest(
                 exit_reason = "STOP_HIT"
             elif day_high >= pos.target_price:
                 exit_price  = pos.target_price
-                exit_reason = "TARGET_HIT"
+                # If close is still above target the stock kept running past it
+                exit_reason = "ABOVE_TARGET" if day_close > pos.target_price else "TARGET_HIT"
             elif days_held >= pos.max_hold:
                 exit_price  = day_close
                 exit_reason = "MAX_HOLD"
