@@ -9,7 +9,7 @@ DEFAULTS: dict = {
     # Connection
     "mode":                  "PAPER",      # PAPER | LIVE
     "ibkr_host":             "127.0.0.1",
-    "ibkr_port":             7497,          # 7497=paper, 7496=live
+    "ibkr_port":             4002,          # 4002=Gateway paper, 4001=Gateway live, 7497=TWS paper
     "ibkr_client_id":        1,
     "bot_enabled":           False,
 

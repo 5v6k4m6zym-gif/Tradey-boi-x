@@ -135,7 +135,7 @@ with tab_dash:
         with col2:
             mode_sel = st.selectbox("Mode", ["Paper Trading", "Live Trading"],
                 index=0 if (cfg.get("mode") or "PAPER") == "PAPER" else 1)
-            port = 7497 if mode_sel == "Paper Trading" else 7496
+            port = 4002 if mode_sel == "Paper Trading" else 4001
         with col3:
             cid = st.number_input("Client ID", value=int(cfg.get("ibkr_client_id") or 1),
                                    min_value=1, max_value=99)
