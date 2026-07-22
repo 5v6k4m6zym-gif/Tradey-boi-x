@@ -348,11 +348,14 @@ def run_backtest(
         # min_hold_days: stop cannot trigger during the first N days after entry.
         "min_hold_days":     params.get("min_hold_days",     2),
         # BE / trailing stop — must match live bot settings (position_manager.py reads cfg).
-        # trail_trigger_r=4 and trail_dist_r=2 keep the trail loose so stocks can run
-        # to target before the trail activates.  Tighter values cut winners too early.
-        "be_trigger_r":      params.get("be_trigger_r",      1.0),
-        "trail_trigger_r":   params.get("trail_trigger_r",   4.0),
-        "trail_dist_r":      params.get("trail_dist_r",      2.0),
+        # be_trigger_r=1.5: stop slides to entry only after stock clears +1.5R (not 1.0R —
+        #   too close; triggered on normal noise and counted BE exits as losses).
+        # trail_trigger_r=2.0: trail activates at +2R peak — realistic within 15-day hold.
+        # trail_dist_r=1.0: stop locks at peak−1R, so at +2R peak → stop at +1R (solid partial profit).
+        # Old values (4.0/2.0) meant the trail never fired, leaving the BE stop as sole mechanism.
+        "be_trigger_r":      params.get("be_trigger_r",      1.5),
+        "trail_trigger_r":   params.get("trail_trigger_r",   2.0),
+        "trail_dist_r":      params.get("trail_dist_r",      1.0),
         "cb_losses":         params.get("cb_consecutive_losses", 3),
         "cb_pause_days":     params.get("cb_pause_days",     7),
         "use_regime_filter": params.get("use_regime_filter", True),
@@ -817,8 +820,8 @@ def run_backtest(
                     r = regime.get(sim_date, 2)   # 0=BEAR, 1=NEUTRAL, 2=BULL; default BULL
                     if r == 0:
                         continue   # No trades when index is below 200-day MA
-                    if r == 1 and sig["score"] < elite_min:
-                        continue   # NEUTRAL: only ELITE-tier signals (need 1 extra point)
+                    if r == 1 and sig["score"] < p["min_score"] + 1:
+                        continue   # NEUTRAL: need 1 extra point above base bar (was elite_min=+2, too strict)
 
             # Entry = next trading day's open — vectorized index comparison
             df     = all_data[sig["ticker"]]
