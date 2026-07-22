@@ -622,7 +622,7 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         # the tighter gates set in config/settings.py (0.58/8).
         if params.get("backtest_mode"):
             prob_floor = float(params.get("min_prob",  0.50))
-            sb_base    = int(  params.get("min_score", 5))
+            sb_base    = int(  params.get("min_score", 6))
         else:
             acfg            = _load_x_adaptive_cfg()
             settings_prob   = float(params.get("min_prob",  0.58))

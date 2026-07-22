@@ -42,7 +42,7 @@ DEFAULTS: dict = {
     # Lowered from 8/0.58: oversold-recovery signals (RSI 35-42, vol>1.5) score 5
     # and have heuristic prob 0.55-0.57 — previously excluded, now included
     "min_prob":              0.50,    # was 0.58 — include oversold-bounce signals
-    "min_score":             5,       # was 8 — include elevated-vol signals without breakout
+    "min_score":             6,       # raised from 5 — only top-tier signals (fewer, cleaner trades)
     "min_expected_r":        1.5,     # minimum EV in R units (gates low R:R setups)
     "min_composite":         7.5,     # live bot: composite_score threshold (ranker 0-10 scale)
 
