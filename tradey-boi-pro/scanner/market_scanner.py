@@ -578,9 +578,10 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         else:
             return _reject(f"score_too_low ({score})")
 
-        # Respect per-params overrides (backtest / analysis mode with lowered gates)
-        min_score_override = int(params.get("min_score", 0))
-        if min_score_override == 0 and tier == "BUY":
+        # BUY tier is display-only — only STRONG BUY and ELITE qualify for execution.
+        # In backtest mode the engine's own min_score gate handles filtering,
+        # so BUY signals are passed through there for visibility.
+        if not params.get("backtest_mode") and tier == "BUY":
             return _reject("live_scan_buy_tier_suppressed")
 
         exchange = "ASX" if ticker.endswith(".AX") else "SMART"
