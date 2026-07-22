@@ -1,6 +1,9 @@
 """
 Standalone backtest runner — no Streamlit required.
 Run: python3 _run_test.py
+
+Uses the same universe as the live bot (build_universe) so results reflect
+what the dashboard Bot Simulation would show.
 """
 import sys, os, logging
 sys.path.insert(0, os.path.dirname(__file__))
@@ -11,29 +14,13 @@ import db.database as db; db.init_db()
 
 from datetime import date
 from backtest.engine import run_backtest, parameter_sweep
+from scanner.universe import build_universe
 
-ASX = [
-    "BHP.AX","CBA.AX","CSL.AX","NAB.AX","WBC.AX","ANZ.AX","WES.AX","MQG.AX",
-    "TLS.AX","RIO.AX","FMG.AX","WOW.AX","REA.AX","ALL.AX","XRO.AX","JBH.AX",
-    "NST.AX","EVN.AX","TWE.AX","QAN.AX","DMP.AX","COH.AX","RMD.AX","ILU.AX",
-    "NXT.AX","CPU.AX","PME.AX","PMV.AX","ALQ.AX","ARB.AX","HLS.AX","NHF.AX",
-    "CAR.AX","WEB.AX","TCL.AX","SHL.AX","QBE.AX","IAG.AX","SUN.AX","ORG.AX",
-    "IGO.AX","PLS.AX","LYC.AX","SFR.AX","WHC.AX","WAF.AX","CMM.AX","CTD.AX",
-    "AMC.AX","APA.AX","GPT.AX","MGR.AX","SCG.AX","GMG.AX","CHC.AX","BOQ.AX",
-    "BEN.AX","MTS.AX","GNC.AX","MIN.AX",
-]
-US = [
-    "AAPL","MSFT","GOOGL","AMZN","META","NVDA","TSLA","UNH","JPM","V",
-    "MA","HD","PG","JNJ","ABBV","MRK","LLY","TMO","DHR","AVGO",
-    "TXN","QCOM","AMAT","AMD","ADBE","CRM","NOW","PANW","CRWD","NET",
-    "DDOG","FTNT","ORCL","INTU","ISRG","ELV","CI","HUM","MCO","SPGI",
-]
-tickers = ASX + US
+tickers = build_universe(markets=["ASX", "US"], apply_liquidity=False)
 
-TEST_START = date(2025, 1, 1)
-TEST_END   = date(2026, 6, 30)
+TEST_START = date(2024, 1, 1)
+TEST_END   = date(2025, 12, 31)
 
-# Pro sweep winner: min_score=6, tight stops (0.8/0.6/0.5×ATR), hold=10d
 base_params = {
     "min_score":             5,
     "min_prob":              0.50,
@@ -48,9 +35,9 @@ base_params = {
     "target_hi":             15.0,
     "target_mid":            10.0,
     "target_lo":             7.0,
-    "be_trigger_r":          1.0,
-    "trail_trigger_r":       2.0,
-    "trail_dist_r":          1.0,
+    "be_trigger_r":          0.5,
+    "trail_trigger_r":       1.5,
+    "trail_dist_r":          0.7,
     "cb_consecutive_losses": 3,
     "cb_pause_days":         7,
     "use_regime_filter":     True,
@@ -58,11 +45,12 @@ base_params = {
 }
 
 print("=" * 65)
-print("TRADEY BOI PRO — BACKTEST (pro sweep winner params)")
-print(f"Tickers : {len(tickers)} ({len(ASX)} ASX + {len(US)} US)")
+print("TRADEY BOI PRO — BOT SIMULATION BACKTEST")
+print(f"Tickers : {len(tickers)} (live bot universe — ASX + US quality stocks)")
 print(f"Period  : {TEST_START} → {TEST_END}")
 print(f"Params  : score≥{base_params['min_score']}  prob≥{base_params['min_prob']}")
-print(f"          vol≥1.2×  RSI<72  sl={base_params['sl_mult_hi']}/{base_params['sl_mult_mid']}/{base_params['sl_mult_lo']}×ATR  hold={base_params['hold_days']}d")
+print(f"          sl={base_params['sl_mult_hi']}/{base_params['sl_mult_mid']}/{base_params['sl_mult_lo']}×ATR  hold={base_params['hold_days']}d")
+print(f"          BE={base_params['be_trigger_r']}R  Trail={base_params['trail_trigger_r']}R/{base_params['trail_dist_r']}R")
 print("=" * 65)
 
 _pl = [""]
@@ -129,7 +117,6 @@ if tc == 0:
     print("\nNo trades — need to loosen filters.")
     sys.exit(1)
 
-# Inspect precomputed signals before popping
 _raw_sigs = result.get("_precomputed_signals") or {}
 if _raw_sigs:
     _tiers: dict = {}
@@ -140,13 +127,11 @@ if _raw_sigs:
     for _t, _n in sorted(_tiers.items(), key=lambda x: -x[1]):
         print(f"   {_t}: {_n}")
 
-# Save pre-computed data for fast sweep
 pre_data = result.pop("_preloaded_data", None)
 pre_reg  = result.pop("_preloaded_regimes", None)
 pre_sig  = result.pop("_precomputed_signals", None)
 
-# Always run stop sweep to find the best BE/trail combo
-print(f"\n Running 27-combo stop sweep (reuses cached data)…")
+print(f"\n Running 27-combo BE/trail sweep (reuses cached data)…")
 
 sweep_combos = [
     {**base_params, "be_trigger_r": be, "trail_trigger_r": tt, "trail_dist_r": td}
@@ -185,14 +170,6 @@ if pre_data:
     print(f"\n WINNER: BE={bp['be_trigger_r']}R  Trail={bp['trail_trigger_r']}R/{bp['trail_dist_r']}R"
           f"  →  PF {bm['profit_factor']:.3f}  WR={bm['win_rate']*100:.0f}%  ROI={bm['roi_pct']:+.1f}%")
 
-    best_result = run_backtest(
-        tickers=[], test_start=TEST_START, test_end=TEST_END,
-        initial_capital=10_000.0, params=bp,
-        preloaded_data=pre_data, preloaded_regimes=pre_reg, precomputed_signals=pre_sig,
-    )
-    _report(best_result,
-            f"BEST PARAMS  BE={bp['be_trigger_r']}R  Trail={bp['trail_trigger_r']}R/{bp['trail_dist_r']}R")
-
     import json
     winner = {
         "min_score":       base_params["min_score"],
@@ -212,6 +189,6 @@ if pre_data:
         json.dump(winner, f, indent=2)
     print(f"\n Saved winner to stop_sweep_winner.json")
 else:
-    print("  (no cached data for sweep — only 0 tickers loaded, skipping)")
+    print("  (no cached data for sweep — skipping)")
 
 print()
