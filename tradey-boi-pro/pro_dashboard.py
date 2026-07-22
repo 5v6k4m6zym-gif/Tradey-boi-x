@@ -34,6 +34,37 @@ st.set_page_config(
 db.init_db()
 cfg.ensure_defaults()
 
+# ── Backtest lock helpers (time-based auto-expiry) ────────────────────────────
+_BT_LOCK_TTL = 20 * 60  # seconds — auto-expire if process was killed
+
+def _is_bt_running() -> bool:
+    import time as _t
+    if not st.session_state.get("_bt_running", False):
+        return False
+    age = _t.time() - st.session_state.get("_bt_start_time", 0)
+    if age > _BT_LOCK_TTL:
+        st.session_state["_bt_running"]   = False   # auto-clear stale lock
+        st.session_state["_bt_start_time"] = 0
+        return False
+    return True
+
+def _set_bt_lock():
+    import time as _t
+    st.session_state["_bt_running"]    = True
+    st.session_state["_bt_start_time"] = _t.time()
+
+def _clear_bt_lock():
+    st.session_state["_bt_running"]    = False
+    st.session_state["_bt_start_time"] = 0
+
+def _bt_lock_age_str() -> str:
+    import time as _t
+    secs = int(_t.time() - st.session_state.get("_bt_start_time", _t.time()))
+    if secs < 60:
+        return f"{secs}s"
+    return f"{secs // 60}m {secs % 60}s"
+
+
 # ── Session state ─────────────────────────────────────────────────────────────
 if "broker" not in st.session_state:
     from broker.ibkr_client import IBKRClient
@@ -78,7 +109,7 @@ with st.sidebar:
             bot.stop()
             cfg.set("bot_enabled", False)
             st.rerun()
-        _bt_busy = st.session_state.get("_bt_running", False)
+        _bt_busy = _is_bt_running()
         if st.button("🔍 Scan Now", use_container_width=True,
                      disabled=_bt_busy,
                      help="Disabled while backtest is running" if _bt_busy else None):
@@ -87,7 +118,7 @@ with st.sidebar:
         if _bt_busy:
             if st.button("🔓 Unlock Scanner", use_container_width=True,
                          help="Force-clear the backtest lock if it stalled"):
-                st.session_state["_bt_running"] = False
+                _clear_bt_lock()
                 st.rerun()
     else:
         if broker.connected:
@@ -367,12 +398,12 @@ with tab_scan:
     col_a, col_b = st.columns([1, 2])
     with col_a:
         if bot.is_running():
-            _bt_busy2 = st.session_state.get("_bt_running", False)
+            _bt_busy2 = _is_bt_running()
             if _bt_busy2:
-                st.warning("⏸ Backtest is running — scanner paused to avoid conflicts.")
+                st.warning(f"⏸ Backtest is running ({_bt_lock_age_str()}) — scanner paused to avoid conflicts.")
                 if st.button("🔓 Unlock Scanner", key="unlock_scan_tab",
                              help="Force-clear the backtest lock if it stalled"):
-                    st.session_state["_bt_running"] = False
+                    _clear_bt_lock()
                     st.rerun()
             elif st.button("⚡ Force Tier 1 Scan Now", type="primary", use_container_width=True):
                 bot.force_scan()
@@ -1076,14 +1107,14 @@ with tab_bt:
 
     # ── Run button ────────────────────────────────────────────────────────────
     _scan_active = scanner.is_scanning
-    _bt_stuck    = st.session_state.get("_bt_running", False)
+    _bt_stuck    = _is_bt_running()
     run_col, clear_col, unlock_col = st.columns([2, 1, 1])
     run_bt  = run_col.button(
         "▶ Run Backtest", type="primary", use_container_width=True,
         disabled=_scan_active or _bt_stuck,
         help=(
             "Wait for the active scan to finish first" if _scan_active
-            else "Backtest lock is stuck — click Unlock first" if _bt_stuck
+            else f"Backtest lock is stuck ({_bt_lock_age_str()}) — click Unlock first" if _bt_stuck
             else None
         ),
     )
@@ -1091,11 +1122,11 @@ with tab_bt:
     unlock_bt = unlock_col.button(
         "🔓 Unlock", use_container_width=True,
         disabled=not _bt_stuck,
-        help="Force-clear the backtest lock if it stalled" if _bt_stuck else "No lock active",
+        help=f"Lock active for {_bt_lock_age_str()} — click to force-clear" if _bt_stuck else "No lock active",
     )
 
     if unlock_bt:
-        st.session_state["_bt_running"] = False
+        _clear_bt_lock()
         st.toast("Backtest lock cleared — scanner is now available.")
         st.rerun()
 
@@ -1154,7 +1185,7 @@ with tab_bt:
 
             # Clear previous results immediately so stale data isn't shown during the run
             st.session_state.pop("bt_results", None)
-            st.session_state["_bt_running"] = True   # ← lock: disable scan buttons
+            _set_bt_lock()                            # ← lock: disable scan buttons
 
             from backtest.engine import run_backtest
             import traceback as _tb, pathlib as _pl
@@ -1181,7 +1212,7 @@ with tab_bt:
                     except Exception:
                         pass
                 finally:
-                    st.session_state["_bt_running"] = False  # ← unlock
+                    _clear_bt_lock()                          # ← unlock
 
             if _bt_err is not None:
                 progress_bar.progress(1.0)
