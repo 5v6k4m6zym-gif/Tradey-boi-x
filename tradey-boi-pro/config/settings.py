@@ -41,8 +41,8 @@ DEFAULTS: dict = {
     # Signal quality gates — pro-sweep winner: score≥5, prob≥0.50
     # Lowered from 8/0.58: oversold-recovery signals (RSI 35-42, vol>1.5) score 5
     # and have heuristic prob 0.55-0.57 — previously excluded, now included
-    "min_prob":              0.50,    # was 0.58 — include oversold-bounce signals
-    "min_score":             6,       # raised from 5 — only top-tier signals (fewer, cleaner trades)
+    "min_prob":              0.55,    # raised from 0.50 — require higher AI confidence
+    "min_score":             7,       # raised from 6 — requires breakout OR high-prob setup
     "min_expected_r":        1.5,     # minimum EV in R units (gates low R:R setups)
     "min_composite":         7.5,     # live bot: composite_score threshold (ranker 0-10 scale)
 

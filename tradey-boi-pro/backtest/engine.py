@@ -342,8 +342,8 @@ def run_backtest(
 
     p = {
         # Pro sweep winner params (PF=2.248, WR=80%, 54 trades, MaxDD=1.4%)
-        "min_score":         params.get("min_score",         6),
-        "min_prob":          params.get("min_prob",          0.50),
+        "min_score":         params.get("min_score",         7),
+        "min_prob":          params.get("min_prob",          0.55),
         "max_positions":     params.get("max_positions",     5),
         "risk_pct":          params.get("risk_pct",          2.0),
         "brokerage":         params.get("brokerage",         2.0),
