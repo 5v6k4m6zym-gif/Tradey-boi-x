@@ -203,11 +203,11 @@ def _prescan_all(
                 if pd.isna(rsi_v):
                     continue
                 rsi = float(rsi_v)
-                if rsi >= 72 or rsi <= 25:
+                if rsi >= 65 or rsi <= 25:
                     continue
                 vr_v = row.get("vol_ratio", float("nan"))
                 vr   = float(vr_v) if not pd.isna(vr_v) else 0
-                if vr < 1.2:
+                if vr < 1.5:
                     continue
                 # Price must be rising
                 close_now  = row.get("Close",  float("nan"))
@@ -219,6 +219,14 @@ def _prescan_all(
                 # EMA20 must be rising
                 if float(ema20) <= float(prev_e20):
                     continue
+                # Candle quality: close must be in the upper 40% of the day's range.
+                # Closes in the bottom 40% signal intraday reversal (sellers took over).
+                high_now = row.get("High", float("nan"))
+                low_now  = row.get("Low",  float("nan"))
+                if not (pd.isna(high_now) or pd.isna(low_now)):
+                    _rng = float(high_now) - float(low_now)
+                    if _rng > 0 and (float(close_now) - float(low_now)) / _rng < 0.60:
+                        continue
 
                 # ── ML probability ────────────────────────────────────────────
                 prob = None
