@@ -32,8 +32,8 @@ DEFAULTS: dict = {
     # Dynamic stop management (mirrors backtest/engine.py exit mechanics exactly)
     "min_hold_days":         2,       # stop cannot trigger in first N days (entry-day noise)
     "be_trigger_r":          1.0,     # slide stop to entry when price hits entry+1R
-    "trail_trigger_r":       1.5,     # start trailing when peak ≥ entry+1.5R
-    "trail_dist_r":          0.7,     # trail 0.7R below peak (tighter = more profit locked)
+    "trail_trigger_r":       4.0,     # start trailing only when peak ≥ entry+4R (deep in profit)
+    "trail_dist_r":          2.0,     # trail 2R below peak — wide enough for stocks to run to target
 
     # Signal quality gates — tightened from 7/0.53 to filter marginal signals
     "min_prob":              0.58,    # was 0.53 — AI needs higher confidence

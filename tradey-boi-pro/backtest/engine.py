@@ -346,8 +346,13 @@ def run_backtest(
         "target_mid":        params.get("target_mid",        10.0),  # widened from 8
         "target_lo":         params.get("target_lo",         7.0),   # widened from 5
         # min_hold_days: stop cannot trigger during the first N days after entry.
-        # Prevents entry-day noise (gap opens, spread) from immediately stopping out trades.
         "min_hold_days":     params.get("min_hold_days",     2),
+        # BE / trailing stop — must match live bot settings (position_manager.py reads cfg).
+        # trail_trigger_r=4 and trail_dist_r=2 keep the trail loose so stocks can run
+        # to target before the trail activates.  Tighter values cut winners too early.
+        "be_trigger_r":      params.get("be_trigger_r",      1.0),
+        "trail_trigger_r":   params.get("trail_trigger_r",   4.0),
+        "trail_dist_r":      params.get("trail_dist_r",      2.0),
         "cb_losses":         params.get("cb_consecutive_losses", 3),
         "cb_pause_days":     params.get("cb_pause_days",     7),
         "use_regime_filter": params.get("use_regime_filter", True),
@@ -588,16 +593,16 @@ def run_backtest(
             if day_close > pos.peak_close:
                 pos.peak_close = day_close
 
-            # Break-even stop: once day's high hits entry+1R, slide stop to entry.
-            # Converts potential losses on round-trips into flat scratches.
-            be_trigger = pos.entry_price + one_r
+            # Break-even stop: once day's high hits entry+be_trigger_r×1R → slide stop to entry.
+            be_trigger = pos.entry_price + p["be_trigger_r"] * one_r
             if day_high >= be_trigger and pos.stop_price < pos.entry_price:
                 pos.stop_price = pos.entry_price
 
-            # Trailing stop: once peak close exceeds entry+1.5R, trail 0.7R below peak.
-            # Tighter than 1R — locks in more profit on reversals without killing win rate.
-            if pos.peak_close >= pos.entry_price + 1.5 * one_r:
-                trail_stop = round(pos.peak_close - 0.7 * one_r, 4)
+            # Trailing stop: once peak close exceeds entry+trail_trigger_r×1R,
+            # trail trail_dist_r×1R below rolling peak.
+            # Loose trail (trigger=4R, dist=2R) lets stocks run to target before locking in.
+            if pos.peak_close >= pos.entry_price + p["trail_trigger_r"] * one_r:
+                trail_stop = round(pos.peak_close - p["trail_dist_r"] * one_r, 4)
                 if trail_stop > pos.stop_price:
                     pos.stop_price = trail_stop
             # ─────────────────────────────────────────────────────────────

@@ -1194,13 +1194,17 @@ with tab_bt:
             _sl_hi  = float(cfg.get("sl_mult_hi")  or 1.2)
             _sl_mid = float(cfg.get("sl_mult_mid") or 1.0)
             _sl_lo  = float(cfg.get("sl_mult_lo")  or 0.8)
-            _tg_hi  = float(cfg.get("target_hi")   or 12.0)
-            _tg_mid = float(cfg.get("target_mid")  or 8.0)
-            _tg_lo  = float(cfg.get("target_lo")   or 5.0)
+            _tg_hi  = float(cfg.get("target_hi")   or 15.0)
+            _tg_mid = float(cfg.get("target_mid")  or 10.0)
+            _tg_lo  = float(cfg.get("target_lo")   or 7.0)
+            _be_r   = float(cfg.get("be_trigger_r")    or 1.0)
+            _tr_r   = float(cfg.get("trail_trigger_r") or 4.0)
+            _td_r   = float(cfg.get("trail_dist_r")    or 2.0)
             st.info(
                 f"📌 **Live bot exit params** (from Settings tab)\n\n"
                 f"Stops: {_sl_hi}× / {_sl_mid}× / {_sl_lo}× ATR  \n"
-                f"Targets: {_tg_hi:.0f}% / {_tg_mid:.0f}% / {_tg_lo:.0f}%",
+                f"Targets: {_tg_hi:.0f}% / {_tg_mid:.0f}% / {_tg_lo:.0f}%  \n"
+                f"BE stop at +{_be_r}R  ·  Trail at +{_tr_r}R  ·  Trail dist {_td_r}R",
                 icon=None,
             )
             bt_risk_pct  = st.slider("Risk per trade (%)", 0.5, 5.0,
@@ -1280,6 +1284,9 @@ with tab_bt:
                 "target_hi":         float(cfg.get("target_hi")   or 15.0),
                 "target_mid":        float(cfg.get("target_mid")  or 10.0),
                 "target_lo":         float(cfg.get("target_lo")   or 7.0),
+                "be_trigger_r":      float(cfg.get("be_trigger_r")    or 1.0),
+                "trail_trigger_r":   float(cfg.get("trail_trigger_r") or 4.0),
+                "trail_dist_r":      float(cfg.get("trail_dist_r")    or 2.0),
                 "cb_consecutive_losses": int(cfg.get("cb_consecutive_losses") or 3),
                 "cb_pause_days":     int(cfg.get("cb_pause_days") or 7),
                 "use_regime_filter": bt_regime,
