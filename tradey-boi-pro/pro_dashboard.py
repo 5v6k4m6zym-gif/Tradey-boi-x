@@ -18,19 +18,13 @@ import plotly.express as px
 from datetime import datetime
 import threading, time as _time_mod
 
-# ── Background backtest state (module-level so thread can write to it) ────────
-# IMPORTANT: use globals().setdefault() so Streamlit's st.rerun() does NOT reset
-# this dict on every re-render.  A plain `_BT_STATE = {...}` assignment at module
-# level re-executes every rerun (Streamlit runs the whole script via exec() into
-# the same module.__dict__), which would wipe the thread's progress updates.
-_BT_STATE: dict = globals().setdefault("_BT_STATE", {
-    "running":   False,
-    "done":      False,
-    "progress":  (0, 1, ""),   # (done, total, msg)
-    "result":    None,
-    "error":     None,
-    "traceback": None,
-})
+# ── Background backtest state ─────────────────────────────────────────────────
+# Stored in a separate module (bt_state.py) so Python's import cache (sys.modules)
+# keeps the same dict object alive across every Streamlit rerun.  A module-level
+# variable in this file is NOT safe — Streamlit reimports this script fresh on
+# each rerun, resetting any plain assignment.
+import bt_state as _bts
+_BT_STATE = _bts.STATE   # local alias for backwards-compat references below
 
 import db.database as db
 import config.settings as cfg
@@ -1290,39 +1284,25 @@ with tab_bt:
             # (background threads cannot safely write to Streamlit session state).
             st.session_state.pop("bt_results", None)
             _set_bt_lock()
-            _BT_STATE.update({
-                "running":  True,
-                "done":     False,
-                "result":   None,
-                "error":    None,
-                "traceback": None,
-                "progress": (0, 1, "Starting download…"),
-            })
+            _bts.reset()   # sets running=True, clears result/error/progress in sys.modules singleton
 
             def _bt_thread_fn(tickers, start, end, cap, params):
                 import traceback as _tb2, pathlib as _pl2
-                # ALL code inside try/except so ANY failure is captured and shown
+                import bt_state as _bts2   # import directly — do NOT close over dashboard's _bts alias
                 try:
                     from backtest.engine import run_backtest as _rbt
-                    def _prog(done, total, msg):
-                        _BT_STATE["progress"] = (done, total, msg)
                     res = _rbt(tickers=tickers, test_start=start, test_end=end,
                                initial_capital=float(cap), params=params,
-                               progress_cb=_prog)
-                    _BT_STATE["result"] = res
+                               progress_cb=_bts2.set_progress)
+                    _bts2.finish_ok(res)
                 except Exception as _ex:
                     tb = _tb2.format_exc()
-                    _BT_STATE["error"]     = str(_ex)
-                    _BT_STATE["traceback"] = tb
                     try:
                         _pl2.Path(__file__).parent.joinpath("bt_error.log").write_text(
                             tb, encoding="utf-8")
                     except Exception:
                         pass
-                finally:
-                    # Only touch _BT_STATE — never st.session_state from a thread
-                    _BT_STATE["running"] = False
-                    _BT_STATE["done"]    = True
+                    _bts2.finish_err(str(_ex), tb)
 
             _t = threading.Thread(
                 target=_bt_thread_fn,
