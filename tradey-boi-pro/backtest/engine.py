@@ -203,11 +203,11 @@ def _prescan_all(
                 if pd.isna(rsi_v):
                     continue
                 rsi = float(rsi_v)
-                if rsi >= 65 or rsi <= 25:
+                if rsi >= 72 or rsi <= 25:
                     continue
                 vr_v = row.get("vol_ratio", float("nan"))
                 vr   = float(vr_v) if not pd.isna(vr_v) else 0
-                if vr < 1.5:
+                if vr < 1.2:
                     continue
                 # Price must be rising
                 close_now  = row.get("Close",  float("nan"))
@@ -219,14 +219,6 @@ def _prescan_all(
                 # EMA20 must be rising
                 if float(ema20) <= float(prev_e20):
                     continue
-                # Candle quality: close must be in the upper 40% of the day's range.
-                # Closes in the bottom 40% signal intraday reversal (sellers took over).
-                high_now = row.get("High", float("nan"))
-                low_now  = row.get("Low",  float("nan"))
-                if not (pd.isna(high_now) or pd.isna(low_now)):
-                    _rng = float(high_now) - float(low_now)
-                    if _rng > 0 and (float(close_now) - float(low_now)) / _rng < 0.60:
-                        continue
 
                 # ── ML probability ────────────────────────────────────────────
                 prob = None
@@ -855,9 +847,15 @@ def run_backtest(
             if qty < 1:
                 continue
 
-            trade_value = qty * entry_price
-            if trade_value > account * 0.95:
-                continue
+            # Cap to 1/max_positions of account per trade (standard portfolio management).
+            # The risk-based formula generates qty × price ≈ account when ATR% ≈ risk_pct%,
+            # which is the common case (2% risk, 2% ATR) — a hard 95% reject would block
+            # almost every signal for stocks priced above account × ATR_pct.
+            _slots = max(p.get("max_positions", 5), 1)
+            max_qty_by_cap = math.floor(account / (_slots * entry_price))
+            if max_qty_by_cap < 1:
+                continue   # stock is too expensive even for a 1-slot position
+            qty = min(qty, max_qty_by_cap)
 
             # Adjust stop/target relative to actual entry (in case entry gaps up)
             stop_price   = sig["stop_price"]

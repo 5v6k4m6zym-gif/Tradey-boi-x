@@ -1,0 +1,14 @@
+{
+  "min_score": 5,
+  "sl_mult_hi": 0.8,
+  "sl_mult_mid": 0.6,
+  "sl_mult_lo": 0.5,
+  "hold_days": 15,
+  "be_trigger_r": 0.5,
+  "trail_trigger_r": 1.5,
+  "trail_dist_r": 0.7,
+  "profit_factor": 2.248,
+  "win_rate": 0.7963,
+  "roi_pct": 6.42,
+  "trade_count": 54
+}

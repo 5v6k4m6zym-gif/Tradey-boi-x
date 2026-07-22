@@ -559,11 +559,11 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         if not pd.isna(prev.get("macd_diff")) and float(prev["macd_diff"]) <= 0:
             return _reject("macd_bearish_prev_day")
         rsi = float(row["rsi"])
-        if rsi >= 65 or rsi <= 25:
+        if rsi >= 72 or rsi <= 25:
             return _reject(f"rsi_out_of_range ({rsi:.0f})")
         vr = float(row["vol_ratio"]) if not pd.isna(row["vol_ratio"]) else 0
-        if vr < 1.5:
-            return _reject("low_volume_ratio (<1.5×)")
+        if vr < 1.2:
+            return _reject("low_volume_ratio (<1.2×)")
         if prob < 0.40:
             return _reject("prob_below_floor")
 
@@ -574,15 +574,6 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         # EMA20 itself must be accelerating upward — not just above EMA50
         if float(row["ema20"]) <= float(prev["ema20"]):
             return _reject("ema20_not_rising")
-        # Candle quality: close must be in the upper 40% of the day's range.
-        # A stock closing near its intraday low (even if above yesterday's close)
-        # is showing intraday reversal — sellers dominated; high stop-hit risk.
-        _high_d = float(row["High"]) if not pd.isna(row.get("High")) else None
-        _low_d  = float(row["Low"])  if not pd.isna(row.get("Low"))  else None
-        if _high_d is not None and _low_d is not None:
-            _rng = _high_d - _low_d
-            if _rng > 0 and (float(row["Close"]) - _low_d) / _rng < 0.60:
-                return _reject("bearish_candle (closed in bottom 40% of range)")
 
         # ── Scoring (X's rules) ───────────────────────────────────────────────
         is_breakout = bool(int(row.get("breakout", 0)))

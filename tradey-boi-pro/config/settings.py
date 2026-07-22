@@ -22,24 +22,27 @@ DEFAULTS: dict = {
     "max_exposure_pct":      30.0,
     "brokerage":             2.0,           # $ per side
 
-    # Exit parameters — stops from v3 sweep, targets widened for better R:R
+    # Exit parameters — pro-sweep winner: tight ATR stops + 15-day hold + early BE
+    # Backtest result: PF=2.248, WR=80%, ROI=+6.4%, 54 trades, MaxDD=1.4%
     "hold_days":             15,
-    "sl_mult_hi":            1.2,
-    "sl_mult_mid":           1.0,
-    "sl_mult_lo":            0.8,
-    "target_hi":             15.0,    # was 12 — achievable over 15-day hold, improves R:R
-    "target_mid":            10.0,    # was 8
-    "target_lo":             7.0,     # was 5
+    "sl_mult_hi":            0.8,     # tight stop for high-ATR stocks (≥3% ATR)
+    "sl_mult_mid":           0.6,     # tight stop for mid-ATR stocks (1.5-3% ATR)
+    "sl_mult_lo":            0.5,     # tight stop for low-ATR stocks (<1.5% ATR)
+    "target_hi":             15.0,
+    "target_mid":            10.0,
+    "target_lo":             7.0,
 
-    # Dynamic stop management (mirrors backtest/engine.py exit mechanics exactly)
+    # Dynamic stop management — pro-sweep winner: BE=0.5R, Trail=1.5R/0.7R
     "min_hold_days":         2,       # stop cannot trigger in first N days (entry-day noise)
-    "be_trigger_r":          1.0,     # slide stop to entry when price hits entry+1R — protects against full -1R losses on reversals
-    "trail_trigger_r":       2.0,     # start trailing at +2R peak — realistic within 15-day hold
-    "trail_dist_r":          1.0,     # trail 1R below peak: at +2R peak, stop locks at +1R (solid partial profit)
+    "be_trigger_r":          0.5,     # slide stop to entry at +0.5R — fast BE protection reduces avg loss
+    "trail_trigger_r":       1.5,     # start trailing at +1.5R peak
+    "trail_dist_r":          0.7,     # trail 0.7R below peak
 
-    # Signal quality gates — tightened from 7/0.53 to filter marginal signals
-    "min_prob":              0.58,    # was 0.53 — AI needs higher confidence
-    "min_score":             8,       # was 7 — fewer but better-quality setups
+    # Signal quality gates — pro-sweep winner: score≥5, prob≥0.50
+    # Lowered from 8/0.58: oversold-recovery signals (RSI 35-42, vol>1.5) score 5
+    # and have heuristic prob 0.55-0.57 — previously excluded, now included
+    "min_prob":              0.50,    # was 0.58 — include oversold-bounce signals
+    "min_score":             5,       # was 8 — include elevated-vol signals without breakout
     "min_expected_r":        1.5,     # minimum EV in R units (gates low R:R setups)
     "min_composite":         7.5,     # live bot: composite_score threshold (ranker 0-10 scale)
 
