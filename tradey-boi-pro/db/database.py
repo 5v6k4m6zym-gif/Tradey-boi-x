@@ -6,7 +6,7 @@ import sqlite3, json, threading
 from pathlib import Path
 from datetime import datetime
 
-DB_PATH = Path(__file__).parent.parent / "data" / "pro.db"
+DB_PATH = Path.home() / "TradeyBoiPro" / "pro.db"
 _lock   = threading.Lock()
 
 

@@ -589,6 +589,53 @@ with tab_pos:
                     st.rerun()
 
     st.divider()
+    with st.expander("➕ Manually add a position (e.g. to recover after reinstall)"):
+        st.caption(
+            "Use this to re-enter a position that exists in IBKR but is missing from the bot's "
+            "database — for example after reinstalling. The bot will then track its stop, target, "
+            "and hold timer as normal."
+        )
+        mc1, mc2, mc3 = st.columns(3)
+        m_ticker   = mc1.text_input("Ticker (e.g. CBA.AX or AAPL)", key="m_ticker").strip().upper()
+        m_exchange = mc2.selectbox("Exchange", ["ASX", "NASDAQ", "NYSE", "CBOE", "OTHER"], key="m_exchange")
+        m_entry_dt = mc3.date_input("Entry date", key="m_entry_dt")
+
+        mc4, mc5, mc6, mc7 = st.columns(4)
+        m_entry_px = mc4.number_input("Entry price ($)", min_value=0.001, step=0.01, format="%.3f", key="m_entry_px")
+        m_qty      = mc5.number_input("Quantity (shares)", min_value=1, step=1, key="m_qty")
+        m_stop     = mc6.number_input("Stop price ($)",   min_value=0.001, step=0.01, format="%.3f", key="m_stop")
+        m_target   = mc7.number_input("Target price ($)", min_value=0.001, step=0.01, format="%.3f", key="m_target")
+
+        mc8, mc9 = st.columns(2)
+        m_hold     = mc8.number_input("Max hold days", min_value=1, max_value=60, value=10, key="m_hold")
+        m_notes    = mc9.text_input("Notes (optional)", value="manual entry", key="m_notes")
+
+        if st.button("Add Position to Database", type="primary", key="m_add_pos"):
+            if not m_ticker:
+                st.error("Ticker is required.")
+            elif m_entry_px <= 0 or m_stop <= 0 or m_target <= 0 or m_qty <= 0:
+                st.error("Entry price, stop, target and quantity must all be greater than 0.")
+            elif m_stop >= m_entry_px:
+                st.error("Stop price must be below entry price.")
+            elif m_target <= m_entry_px:
+                st.error("Target price must be above entry price.")
+            else:
+                db.upsert_position({
+                    "ticker":        m_ticker,
+                    "exchange":      m_exchange,
+                    "entry_price":   float(m_entry_px),
+                    "stop_price":    float(m_stop),
+                    "target_price":  float(m_target),
+                    "quantity":      float(m_qty),
+                    "entry_date":    m_entry_dt.isoformat(),
+                    "max_hold_days": int(m_hold),
+                    "status":        "OPEN",
+                    "notes":         m_notes or "manual entry",
+                })
+                st.success(f"✅ {m_ticker} added — bot will now track stop/target/hold for this position.")
+                st.rerun()
+
+    st.divider()
     st.subheader("📜 Recent Closed Trades")
     trades = db.all_trades(limit=100)
     if trades:
