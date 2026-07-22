@@ -15,7 +15,9 @@ DEFAULTS: dict = {
 
     # Risk management
     "max_positions":         5,
-    "risk_pct":              2.0,           # % of account per trade
+    "risk_pct":              2.0,           # % of account per trade (STRONG BUY baseline)
+    "risk_pct_elite":        3.0,           # % of account for ELITE signals (higher conviction = larger size)
+    "regime_size_scale":     True,          # scale position size by market regime (1.2× BULL, 0.75× NEUTRAL)
     "max_daily_loss_pct":    3.0,
     "max_exposure_pct":      30.0,
     "brokerage":             2.0,           # $ per side

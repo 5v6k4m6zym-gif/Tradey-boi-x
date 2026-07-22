@@ -620,7 +620,7 @@ def run_backtest(
 
             # Trailing stop: once peak close exceeds entry+trail_trigger_r×1R,
             # trail trail_dist_r×1R below rolling peak.
-            # Loose trail (trigger=4R, dist=2R) lets stocks run to target before locking in.
+            # Current values: trigger=2R, dist=1R → at +2R peak, stop locks at +1R.
             if pos.peak_close >= pos.entry_price + p["trail_trigger_r"] * one_r:
                 trail_stop = round(pos.peak_close - p["trail_dist_r"] * one_r, 4)
                 if trail_stop > pos.stop_price:

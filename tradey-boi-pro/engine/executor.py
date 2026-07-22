@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import db.database as db
 import config.settings as cfg
 from engine.risk import position_size, sl_and_target, can_open_new_position
+from scanner.market_regime import get_regime
 
 if TYPE_CHECKING:
     from broker.ibkr_client import IBKRClient
@@ -37,9 +38,28 @@ def execute_signal(signal: dict, broker: "IBKRClient") -> dict:
     if not ok:
         return _fail(reason)
 
-    # ── Position sizing ──────────────────────────────────────────────────────
+    # ── Position sizing — regime-scaled + signal-quality risk ────────────────
     stop, target = sl_and_target(entry, atr_pct)
-    qty = position_size(account_value, entry, stop)
+
+    # Regime multiplier: 1.2× in BULL, 0.75× in NEUTRAL, 0.0× in BEAR.
+    # The BEAR check is redundant (can_open_new_position blocks it via the regime
+    # veto in signal_bridge) but kept here as a safety net.
+    regime_mult = 1.0
+    if cfg.get("regime_size_scale"):
+        try:
+            market     = "ASX" if exchange == "ASX" else "US"
+            regime_obj = get_regime(market)
+            regime_mult = regime_obj.size_multiplier
+        except Exception:
+            pass  # fail safe — fall back to 1.0× if regime unavailable
+
+    # Signal-quality risk: ELITE signals warrant higher conviction sizing.
+    tier     = signal.get("tier", "STRONG BUY")
+    base_pct = float(cfg.get("risk_pct_elite") or 3.0) if tier == "ELITE" \
+               else float(cfg.get("risk_pct") or 2.0)
+
+    qty = position_size(account_value, entry, stop,
+                        risk_pct=base_pct, regime_multiplier=regime_mult)
     if qty < 1:
         return _fail(f"Position size < 1 share (account too small for this risk/stop)")
 

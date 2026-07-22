@@ -16,22 +16,35 @@ if TYPE_CHECKING:
 
 
 def position_size(
-    account_value: float,
-    entry_price:   float,
-    stop_price:    float,
-    risk_pct:      float | None = None,
+    account_value:    float,
+    entry_price:      float,
+    stop_price:       float,
+    risk_pct:         float | None = None,
+    regime_multiplier: float = 1.0,
 ) -> float:
     """
     Calculate number of shares to buy given a fixed-fractional risk rule.
-    risk_pct = % of account to risk on this trade (default from settings).
-    Returns 0 if the inputs are invalid.
+
+    risk_pct          : % of account to risk on this trade (default from settings).
+    regime_multiplier : 1.2 in BULL, 0.75 in NEUTRAL, 0.0 in BEAR
+                        (from RegimeData.size_multiplier — default 1.0 = no adjustment).
+
+    Returns 0 if the inputs are invalid or regime blocks trading.
     """
-    risk_pct   = risk_pct or cfg.get("risk_pct") or 2.0
-    brokerage  = (cfg.get("brokerage") or 2.0) * 2          # entry + exit
-    stop_dist  = entry_price - stop_price
+    if regime_multiplier <= 0:
+        return 0.0   # BEAR regime — no new positions
+
+    risk_pct  = risk_pct or cfg.get("risk_pct") or 2.0
+    brokerage = (cfg.get("brokerage") or 2.0) * 2          # entry + exit
+    stop_dist = entry_price - stop_price
     if stop_dist <= 0 or entry_price <= 0 or account_value <= 0:
         return 0.0
-    dollar_risk = account_value * (risk_pct / 100)
+
+    # Scale by regime: 1.2× in BULL markets, 0.75× in NEUTRAL markets.
+    # Cap at 4.0% to prevent any single trade becoming oversized.
+    effective_risk_pct = min(risk_pct * regime_multiplier, 4.0)
+
+    dollar_risk = account_value * (effective_risk_pct / 100)
     # Subtract brokerage from available risk budget
     dollar_risk = max(dollar_risk - brokerage, 0)
     shares = dollar_risk / stop_dist
