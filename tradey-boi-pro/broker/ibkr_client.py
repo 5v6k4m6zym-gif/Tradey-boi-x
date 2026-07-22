@@ -258,6 +258,31 @@ class IBKRClient:
     def error(self) -> str:
         return self._error_msg
 
+    def get_portfolio_prices(self) -> dict:
+        """
+        Returns {ticker: {"market_price", "unrealized_pnl", "market_value"}}
+        sourced from ib.portfolio() — already pushed by TWS/Gateway, no
+        separate market-data subscription required.
+        """
+        if not IB_AVAILABLE or not self._connected:
+            return {}
+        try:
+            out = {}
+            for item in self._ib.portfolio():
+                sym = item.contract.localSymbol or item.contract.symbol
+                mp  = item.marketPrice
+                import math as _m
+                if mp is not None and not _m.isnan(float(mp)) and float(mp) > 0:
+                    out[sym] = {
+                        "market_price":   float(mp),
+                        "unrealized_pnl": float(item.unrealizedPNL or 0),
+                        "market_value":   float(item.marketValue  or 0),
+                    }
+            return out
+        except Exception as exc:
+            log.warning(f"get_portfolio_prices: {exc}")
+            return {}
+
     def refresh_account_summary(self) -> None:
         """Re-fetch account values from IBKR (NetLiq, Cash, BuyingPower, P&L).
         Call before displaying metrics so values reflect current positions."""

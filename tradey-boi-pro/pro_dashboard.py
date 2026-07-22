@@ -626,8 +626,20 @@ with tab_pos:
     import time as _time
     _price_cache: dict = st.session_state.setdefault("_pos_price_cache", {})
 
+    # Fetch portfolio prices once per render from IBKR portfolio() cache —
+    # no market-data subscription needed, TWS pushes this automatically.
+    _portfolio_px: dict = broker.get_portfolio_prices()
+
     def _live_price(ticker: str, exchange: str, entry_price: float) -> tuple[float, str]:
-        """Returns (price, source) where source is 'IBKR', 'Yahoo', or 'Entry'."""
+        """Returns (price, source) where source is 'IBKR (portfolio)', 'IBKR', 'Yahoo', or 'Entry'."""
+        # 1. IBKR portfolio() — best source, no subscription, always current
+        port = _portfolio_px.get(ticker) or _portfolio_px.get(ticker.replace(".AX", ""))
+        if port:
+            px = port["market_price"]
+            _price_cache[ticker] = (_time.time(), px, "IBKR")
+            return px, "IBKR"
+
+        # 2. IBKR reqMktData — fallback if portfolio() has no entry for this ticker
         ibkr_px = broker.get_current_price(
             ticker, exchange, "AUD" if exchange == "ASX" else "USD"
         )
@@ -635,29 +647,34 @@ with tab_pos:
             _price_cache[ticker] = (_time.time(), ibkr_px, "IBKR")
             return ibkr_px, "IBKR"
 
-        # Check cache (5-min TTL)
+        # 3. Cache (5-min TTL) — avoids hammering Yahoo on every render
         cached = _price_cache.get(ticker)
         if cached and _time.time() - cached[0] < 300:
             return cached[1], cached[2]
 
-        # yfinance fallback
+        # 4. Yahoo Finance — delayed ~15 min, works when IBKR offline
         try:
             import yfinance as _yf, warnings as _w, io as _io, contextlib as _cl
             _sink = _io.StringIO()
             with _cl.redirect_stderr(_sink), _w.catch_warnings():
                 _w.simplefilter("ignore")
-                _raw = _yf.download(ticker, period="2d", interval="1d",
+                _raw = _yf.download(ticker, period="5d", interval="1d",
                                     auto_adjust=True, progress=False, threads=False)
             if not _raw.empty:
+                # Handle both flat and MultiIndex columns (yfinance version differences)
                 cols = list(_raw.columns)
                 close_col = next(
                     (c for c in cols if (c[0] if isinstance(c, tuple) else c) == "Close"),
                     None
                 )
                 if close_col is not None:
-                    px = float(_raw[close_col].dropna().iloc[-1])
-                    _price_cache[ticker] = (_time.time(), px, "Yahoo")
-                    return px, "Yahoo"
+                    series = _raw[close_col]
+                    if hasattr(series, "squeeze"):
+                        series = series.squeeze()
+                    px = float(series.dropna().iloc[-1])
+                    if px > 0:
+                        _price_cache[ticker] = (_time.time(), px, "Yahoo")
+                        return px, "Yahoo"
         except Exception:
             pass
 
