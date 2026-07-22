@@ -1169,11 +1169,20 @@ with tab_bt:
                 "use_regime_filter": bt_regime,
             }
 
-            st.info(
-                f"Running backtest on **{len(bt_tickers)} tickers** "
-                f"from **{bt_start}** to **{bt_end}**…  "
-                f"(this takes 1–3 minutes while data downloads)"
-            )
+            _n_days = (bt_end - bt_start).days
+            _est_mins = max(1, round(len(bt_tickers) * _n_days / 25_000))
+            if len(bt_tickers) > 80:
+                st.warning(
+                    f"⚠️ **Large backtest: {len(bt_tickers)} tickers × {_n_days} days** — "
+                    f"estimated {_est_mins}–{_est_mins*2} min. "
+                    f"Consider selecting one market (ASX or US only) to keep it under 2 minutes."
+                )
+            else:
+                st.info(
+                    f"Running backtest on **{len(bt_tickers)} tickers** "
+                    f"from **{bt_start}** to **{bt_end}**… "
+                    f"(~{_est_mins} min)"
+                )
 
             progress_bar  = st.progress(0.0)
             status_text   = st.empty()

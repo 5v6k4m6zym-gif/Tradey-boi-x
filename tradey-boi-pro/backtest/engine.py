@@ -277,6 +277,27 @@ def run_backtest(
     if not available:
         return {"trades": [], "equity_curve": [], "metrics": _empty_metrics(), "params_used": p}
 
+    # ── Normalise all DataFrames to tz-naive DatetimeIndex + build O(1) date lookup ──
+    # Replaces all slow Python list-comprehension date comparisons in the simulation loop.
+    # _date_idx[ticker][Timestamp] → iloc position  (O(1) instead of O(N) per lookup)
+    if progress_cb:
+        progress_cb(len(available), _total_units, "Building date index…")
+    for ticker in list(all_data.keys()):
+        df = all_data[ticker]
+        if not isinstance(df.index, pd.DatetimeIndex):
+            try:
+                df.index = pd.DatetimeIndex(df.index)
+            except Exception:
+                pass
+        if isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        all_data[ticker] = df
+
+    _date_idx: dict[str, dict] = {
+        ticker: {ts: i for i, ts in enumerate(df.index)}
+        for ticker, df in all_data.items()
+    }
+
     # ── Market regime (skipped when preloaded_regimes is supplied) ──────────
     if preloaded_regimes is not None:
         asx_regime, us_regime = preloaded_regimes
@@ -312,12 +333,13 @@ def run_backtest(
                     log.warning(f"Regime index {sym} failed: {_re}")
 
     # ── Build trading calendar from all available data ─────────────────────
+    _ts_start = pd.Timestamp(test_start)
+    _ts_end   = pd.Timestamp(test_end)
     all_dates: set[date] = set()
-    for df in all_data.values():
-        for d in df.index:
-            dt = d.date() if hasattr(d, "date") else d
-            if test_start <= dt <= test_end:
-                all_dates.add(dt)
+    for _idx in _date_idx.values():
+        for ts in _idx:
+            if _ts_start <= ts <= _ts_end:
+                all_dates.add(ts.date())
     trading_days = sorted(all_dates)
 
     if not trading_days:
@@ -348,16 +370,16 @@ def run_backtest(
                 still_open.append(pos)
                 continue
 
-            # Get today's bar
-            today_rows = df[df.index.date == sim_date] if hasattr(df.index[0], "date") \
-                         else df[df.index == pd.Timestamp(sim_date)]
-            if today_rows.empty:
+            # Get today's bar — O(1) dict lookup via pre-built date index
+            _ts   = pd.Timestamp(sim_date)
+            _iloc = _date_idx.get(pos.ticker, {}).get(_ts)
+            if _iloc is None:
                 still_open.append(pos)
                 continue
-
-            day_high  = float(today_rows["High"].iloc[0])
-            day_low   = float(today_rows["Low"].iloc[0])
-            day_close = float(today_rows["Close"].iloc[0])
+            _row  = df.iloc[_iloc]
+            day_high  = float(_row["High"])
+            day_low   = float(_row["Low"])
+            day_close = float(_row["Close"])
             days_held = (sim_date - pos.entry_date).days
 
             # ── Dynamic stop management ────────────────────────────────────
@@ -431,14 +453,12 @@ def run_backtest(
 
         # ── 2. Record equity snapshot ────────────────────────────────────────
         unrealised = 0.0
+        _ts_eq = pd.Timestamp(sim_date)
         for pos in open_pos:
-            df = all_data.get(pos.ticker)
-            if df is not None:
-                rows = df[df.index.date == sim_date] if hasattr(df.index[0], "date") \
-                       else df[df.index == pd.Timestamp(sim_date)]
-                if not rows.empty:
-                    curr = float(rows["Close"].iloc[0])
-                    unrealised += (curr - pos.entry_price) * pos.quantity
+            _i = _date_idx.get(pos.ticker, {}).get(_ts_eq)
+            if _i is not None:
+                curr = float(all_data[pos.ticker].iloc[_i]["Close"])
+                unrealised += (curr - pos.entry_price) * pos.quantity
 
         equity_crv.append({
             "date":         sim_date.isoformat(),
@@ -505,14 +525,12 @@ def run_backtest(
                 })
         else:
             # ── Slow path: full indicator recomputation per (ticker, day) ────────────
+            _ts_le = pd.Timestamp(sim_date)
             for ticker, df in all_data.items():
                 if ticker in open_tickers:
                     continue
-                if hasattr(df.index[0], "date"):
-                    mask = [d.date() <= sim_date for d in df.index]
-                else:
-                    mask = df.index <= pd.Timestamp(sim_date)
-                df_slice = df[mask]
+                # Use pandas binary search on sorted DatetimeIndex — O(log N)
+                df_slice = df.loc[:_ts_le]
                 sig = _detect_signal(df_slice, ticker, p)
                 if sig and sig.get("score", 0) >= p["min_score"]:
                     new_signals.append(sig)
@@ -531,17 +549,12 @@ def run_backtest(
             # Find the open position with the worst current loss
             worst_pos  = None
             worst_pnl  = 0.0   # threshold: must be negative (losing money)
+            _ts_bump   = pd.Timestamp(sim_date)
             for pos in open_pos:
-                pos_df = all_data.get(pos.ticker)
-                if pos_df is None:
+                _bi = _date_idx.get(pos.ticker, {}).get(_ts_bump)
+                if _bi is None:
                     continue
-                if hasattr(pos_df.index[0], "date"):
-                    t_row = pos_df[[d.date() == sim_date for d in pos_df.index]]
-                else:
-                    t_row = pos_df[pos_df.index == pd.Timestamp(sim_date)]
-                if t_row.empty:
-                    continue
-                curr    = float(t_row["Close"].iloc[0])
+                curr    = float(all_data[pos.ticker].iloc[_bi]["Close"])
                 pnl_pct = (curr - pos.entry_price) / pos.entry_price
                 if pnl_pct < worst_pnl:
                     worst_pnl = pnl_pct
@@ -551,12 +564,8 @@ def run_backtest(
                 continue   # all positions are profitable — never bump a winner
 
             # Close the losing position at today's close
-            pos_df = all_data[worst_pos.ticker]
-            if hasattr(pos_df.index[0], "date"):
-                t_row = pos_df[[d.date() == sim_date for d in pos_df.index]]
-            else:
-                t_row = pos_df[pos_df.index == pd.Timestamp(sim_date)]
-            bump_exit = float(t_row["Close"].iloc[0])
+            _wi       = _date_idx.get(worst_pos.ticker, {}).get(_ts_bump)
+            bump_exit = float(all_data[worst_pos.ticker].iloc[_wi]["Close"]) if _wi is not None else worst_pos.entry_price
             bump_trade = BtTrade(
                 ticker       = worst_pos.ticker,
                 entry_date   = worst_pos.entry_date,
@@ -586,19 +595,15 @@ def run_backtest(
                 if regime and not regime.get(sim_date, True):
                     continue
 
-            # Entry = next trading day's open (find it)
+            # Entry = next trading day's open — vectorized index comparison
             df     = all_data[sig["ticker"]]
-            if hasattr(df.index[0], "date"):
-                future = df[[d.date() > sim_date for d in df.index]]
-            else:
-                future = df[df.index > pd.Timestamp(sim_date)]
+            future = df[df.index > pd.Timestamp(sim_date)]
 
             if future.empty:
                 continue
 
             entry_price = float(future["Open"].iloc[0])
-            entry_date  = future.index[0].date() if hasattr(future.index[0], "date") \
-                          else future.index[0].to_pydatetime().date()
+            entry_date  = future.index[0].date()
 
             if entry_price <= 0:
                 continue
@@ -648,10 +653,7 @@ def run_backtest(
         df = all_data.get(pos.ticker)
         if df is None:
             continue
-        if hasattr(df.index[0], "date"):
-            rows = df[[d.date() <= last_day for d in df.index]]
-        else:
-            rows = df[df.index <= pd.Timestamp(last_day)]
+        rows = df.loc[:pd.Timestamp(last_day)]
         if rows.empty:
             continue
         exit_price = float(rows["Close"].iloc[-1])
