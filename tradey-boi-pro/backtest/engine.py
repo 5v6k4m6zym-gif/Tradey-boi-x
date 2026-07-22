@@ -348,8 +348,8 @@ def run_backtest(
         # ── 3. Scan for new signals ──────────────────────────────────────────
         if cb_paused_until and sim_date < cb_paused_until:
             continue
-        if len(open_pos) >= p["max_positions"]:
-            continue
+
+        at_capacity = len(open_pos) >= p["max_positions"]
 
         open_tickers = {pos.ticker for pos in open_pos}
         new_signals  = []
@@ -367,8 +367,64 @@ def run_backtest(
             if sig and sig.get("score", 0) >= p["min_score"]:
                 new_signals.append(sig)
 
-        # Sort by score desc, take top slots
+        # Sort by score + probability descending
         new_signals.sort(key=lambda s: (s["score"], s["prob"]), reverse=True)
+
+        if at_capacity:
+            # ── ELITE-only bump: swap out worst losing position ───────────────
+            # Rules: only ELITE tier qualifies; only bumps positions currently
+            # underwater (negative P&L vs entry price) — never closes a winner.
+            elite_sigs = [s for s in new_signals if s.get("tier") == "ELITE"]
+            if not elite_sigs:
+                continue   # no ELITE available — hold current positions
+
+            # Find the open position with the worst current loss
+            worst_pos  = None
+            worst_pnl  = 0.0   # threshold: must be negative (losing money)
+            for pos in open_pos:
+                pos_df = all_data.get(pos.ticker)
+                if pos_df is None:
+                    continue
+                if hasattr(pos_df.index[0], "date"):
+                    t_row = pos_df[[d.date() == sim_date for d in pos_df.index]]
+                else:
+                    t_row = pos_df[pos_df.index == pd.Timestamp(sim_date)]
+                if t_row.empty:
+                    continue
+                curr    = float(t_row["Close"].iloc[0])
+                pnl_pct = (curr - pos.entry_price) / pos.entry_price
+                if pnl_pct < worst_pnl:
+                    worst_pnl = pnl_pct
+                    worst_pos = pos
+
+            if worst_pos is None:
+                continue   # all positions are profitable — never bump a winner
+
+            # Close the losing position at today's close
+            pos_df = all_data[worst_pos.ticker]
+            if hasattr(pos_df.index[0], "date"):
+                t_row = pos_df[[d.date() == sim_date for d in pos_df.index]]
+            else:
+                t_row = pos_df[pos_df.index == pd.Timestamp(sim_date)]
+            bump_exit = float(t_row["Close"].iloc[0])
+            bump_trade = BtTrade(
+                ticker       = worst_pos.ticker,
+                entry_date   = worst_pos.entry_date,
+                exit_date    = sim_date,
+                entry_price  = worst_pos.entry_price,
+                exit_price   = bump_exit,
+                quantity     = worst_pos.quantity,
+                stop_price   = worst_pos.stop_price,
+                target_price = worst_pos.target_price,
+                exit_reason  = "ELITE_BUMP",
+                score        = worst_pos.score,
+                prob         = worst_pos.prob,
+            )
+            account += bump_trade.pnl - p["brokerage"] * 2
+            closed.append(bump_trade)
+            open_pos.remove(worst_pos)
+            new_signals = [elite_sigs[0]]   # only enter the single best ELITE
+
         slots = p["max_positions"] - len(open_pos)
 
         for sig in new_signals[:slots]:
