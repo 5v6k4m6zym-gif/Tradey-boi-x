@@ -975,7 +975,7 @@ with tab_bt:
                 f"US: {len(_BT_US)} tickers"
             )
             st.markdown("**Quality gates**")
-            bt_min_score = st.slider("Min score",       1, 10,  5, key="bt_min_score")
+            bt_min_score = st.slider("Min score",       1, 10,  7, key="bt_min_score")
             bt_min_prob  = st.slider("Min probability", 0.50, 0.75, 0.50, step=0.01, key="bt_min_prob")
             st.caption(
                 "ℹ️ These thresholds apply to the **backtest only** and do not affect the live bot. "

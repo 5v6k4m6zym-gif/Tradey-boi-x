@@ -499,7 +499,7 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
             prob = min(0.52 + rsi_component + vr_component, 0.82)
             prob = max(prob, 0.40)
 
-        # ── Hard filters (X's decide() gates, unchanged) ──────────────────────
+        # ── Hard filters ──────────────────────────────────────────────────────
         if float(row["ema20"])  <= float(row["ema50"]):
             return _reject("ema_downtrend_today")
         if float(prev["ema20"]) <= float(prev["ema50"]):
@@ -512,10 +512,18 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         if rsi >= 72 or rsi <= 25:
             return _reject(f"rsi_out_of_range ({rsi:.0f})")
         vr = float(row["vol_ratio"]) if not pd.isna(row["vol_ratio"]) else 0
-        if vr < 0.5:
-            return _reject("low_volume_ratio")
+        if vr < 1.2:
+            return _reject("low_volume_ratio (<1.2×)")
         if prob < 0.40:
             return _reject("prob_below_floor")
+
+        # ── Momentum confirmation (new filters to improve win rate) ───────────
+        # Price must be rising today — no signals on down days
+        if float(row["Close"]) <= float(prev["Close"]):
+            return _reject("price_falling_today")
+        # EMA20 itself must be accelerating upward — not just above EMA50
+        if float(row["ema20"]) <= float(prev["ema20"]):
+            return _reject("ema20_not_rising")
 
         # ── Scoring (X's rules) ───────────────────────────────────────────────
         is_breakout = bool(int(row.get("breakout", 0)))

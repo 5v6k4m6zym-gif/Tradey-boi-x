@@ -545,13 +545,14 @@ def _calc_metrics(trades: list[BtTrade], initial_capital: float, final_capital: 
     trades_per_year = 252 / max(avg_hold, 1)
     sharpe = (mean / std) * math.sqrt(trades_per_year) if std > 0 else 0.0
 
-    # Max drawdown on equity curve from cumulative P&L
-    cum = 0.0; peak = 0.0; max_dd = 0.0
+    # Max drawdown on equity curve, measured against account value
+    # (not peak P&L gain — avoids the absurdly large % when early P&L peak is tiny)
+    equity = initial_capital; peak_equity = initial_capital; max_dd = 0.0
     for t in sorted(trades, key=lambda x: x.exit_date):
-        cum  += t.pnl
-        peak  = max(peak, cum)
-        dd    = (peak - cum) / peak if peak > 0 else 0
-        max_dd = max(max_dd, dd)
+        equity     += t.pnl
+        peak_equity = max(peak_equity, equity)
+        dd          = (peak_equity - equity) / peak_equity
+        max_dd      = max(max_dd, dd)
 
     total_pnl = sum(t.pnl for t in trades)
     roi       = total_pnl / initial_capital * 100
