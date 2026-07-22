@@ -348,12 +348,14 @@ def run_backtest(
         # min_hold_days: stop cannot trigger during the first N days after entry.
         "min_hold_days":     params.get("min_hold_days",     2),
         # BE / trailing stop — must match live bot settings (position_manager.py reads cfg).
-        # be_trigger_r=1.5: stop slides to entry only after stock clears +1.5R (not 1.0R —
-        #   too close; triggered on normal noise and counted BE exits as losses).
+        # be_trigger_r=1.0: stop slides to entry once stock hits +1R.
+        #   Protects against full -1R losses on reversals — stocks that go 1→0 scratch ($0 pnl)
+        #   instead of fully stopping out (-1R pnl).  Raising this to 1.5 converted those
+        #   scratches into -1R losses, which is strictly worse.
         # trail_trigger_r=2.0: trail activates at +2R peak — realistic within 15-day hold.
-        # trail_dist_r=1.0: stop locks at peak−1R, so at +2R peak → stop at +1R (solid partial profit).
-        # Old values (4.0/2.0) meant the trail never fired, leaving the BE stop as sole mechanism.
-        "be_trigger_r":      params.get("be_trigger_r",      1.5),
+        # trail_dist_r=1.0: stop locks at peak−1R, so at +2R peak → stop at +1R (solid profit).
+        # Old trail values (4.0/2.0) meant the trail never fired on any realistic move.
+        "be_trigger_r":      params.get("be_trigger_r",      1.0),
         "trail_trigger_r":   params.get("trail_trigger_r",   2.0),
         "trail_dist_r":      params.get("trail_dist_r",      1.0),
         "cb_losses":         params.get("cb_consecutive_losses", 3),
