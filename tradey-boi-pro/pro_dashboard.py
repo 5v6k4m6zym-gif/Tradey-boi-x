@@ -88,6 +88,12 @@ with st.sidebar:
     st.markdown(f"**IBKR:** {conn_color} {'Connected' if broker.connected else 'Disconnected'}")
 
     if broker.connected:
+        # Throttle: refresh IBKR account values at most once every 30 s
+        import time as _t
+        _last_acct_refresh = st.session_state.get("_last_acct_refresh", 0)
+        if _t.time() - _last_acct_refresh > 30:
+            broker.refresh_account_summary()
+            st.session_state["_last_acct_refresh"] = _t.time()
         acct = broker.get_account_value()
         st.metric("Account",      f"${acct:,.0f}")
         st.metric("Cash",         f"${broker.get_cash():,.0f}")
@@ -213,9 +219,22 @@ with tab_dash:
     st.divider()
 
     # ── Account + key stats ──────────────────────────────────────────────────
+    # account_summary is refreshed by the sidebar (30s throttle); just read it here
     acct_val = broker.get_account_value()
     metrics  = performance_metrics()
     open_pos = db.open_positions()
+
+    # If IBKR offline, estimate account value from local DB P&L
+    if acct_val == 0 and open_pos:
+        import time as _t2
+        _acct_cache = st.session_state.setdefault("_pos_price_cache", {})
+        realised    = performance_metrics().get("total_pnl", 0)
+        unreal      = sum(
+            (_acct_cache.get(p["ticker"], (0, p["entry_price"], ""))[1] - p["entry_price"])
+            * p["quantity"]
+            for p in open_pos
+        )
+        acct_val = realised + unreal  # best-effort estimate
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Account Value",   f"${acct_val:,.0f}")

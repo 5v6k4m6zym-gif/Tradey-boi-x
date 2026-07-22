@@ -258,6 +258,16 @@ class IBKRClient:
     def error(self) -> str:
         return self._error_msg
 
+    def refresh_account_summary(self) -> None:
+        """Re-fetch account values from IBKR (NetLiq, Cash, BuyingPower, P&L).
+        Call before displaying metrics so values reflect current positions."""
+        if not IB_AVAILABLE or not self._connected:
+            return
+        try:
+            self._run_on_loop(self._async_refresh(), timeout=10)
+        except Exception as exc:
+            log.warning(f"refresh_account_summary: {exc}")
+
     def get_account_value(self) -> float:
         return self.account_summary.get("NetLiquidation", 0.0)
 
