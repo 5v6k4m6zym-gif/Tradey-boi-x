@@ -1299,24 +1299,26 @@ with tab_bt:
 
             def _bt_thread_fn(tickers, start, end, cap, params):
                 import traceback as _tb2, pathlib as _pl2
-                from backtest.engine import run_backtest as _rbt
-                def _prog(done, total, msg):
-                    _BT_STATE["progress"] = (done, total, msg)
+                # ALL code inside try/except so ANY failure is captured and shown
                 try:
+                    from backtest.engine import run_backtest as _rbt
+                    def _prog(done, total, msg):
+                        _BT_STATE["progress"] = (done, total, msg)
                     res = _rbt(tickers=tickers, test_start=start, test_end=end,
                                initial_capital=float(cap), params=params,
                                progress_cb=_prog)
                     _BT_STATE["result"] = res
                 except Exception as _ex:
+                    tb = _tb2.format_exc()
                     _BT_STATE["error"]     = str(_ex)
-                    _BT_STATE["traceback"] = _tb2.format_exc()
+                    _BT_STATE["traceback"] = tb
                     try:
                         _pl2.Path(__file__).parent.joinpath("bt_error.log").write_text(
-                            _BT_STATE["traceback"], encoding="utf-8")
+                            tb, encoding="utf-8")
                     except Exception:
                         pass
                 finally:
-                    # Only touch _BT_STATE here — never st.session_state from a thread
+                    # Only touch _BT_STATE — never st.session_state from a thread
                     _BT_STATE["running"] = False
                     _BT_STATE["done"]    = True
 
@@ -1326,10 +1328,14 @@ with tab_bt:
                 daemon=True,
             )
             _t.start()
+            st.session_state["_bt_thread"] = _t   # store so we can check is_alive()
             st.rerun()   # immediately re-render into the polling UI
 
     # ── Poll backtest thread progress / harvest results ───────────────────────
-    if _BT_STATE["running"]:
+    _bt_thread = st.session_state.get("_bt_thread")
+    _thread_alive = _bt_thread is not None and _bt_thread.is_alive()
+
+    if _BT_STATE["running"] or _thread_alive:
         _done_u, _total_u, _msg_u = _BT_STATE["progress"]
         _pct = min(_done_u / max(_total_u, 1), 0.99)
         st.progress(_pct, text=f"⏳ {_msg_u}")
@@ -1337,10 +1343,12 @@ with tab_bt:
         _time_mod.sleep(1)
         st.rerun()
 
-    if _BT_STATE["done"]:
+    if _BT_STATE["done"] or (not _thread_alive and _bt_thread is not None
+                              and not _BT_STATE["running"]):
         # Harvest in main thread (safe to touch session_state here)
         _BT_STATE["done"] = False
-        _clear_bt_lock()   # clears session_state lock now that we're in main thread
+        st.session_state.pop("_bt_thread", None)
+        _clear_bt_lock()
         if _BT_STATE["error"]:
             st.error(f"❌ **Backtest crashed:** {_BT_STATE['error']}\n\nSaved to `bt_error.log`")
             if _BT_STATE["traceback"]:
@@ -1349,6 +1357,16 @@ with tab_bt:
             st.session_state["bt_results"] = _BT_STATE["result"]
             _BT_STATE["result"] = None
             st.rerun()
+        else:
+            # Thread finished but neither result nor error set — show bt_error.log if present
+            import pathlib as _pl3
+            _elog = _pl3.Path(__file__).parent / "bt_error.log"
+            if _elog.exists():
+                st.error("❌ **Backtest failed.** Error from `bt_error.log`:")
+                st.code(_elog.read_text(encoding="utf-8", errors="replace"), language="text")
+            else:
+                st.warning("⚠️ Backtest finished with no results — no trades were generated. "
+                           "Try widening the date range or lowering the min score.")
 
     # ── Display results ───────────────────────────────────────────────────────
     results = st.session_state.get("bt_results")
