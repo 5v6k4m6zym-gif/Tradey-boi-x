@@ -31,7 +31,7 @@ import pickle
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, date as _date
 from typing import Callable, Optional
 
 import numpy as np
@@ -70,6 +70,55 @@ FEATURES = [
     "vol_ratio", "breakout", "obv_ratio",
     "adx", "mfi", "bb_squeeze", "gap_up",
 ]
+
+# ── Earnings date cache ────────────────────────────────────────────────────────
+# Fetches upcoming earnings dates per ticker via yfinance and caches 4 hours.
+# Used to block entries within N days of earnings — prevents stop-bypass gaps.
+
+_earnings_cache: dict[str, tuple[datetime, list]] = {}
+_EARNINGS_TTL = timedelta(hours=4)
+
+
+def _earnings_within_days(ticker: str, days: int = 5) -> bool:
+    """
+    Return True if the ticker has a known earnings date within the next `days`
+    calendar days from today (UTC).  Caches per-ticker for 4 hours.
+    Fails OPEN — returns False if data is unavailable so the trade is not blocked.
+    Never called in backtest mode (yfinance only returns future earnings dates,
+    not the historical ones needed to correctly simulate past trade entry dates).
+    """
+    if days <= 0:
+        return False
+
+    now   = datetime.utcnow()
+    today = now.date()
+    cutoff = today + timedelta(days=days)
+
+    cached = _earnings_cache.get(ticker)
+    if cached:
+        fetched_at, dates = cached
+        if (now - fetched_at) < _EARNINGS_TTL:
+            return any(today <= d <= cutoff for d in dates)
+
+    try:
+        t   = yf.Ticker(ticker)
+        cal = t.get_earnings_dates(limit=6)
+        dates: list[_date] = []
+        if cal is not None and not cal.empty:
+            for idx in cal.index:
+                try:
+                    d = idx.date() if hasattr(idx, "date") else _date.fromisoformat(str(idx)[:10])
+                    dates.append(d)
+                except Exception:
+                    pass
+        _earnings_cache[ticker] = (now, dates)
+        log.debug(f"Earnings dates for {ticker}: {dates[:4]}")
+        return any(today <= d <= cutoff for d in dates)
+    except Exception as _e:
+        log.debug(f"Earnings fetch failed for {ticker} (non-fatal): {_e}")
+        _earnings_cache[ticker] = (now, [])   # cache the miss to avoid hammering yfinance
+        return False   # fail open — don't block the trade if we can't get data
+
 
 # ── Market hours ───────────────────────────────────────────────────────────────
 
@@ -583,6 +632,15 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         # ── Weekly trend gate (X's hard gate — uses existing daily data) ────────
         if not _weekly_trend_ok(df):
             return _reject("weekly_ema_downtrend")
+
+        # ── Earnings gate (live only — block entries within N days of earnings) ─
+        # Earnings announcements can gap a stock ±15-30% overnight, completely
+        # bypassing the stop loss.  Skipped in backtest mode because yfinance only
+        # returns current/future earnings dates, not accurate historical ones.
+        if not params.get("backtest_mode"):
+            guard_days = int(params.get("earnings_guard_days", 5))
+            if guard_days > 0 and _earnings_within_days(ticker, guard_days):
+                return _reject(f"earnings_within_{guard_days}d")
 
         # ── Tier classification (X's thresholds) ──────────────────────────────
         if   score >= elite_min and prob >= prob_floor and expected_r > 0:

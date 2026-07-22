@@ -41,6 +41,11 @@ DEFAULTS: dict = {
     "min_expected_r":        1.5,     # minimum EV in R units (gates low R:R setups)
     "min_composite":         7.5,     # live bot: composite_score threshold (ranker 0-10 scale)
 
+    # Earnings guard — skip entries within N calendar days of a known earnings date.
+    # Earnings can gap a stock ±15-30% overnight, bypassing the stop loss entirely.
+    # 5 days gives a full trading week of protection. Set 0 to disable.
+    "earnings_guard_days":   5,
+
     # Circuit breaker
     "cb_consecutive_losses": 3,
     "cb_pause_days":         7,
