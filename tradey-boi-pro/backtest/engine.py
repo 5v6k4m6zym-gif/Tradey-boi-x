@@ -336,15 +336,15 @@ def run_backtest(
         "max_positions":     params.get("max_positions",     5),
         "risk_pct":          params.get("risk_pct",          2.0),
         "brokerage":         params.get("brokerage",         2.0),
-        "hold_days":         params.get("hold_days",         10),
-        # sl_mult defaults widened: 0.5-0.8× ATR sits inside daily noise;
-        # use 1.5-2.0× so the breakeven/trailing stop mechanics have room to work.
-        "sl_mult_hi":        params.get("sl_mult_hi",        2.0),
-        "sl_mult_mid":       params.get("sl_mult_mid",       1.5),
-        "sl_mult_lo":        params.get("sl_mult_lo",        1.0),
-        "target_hi":         params.get("target_hi",         15.0),
-        "target_mid":        params.get("target_mid",        10.0),
-        "target_lo":         params.get("target_lo",         7.0),
+        "hold_days":         params.get("hold_days",         15),
+        # Must match live scanner defaults (market_scanner.py / config/settings.py DEFAULTS)
+        # so the backtest tests the same system that runs live.
+        "sl_mult_hi":        params.get("sl_mult_hi",        1.2),
+        "sl_mult_mid":       params.get("sl_mult_mid",       1.0),
+        "sl_mult_lo":        params.get("sl_mult_lo",        0.8),
+        "target_hi":         params.get("target_hi",         12.0),
+        "target_mid":        params.get("target_mid",        8.0),
+        "target_lo":         params.get("target_lo",         5.0),
         # min_hold_days: stop cannot trigger during the first N days after entry.
         # Prevents entry-day noise (gap opens, spread) from immediately stopping out trades.
         "min_hold_days":     params.get("min_hold_days",     2),

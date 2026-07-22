@@ -1165,8 +1165,12 @@ with tab_bt:
                 f"US: {len(_BT_US)} tickers"
             )
             st.markdown("**Quality gates**")
-            bt_min_score = st.slider("Min score",       1, 10,  7, key="bt_min_score")
-            bt_min_prob  = st.slider("Min probability", 0.50, 0.75, 0.55, step=0.01, key="bt_min_prob")
+            bt_min_score = st.slider("Min score",       1, 10,
+                                     int(cfg.get("min_score") or 7),
+                                     key="bt_min_score")
+            bt_min_prob  = st.slider("Min probability", 0.50, 0.75,
+                                     float(cfg.get("min_prob") or 0.53),
+                                     step=0.01, key="bt_min_prob")
             bt_regime    = st.checkbox(
                 "Market regime filter",
                 value=True,
@@ -1186,12 +1190,25 @@ with tab_bt:
 
         with col3:
             st.markdown("**Risk parameters**")
+            # Show the live-bot exit params that will be used (not adjustable here — set in Settings tab)
+            _sl_hi  = float(cfg.get("sl_mult_hi")  or 1.2)
+            _sl_mid = float(cfg.get("sl_mult_mid") or 1.0)
+            _sl_lo  = float(cfg.get("sl_mult_lo")  or 0.8)
+            _tg_hi  = float(cfg.get("target_hi")   or 12.0)
+            _tg_mid = float(cfg.get("target_mid")  or 8.0)
+            _tg_lo  = float(cfg.get("target_lo")   or 5.0)
+            st.info(
+                f"📌 **Live bot exit params** (from Settings tab)\n\n"
+                f"Stops: {_sl_hi}× / {_sl_mid}× / {_sl_lo}× ATR  \n"
+                f"Targets: {_tg_hi:.0f}% / {_tg_mid:.0f}% / {_tg_lo:.0f}%",
+                icon=None,
+            )
             bt_risk_pct  = st.slider("Risk per trade (%)", 0.5, 5.0,
                                      float(cfg.get("risk_pct") or 2.0), step=0.1, key="bt_risk_pct")
             bt_max_pos   = st.slider("Max positions",  1, 10,
                                      int(cfg.get("max_positions") or 5), key="bt_max_pos")
             bt_hold      = st.slider("Max hold days",  5, 30,
-                                     int(cfg.get("hold_days") or 10), key="bt_hold")
+                                     int(cfg.get("hold_days") or 15), key="bt_hold")
             bt_min_hold  = st.slider(
                 "Min hold days (stop grace period)", 0, 5,
                 int(cfg.get("min_hold_days") or 2), key="bt_min_hold",
@@ -1256,12 +1273,13 @@ with tab_bt:
                 "hold_days":         bt_hold,
                 "min_hold_days":     bt_min_hold,
                 "brokerage":         bt_brokerage,
-                "sl_mult_hi":        float(cfg.get("sl_mult_hi")  or 2.0),
-                "sl_mult_mid":       float(cfg.get("sl_mult_mid") or 1.5),
-                "sl_mult_lo":        float(cfg.get("sl_mult_lo")  or 1.0),
-                "target_hi":         float(cfg.get("target_hi")   or 15.0),
-                "target_mid":        float(cfg.get("target_mid")  or 10.0),
-                "target_lo":         float(cfg.get("target_lo")   or 7.0),
+                # These always pull from live bot settings so backtest = same system
+                "sl_mult_hi":        float(cfg.get("sl_mult_hi")  or 1.2),
+                "sl_mult_mid":       float(cfg.get("sl_mult_mid") or 1.0),
+                "sl_mult_lo":        float(cfg.get("sl_mult_lo")  or 0.8),
+                "target_hi":         float(cfg.get("target_hi")   or 12.0),
+                "target_mid":        float(cfg.get("target_mid")  or 8.0),
+                "target_lo":         float(cfg.get("target_lo")   or 5.0),
                 "cb_consecutive_losses": int(cfg.get("cb_consecutive_losses") or 3),
                 "cb_pause_days":     int(cfg.get("cb_pause_days") or 7),
                 "use_regime_filter": bt_regime,
