@@ -207,11 +207,11 @@ def _prescan_all(
                 if pd.isna(rsi_v):
                     continue
                 rsi = float(rsi_v)
-                if rsi >= 72 or rsi <= 25:
+                if rsi >= 72 or rsi <= 38:
                     continue
                 vr_v = row.get("vol_ratio", float("nan"))
                 vr   = float(vr_v) if not pd.isna(vr_v) else 0
-                if vr < 1.2:
+                if vr < 1.5:
                     continue
                 # Price must be rising
                 close_now  = row.get("Close",  float("nan"))
@@ -223,6 +223,12 @@ def _prescan_all(
                 # EMA20 must be rising
                 if float(ema20) <= float(prev_e20):
                     continue
+                # 20-day trend: stock must be net positive over the past month
+                if i >= 20:
+                    close_20d = feat_df.iloc[i - 20].get("Close", float("nan"))
+                    if not pd.isna(close_20d) and float(close_20d) > 0:
+                        if float(close_now) < float(close_20d):
+                            continue
 
                 # ── ML probability ────────────────────────────────────────────
                 prob = None

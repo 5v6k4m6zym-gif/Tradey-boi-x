@@ -571,11 +571,11 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         if not pd.isna(prev.get("macd_diff")) and float(prev["macd_diff"]) <= 0:
             return _reject("macd_bearish_prev_day")
         rsi = float(row["rsi"])
-        if rsi >= 72 or rsi <= 25:
+        if rsi >= 72 or rsi <= 38:
             return _reject(f"rsi_out_of_range ({rsi:.0f})")
         vr = float(row["vol_ratio"]) if not pd.isna(row["vol_ratio"]) else 0
-        if vr < 1.2:
-            return _reject("low_volume_ratio (<1.2×)")
+        if vr < 1.5:
+            return _reject("low_volume_ratio (<1.5×)")
         if prob < 0.40:
             return _reject("prob_below_floor")
 
@@ -586,6 +586,15 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         # EMA20 itself must be accelerating upward — not just above EMA50
         if float(row["ema20"]) <= float(prev["ema20"]):
             return _reject("ema20_not_rising")
+        # 20-day trend: stock must be net positive over the past month.
+        # Prevents dead-cat bounce entries where EMA20>EMA50 but the stock
+        # is still broadly falling off a peak.
+        if len(feat_df) >= 21:
+            close_20d = float(feat_df.iloc[-21].get("Close", float("nan")))
+            if not pd.isna(close_20d) and close_20d > 0:
+                ret_20d = (float(row["Close"]) - close_20d) / close_20d
+                if ret_20d < 0:
+                    return _reject("20d_downtrend")
 
         # ── Scoring (X's rules) ───────────────────────────────────────────────
         is_breakout = bool(int(row.get("breakout", 0)))
