@@ -1519,18 +1519,22 @@ with tab_bt:
                 # Exit reasons pie
                 reasons_raw = m.get("exit_reasons", {})
                 label_map = {
-                    "STOP_HIT":     "Hit Stop Loss",
-                    "TARGET_HIT":   "Hit Target",
-                    "ABOVE_TARGET": "Ran Above Target",
+                    "STOP_HIT":     "Hard Stop (Loss)",
+                    "BE_STOP":      "BE Stop (Breakeven)",
+                    "TRAIL_STOP":   "Trail Stop (Win)",
+                    "TARGET_HIT":   "Hit Target (Win)",
+                    "ABOVE_TARGET": "Ran Above Target (Win)",
                     "MAX_HOLD":     "Ran Out of Time",
                     "END_OF_TEST":  "Open at End",
                 }
                 colour_map = {
-                    "Hit Stop Loss":     "#ff4b4b",
-                    "Hit Target":        "#00d4aa",
-                    "Ran Above Target":  "#00aaff",
-                    "Ran Out of Time":   "#ffa500",
-                    "Open at End":       "#888888",
+                    "Hard Stop (Loss)":         "#ff4b4b",
+                    "BE Stop (Breakeven)":       "#ffa500",
+                    "Trail Stop (Win)":          "#00d4aa",
+                    "Hit Target (Win)":          "#00aaff",
+                    "Ran Above Target (Win)":    "#7c5cbf",
+                    "Ran Out of Time":           "#888888",
+                    "Open at End":               "#444444",
                 }
                 labels = [label_map.get(k, k) for k in reasons_raw]
                 values = list(reasons_raw.values())

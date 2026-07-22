@@ -650,7 +650,16 @@ def run_backtest(
             _past_min_hold = days_held >= p.get("min_hold_days", 2)
             if day_low <= pos.stop_price and _past_min_hold:
                 exit_price  = pos.stop_price
-                exit_reason = "STOP_HIT"
+                # Distinguish why the stop was where it was when it fired:
+                #   TRAIL_STOP  — stop slid above entry (trail profit lock)  → win
+                #   BE_STOP     — stop slid to entry (break-even protection) → ~flat
+                #   STOP_HIT    — original stop below entry                  → loss
+                if pos.stop_price > pos.entry_price * 1.001:
+                    exit_reason = "TRAIL_STOP"
+                elif pos.stop_price >= pos.entry_price * 0.999:
+                    exit_reason = "BE_STOP"
+                else:
+                    exit_reason = "STOP_HIT"
             elif day_high >= pos.target_price:
                 exit_price  = pos.target_price
                 # If close is still above target the stock kept running past it
