@@ -27,6 +27,11 @@ try:
         _score_signal as _real_score,
         _load_x_model,
         _normalize_columns as _norm_cols,
+        _compute_x_features,
+        _expected_value_r,
+        _weekly_trend_ok,
+        _regime_score_thresholds,
+        FEATURES,
     )
     _USE_REAL_SCANNER = True
 except Exception as _e:
@@ -120,6 +125,178 @@ def _detect_signal(df_slice: pd.DataFrame, ticker: str, params: dict) -> dict | 
     # Falls back to a simple rule check. Results will not match live bot exactly.
     log.debug(f"Real scanner unavailable — skipping {ticker}")
     return None
+
+
+# ── Fast pre-scan: compute features ONCE per ticker, read rows for each date ──
+
+def _prescan_all(
+    all_data:    dict,
+    available:   list,
+    date_idx:    dict,
+    ts_start:    "pd.Timestamp",
+    ts_end:      "pd.Timestamp",
+    p:           dict,
+    progress_cb: "Callable | None",
+    total_units: int,
+) -> dict:
+    """
+    Pre-compute signals for all tickers in one vectorised pass.
+
+    Key correctness property: all technical indicators (EMA, RSI, MACD, ATR, …)
+    are purely backward-looking — they depend only on data up to and including
+    the current row.  Therefore, computing them on the FULL DataFrame and reading
+    row i gives the exact same result as computing on df.iloc[:i+1] and reading
+    the last row.  This lets us call _compute_x_features() ONCE per ticker
+    instead of once per (ticker, day), giving a ~250× speedup.
+
+    Returns: {(ticker, date): signal_dict}  — ready for the fast-path simulation.
+    """
+    if not _USE_REAL_SCANNER:
+        return {}
+
+    model      = _load_x_model()
+    sb_base    = int(p.get("min_score",  5))
+    prob_floor = float(p.get("min_prob", 0.50))
+    elite_min, sb_min = _regime_score_thresholds(sb_base)
+
+    signals: dict = {}
+
+    for t_idx, ticker in enumerate(available):
+        if progress_cb and t_idx % 10 == 0:
+            pct = int(t_idx / max(len(available), 1) * total_units)
+            progress_cb(pct, total_units,
+                        f"Pre-scanning {t_idx+1}/{len(available)}: {ticker}…")
+        try:
+            df = all_data[ticker]
+            feat_df = _compute_x_features(df)   # ← ONE call per ticker
+            if feat_df is None or len(feat_df) < 2:
+                continue
+
+            for i in range(1, len(df)):
+                ts = df.index[i]
+                if ts < ts_start or ts > ts_end:
+                    continue
+
+                row  = feat_df.iloc[i]
+                prev = feat_df.iloc[i - 1]
+
+                # ── Cheap pre-filters (avoid model call on majority of rows) ──
+                ema20 = row.get("ema20", float("nan"))
+                ema50 = row.get("ema50", float("nan"))
+                if pd.isna(ema20) or pd.isna(ema50):
+                    continue
+                if float(ema20) <= float(ema50):
+                    continue
+                prev_e20 = prev.get("ema20", float("nan"))
+                prev_e50 = prev.get("ema50", float("nan"))
+                if pd.isna(prev_e20) or pd.isna(prev_e50):
+                    continue
+                if float(prev_e20) <= float(prev_e50):
+                    continue
+                macd = row.get("macd_diff", float("nan"))
+                if not pd.isna(macd) and float(macd) <= 0:
+                    continue
+                prev_macd = prev.get("macd_diff", float("nan"))
+                if not pd.isna(prev_macd) and float(prev_macd) <= 0:
+                    continue
+                rsi_v = row.get("rsi", float("nan"))
+                if pd.isna(rsi_v):
+                    continue
+                rsi = float(rsi_v)
+                if rsi >= 72 or rsi <= 25:
+                    continue
+                vr_v = row.get("vol_ratio", float("nan"))
+                vr   = float(vr_v) if not pd.isna(vr_v) else 0
+                if vr < 1.2:
+                    continue
+                # Price must be rising
+                close_now  = row.get("Close",  float("nan"))
+                close_prev = prev.get("Close", float("nan"))
+                if pd.isna(close_now) or pd.isna(close_prev):
+                    continue
+                if float(close_now) <= float(close_prev):
+                    continue
+                # EMA20 must be rising
+                if float(ema20) <= float(prev_e20):
+                    continue
+
+                # ── ML probability ────────────────────────────────────────────
+                prob = None
+                if model is not None:
+                    try:
+                        feat_row = pd.DataFrame([{f: row.get(f, 0) for f in FEATURES}])
+                        prob = float(model.predict_proba(feat_row)[0][1])
+                    except Exception:
+                        prob = None
+                if prob is None:
+                    prob = min(
+                        0.52 + max(0.0, (rsi - 40) / 120)
+                             + min(max(vr - 0.5, 0) / 20, 0.15),
+                        0.82,
+                    )
+                    prob = max(prob, 0.40)
+                if prob < 0.40:
+                    continue
+
+                # ── Score ─────────────────────────────────────────────────────
+                is_breakout = bool(int(row.get("breakout", 0)))
+                score = 0
+                if   prob >= 0.80: score += 3
+                elif prob >= 0.70: score += 2
+                elif prob >= 0.60: score += 1
+                if is_breakout:    score += 3
+                if vr > 1.5:       score += 2
+                if 35 <= rsi <= 65: score += 2
+                elif rsi < 70:      score += 1
+                score += 1   # ema20 > ema50 always True at this point
+
+                # ── Tier ──────────────────────────────────────────────────────
+                curr_price = float(close_now)
+                atr_v  = row.get("atr", float("nan"))
+                atr    = float(atr_v) if not pd.isna(atr_v) else curr_price * 0.015
+                atr_pct = atr / curr_price * 100 if curr_price > 0 else 0
+                expected_r = _expected_value_r(curr_price, atr, prob, is_breakout)
+
+                if   score >= elite_min and prob >= prob_floor and expected_r > 0:
+                    tier = "ELITE"
+                elif score >= sb_min    and prob >= prob_floor and expected_r > 0:
+                    tier = "STRONG BUY"
+                elif score >= 5:
+                    tier = "BUY"
+                else:
+                    continue
+
+                # ── Stop / target ─────────────────────────────────────────────
+                if atr_pct >= 3.0:
+                    sl_mult = p.get("sl_mult_hi",  0.8); tp_pct = p.get("target_hi",  12.0)
+                elif atr_pct >= 1.5:
+                    sl_mult = p.get("sl_mult_mid", 0.6); tp_pct = p.get("target_mid",  8.0)
+                else:
+                    sl_mult = p.get("sl_mult_lo",  0.5); tp_pct = p.get("target_lo",   5.0)
+
+                stop_price   = max(curr_price - sl_mult * atr, curr_price * 0.88)
+                target_price = curr_price * (1 + tp_pct / 100)
+
+                signals[(ticker, ts.date())] = {
+                    "ticker":       ticker,
+                    "entry_price":  round(curr_price, 4),
+                    "stop_price":   round(stop_price, 4),
+                    "target_price": round(target_price, 4),
+                    "atr_pct":      round(atr_pct, 2),
+                    "atr":          round(atr, 4),
+                    "score":        score,
+                    "prob":         round(prob, 3),
+                    "tier":         tier,
+                    "exchange":     "ASX" if ticker.endswith(".AX") else "SMART",
+                    "expected_r":   expected_r,
+                }
+
+        except Exception as _pe:
+            log.debug(f"Pre-scan error for {ticker}: {_pe}")
+            continue
+
+    log.info(f"Pre-scan complete: {len(signals)} signal candidates across {len(available)} tickers")
+    return signals
 
 
 # ── Main backtest engine ───────────────────────────────────────────────────────
@@ -344,6 +521,21 @@ def run_backtest(
 
     if not trading_days:
         return {"trades": [], "equity_curve": [], "metrics": _empty_metrics(), "params_used": p}
+
+    # ── Pre-scan signals (skipped when caller supplies precomputed_signals) ─
+    # Calls _compute_x_features ONCE per ticker instead of once per (ticker×day).
+    # The slow path inside the simulation loop is used only when this fails.
+    if precomputed_signals is None:
+        if progress_cb:
+            progress_cb(len(available), _total_units, "Pre-scanning signals (fast path)…")
+        try:
+            precomputed_signals = _prescan_all(
+                all_data, available, _date_idx,
+                _ts_start, _ts_end, p, progress_cb, _total_units,
+            )
+        except Exception as _pse:
+            log.warning(f"Pre-scan failed ({_pse}) — falling back to slow path per-day scoring")
+            precomputed_signals = None   # keep slow path as fallback
 
     # ── Simulation state ───────────────────────────────────────────────────
     account     = initial_capital
