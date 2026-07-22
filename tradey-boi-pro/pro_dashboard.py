@@ -1263,19 +1263,26 @@ with tab_bt:
                 )
 
             # ── Launch backtest in a background thread ────────────────────────
-            # Running synchronously in Streamlit's main thread causes the process
-            # to be killed externally when the script times out or is re-run mid-way.
-            # A daemon thread survives Streamlit re-runs and writes results to the
-            # module-level _BT_STATE dict, which persists across re-runs.
+            # IMPORTANT: set _BT_STATE["running"] = True HERE in the main thread
+            # before st.rerun(), so the polling loop sees it immediately on the
+            # next render — not inside the thread (race condition: thread may not
+            # start before Streamlit re-renders).
+            # The thread ONLY writes to _BT_STATE, never to st.session_state
+            # (background threads cannot safely write to Streamlit session state).
             st.session_state.pop("bt_results", None)
             _set_bt_lock()
+            _BT_STATE.update({
+                "running":  True,
+                "done":     False,
+                "result":   None,
+                "error":    None,
+                "traceback": None,
+                "progress": (0, 1, "Starting download…"),
+            })
 
             def _bt_thread_fn(tickers, start, end, cap, params):
                 import traceback as _tb2, pathlib as _pl2
                 from backtest.engine import run_backtest as _rbt
-                _BT_STATE.update({"running": True, "done": False,
-                                  "result": None, "error": None, "traceback": None,
-                                  "progress": (0, 1, "Starting…")})
                 def _prog(done, total, msg):
                     _BT_STATE["progress"] = (done, total, msg)
                 try:
@@ -1292,9 +1299,9 @@ with tab_bt:
                     except Exception:
                         pass
                 finally:
+                    # Only touch _BT_STATE here — never st.session_state from a thread
                     _BT_STATE["running"] = False
                     _BT_STATE["done"]    = True
-                    _clear_bt_lock()
 
             _t = threading.Thread(
                 target=_bt_thread_fn,
@@ -1302,7 +1309,7 @@ with tab_bt:
                 daemon=True,
             )
             _t.start()
-            st.rerun()   # immediately re-render to show the polling UI
+            st.rerun()   # immediately re-render into the polling UI
 
     # ── Poll backtest thread progress / harvest results ───────────────────────
     if _BT_STATE["running"]:
@@ -1314,7 +1321,9 @@ with tab_bt:
         st.rerun()
 
     if _BT_STATE["done"]:
-        _BT_STATE["done"] = False   # consume the flag so we don't show twice
+        # Harvest in main thread (safe to touch session_state here)
+        _BT_STATE["done"] = False
+        _clear_bt_lock()   # clears session_state lock now that we're in main thread
         if _BT_STATE["error"]:
             st.error(f"❌ **Backtest crashed:** {_BT_STATE['error']}\n\nSaved to `bt_error.log`")
             if _BT_STATE["traceback"]:
