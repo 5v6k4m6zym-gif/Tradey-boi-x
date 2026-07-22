@@ -1,0 +1,62 @@
+{
+  "Without safeguards": {
+    "phases": {
+      "warmup": {
+        "taken": 60,
+        "won": 45,
+        "pnl": 15000.0
+      },
+      "learn": {
+        "taken": 118,
+        "won": 83,
+        "pnl": 47205.26741286757
+      },
+      "validate": {
+        "taken": 120,
+        "won": 70,
+        "pnl": 34378.7556285832
+      }
+    },
+    "weights": {
+      "RSI": -0.06992193126113945,
+      "Volume ratio": 0.40059613105995945,
+      "Breakout": 0.6309157112399416,
+      "Trend days": 0.2553926701720698,
+      "ATR pct": 0.12722374313590368,
+      "Vol\u00d7Breakout": 0.5425086939109129,
+      "RSI momentum": -0.11574346896540921
+    },
+    "cb_events": 0,
+    "misc_events": 0
+  },
+  "With safeguards": {
+    "phases": {
+      "warmup": {
+        "taken": 60,
+        "won": 45,
+        "pnl": 15000.0
+      },
+      "learn": {
+        "taken": 103,
+        "won": 72,
+        "pnl": 32996.29026600535
+      },
+      "validate": {
+        "taken": 118,
+        "won": 69,
+        "pnl": 23961.797968548082
+      }
+    },
+    "weights": {
+      "RSI": -0.06578275859194752,
+      "Volume ratio": 0.35228592197321423,
+      "Breakout": 0.5608665648329129,
+      "Trend days": 0.2230140167106189,
+      "ATR pct": 0.11234283593331734,
+      "Vol\u00d7Breakout": 0.4715252213000627,
+      "RSI momentum": -0.10543941084339249
+    },
+    "cb_events": 6,
+    "misc_events": 15
+  }
+}
