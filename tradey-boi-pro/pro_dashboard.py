@@ -1119,30 +1119,52 @@ with tab_settings:
 with tab_bt:
     st.header("🧪 Walk-Forward Backtest")
     st.caption(
-        "Simulates the Pro scanner day-by-day on real historical data. "
-        "No lookahead bias — each day's signal only uses data available at that point. "
-        "Entry at next day's open. Exits at stop, target, or max hold days."
+        "This IS the bot simulation — it runs the same scanner, same filters, and same "
+        "exit logic on the full live universe day-by-day. "
+        "No lookahead bias. Entry at next day's open. Exits at stop, target, or max hold days."
     )
+
+    from datetime import date, timedelta
+    today = date.today()
+
+    # ── Bot Simulation Preset ──────────────────────────────────────────────────
+    st.info(
+        "💡 **To simulate the bot's real performance:** use the **🤖 Bot Simulation Preset** below — "
+        "it locks in the full live universe and your current saved settings. "
+        "Expect ~10–25 min for 12 months (934 tickers).",
+        icon=None,
+    )
+    if st.button("🤖 Load Bot Simulation Preset", use_container_width=False):
+        st.session_state["_bt_preset_period"]    = "12 Months"
+        st.session_state["_bt_preset_markets"]   = ["ASX", "US"]
+        st.session_state["_bt_preset_min_score"] = int(cfg.get("min_score") or 5)
+        st.session_state["_bt_preset_min_prob"]  = float(cfg.get("min_prob") or 0.50)
+        st.session_state["_bt_preset_risk_pct"]  = float(cfg.get("risk_pct") or 2.0)
+        st.session_state["_bt_preset_max_pos"]   = int(cfg.get("max_positions") or 5)
+        st.session_state["_bt_preset_hold"]      = int(cfg.get("hold_days") or 15)
+        st.rerun()
 
     # ── Configuration ─────────────────────────────────────────────────────────
     with st.expander("⚙️ Backtest Configuration", expanded=True):
         col1, col2, col3 = st.columns(3)
 
-        from datetime import date, timedelta
-        today = date.today()
-
         with col1:
             st.markdown("**Date Range**")
+            _period_options = ["1 Month", "3 Months", "6 Months", "12 Months", "18 Months", "Custom"]
+            _period_default = st.session_state.get("_bt_preset_period", "12 Months")
+            _period_idx     = _period_options.index(_period_default) if _period_default in _period_options else 3
             period_choice = st.selectbox(
                 "Test period",
-                ["1 Month", "3 Months", "6 Months", "12 Months", "Custom"],
-                index=2,
+                _period_options,
+                index=_period_idx,
+                key="bt_period_choice",
             )
             if period_choice == "Custom":
-                bt_start = st.date_input("Start date", value=today - timedelta(days=180))
+                bt_start = st.date_input("Start date", value=today - timedelta(days=365))
                 bt_end   = st.date_input("End date",   value=today - timedelta(days=1))
             else:
-                days_map = {"1 Month": 30, "3 Months": 90, "6 Months": 180, "12 Months": 365}
+                days_map = {"1 Month": 30, "3 Months": 90, "6 Months": 180,
+                            "12 Months": 365, "18 Months": 548}
                 bt_start = today - timedelta(days=days_map[period_choice])
                 bt_end   = today - timedelta(days=1)
                 st.caption(f"{bt_start}  →  {bt_end}")
@@ -1156,20 +1178,25 @@ with tab_bt:
             st.markdown("**Markets to test**")
             from scanner.universe import ASX_UNIVERSE as _BT_ASX, US_UNIVERSE as _BT_US
             from scanner.watchlist_manager import get_watchlist as _bt_gwl
+            _mkt_default = st.session_state.get("_bt_preset_markets", ["ASX", "US"])
             bt_markets = st.multiselect(
                 "Markets", ["ASX", "US", "Custom"],
-                default=["ASX", "US"],
+                default=_mkt_default,
+                key="bt_markets_sel",
             )
             st.caption(
                 f"ASX: {len(_BT_ASX)} tickers  ·  "
-                f"US: {len(_BT_US)} tickers"
+                f"US: {len(_BT_US)} tickers  ·  "
+                f"**Total: {len(_BT_ASX)+len(_BT_US)}**"
             )
             st.markdown("**Quality gates**")
             bt_min_score = st.slider("Min score",       1, 10,
-                                     int(cfg.get("min_score") or 7),
+                                     st.session_state.get("_bt_preset_min_score",
+                                         int(cfg.get("min_score") or 5)),
                                      key="bt_min_score")
             bt_min_prob  = st.slider("Min probability", 0.50, 0.75,
-                                     float(cfg.get("min_prob") or 0.53),
+                                     st.session_state.get("_bt_preset_min_prob",
+                                         float(cfg.get("min_prob") or 0.50)),
                                      step=0.01, key="bt_min_prob")
             bt_regime    = st.checkbox(
                 "Market regime filter",
@@ -1177,15 +1204,13 @@ with tab_bt:
                 key="bt_regime",
                 help=(
                     "When ON, skips all long trades on days when the broad market index "
-                    "(XJO for ASX, S&P 500 for US) is below its 50-day moving average. "
+                    "(XJO for ASX, S&P 500 for US) is below its 200-day moving average. "
                     "Prevents trading into bear markets where most stocks fall regardless of signal quality."
                 ),
             )
             st.caption(
-                "ℹ️ These thresholds apply to the **backtest only** and do not affect the live bot. "
-                "The backtest uses the **same ML model and filters as live trading** — "
-                "EMA uptrend, MACD, RSI, volume, and AI probability all apply. "
-                "Score 5 here means any signal the live bot would classify as BUY or better."
+                "ℹ️ Score and probability here **must match your Settings tab** to simulate the live bot accurately. "
+                "Click 🤖 Bot Simulation Preset above to auto-fill them from your saved settings."
             )
 
         with col3:
@@ -1208,11 +1233,17 @@ with tab_bt:
                 icon=None,
             )
             bt_risk_pct  = st.slider("Risk per trade (%)", 0.5, 5.0,
-                                     float(cfg.get("risk_pct") or 2.0), step=0.1, key="bt_risk_pct")
+                                     st.session_state.get("_bt_preset_risk_pct",
+                                         float(cfg.get("risk_pct") or 2.0)),
+                                     step=0.1, key="bt_risk_pct")
             bt_max_pos   = st.slider("Max positions",  1, 10,
-                                     int(cfg.get("max_positions") or 5), key="bt_max_pos")
+                                     st.session_state.get("_bt_preset_max_pos",
+                                         int(cfg.get("max_positions") or 5)),
+                                     key="bt_max_pos")
             bt_hold      = st.slider("Max hold days",  5, 30,
-                                     int(cfg.get("hold_days") or 15), key="bt_hold")
+                                     st.session_state.get("_bt_preset_hold",
+                                         int(cfg.get("hold_days") or 15)),
+                                     key="bt_hold")
             bt_min_hold  = st.slider(
                 "Min hold days (stop grace period)", 0, 5,
                 int(cfg.get("min_hold_days") or 2), key="bt_min_hold",
