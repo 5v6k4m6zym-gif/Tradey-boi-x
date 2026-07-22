@@ -23,11 +23,28 @@ log = logging.getLogger("Backtest")
 
 # Import the real scanner so the backtest tests the actual ML strategy
 try:
-    from scanner.market_scanner import _score_signal as _real_score, _load_x_model
+    from scanner.market_scanner import (
+        _score_signal as _real_score,
+        _load_x_model,
+        _normalize_columns as _norm_cols,
+    )
     _USE_REAL_SCANNER = True
 except Exception as _e:
     log.warning(f"Could not import real scanner — falling back to rule-based: {_e}")
     _USE_REAL_SCANNER = False
+
+    # Inline fallback so _norm_cols is always available even when scanner import fails
+    def _norm_cols(df):  # type: ignore[override]
+        import pandas as _pd
+        df = df.copy()
+        if hasattr(df.columns, "levels") and df.columns.nlevels > 1:
+            _ohlcv = {"open","high","low","close","volume","Open","High","Low","Close","Volume"}
+            lvl0 = [str(c) for c in df.columns.get_level_values(0)]
+            lvl1 = [str(c) for c in df.columns.get_level_values(1)]
+            use1 = sum(1 for c in lvl1 if c in _ohlcv) > sum(1 for c in lvl0 if c in _ohlcv)
+            df.columns = df.columns.get_level_values(1 if use1 else 0)
+        df.columns = [str(c).title() for c in df.columns]
+        return df
 
 
 # ── Data structures ────────────────────────────────────────────────────────────
@@ -193,15 +210,13 @@ def run_backtest(
                     threads=False,   # threads=True can deadlock on Windows
                 )
             if len(batch) == 1:
-                df = raw.dropna(how="all")
-                df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
+                df = _norm_cols(raw.dropna(how="all"))
                 if not df.empty:
                     all_data[batch[0]] = df
             else:
                 for t in batch:
                     try:
-                        df = raw[t].dropna(how="all")
-                        df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
+                        df = _norm_cols(raw[t].dropna(how="all"))
                         if not df.empty and len(df) >= 30:
                             all_data[t] = df
                     except (KeyError, TypeError):

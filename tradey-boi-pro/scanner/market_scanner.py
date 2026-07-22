@@ -344,6 +344,33 @@ def _expected_value_r(price: float, atr: float, prob: float, breakout: bool) -> 
 
 # ── Feature computation (mirrors X's get_data() exactly) ──────────────────────
 
+_OHLCV_NAMES = {"open", "high", "low", "close", "volume", "adj close",
+                "Open", "High", "Low", "Close", "Volume", "Adj Close"}
+
+
+def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Robustly normalise yfinance DataFrame columns to Title Case OHLCV names.
+
+    yfinance column structure has changed across versions:
+      - Old:      flat Index, Title Case  ('Close', 'Open', ...)
+      - Mid:      MultiIndex (Price, Ticker) — level 0 has OHLCV names
+      - New 0.2.58+: MultiIndex (Ticker, Price) — level 1 has OHLCV names,
+                     OR flat Index with lowercase ('close', 'open', ...)
+    """
+    df = df.copy()
+    if hasattr(df.columns, "levels") and df.columns.nlevels > 1:
+        # Pick whichever level contains more OHLCV-style names
+        lvl0 = [str(c) for c in df.columns.get_level_values(0)]
+        lvl1 = [str(c) for c in df.columns.get_level_values(1)]
+        score0 = sum(1 for c in lvl0 if c in _OHLCV_NAMES)
+        score1 = sum(1 for c in lvl1 if c in _OHLCV_NAMES)
+        df.columns = df.columns.get_level_values(1 if score1 > score0 else 0)
+    # Normalise every column label to Title Case string
+    df.columns = [str(c).title() for c in df.columns]
+    return df
+
+
 def _compute_x_features(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     """
     Compute all 15 FEATURES from a raw OHLCV DataFrame.
@@ -353,12 +380,7 @@ def _compute_x_features(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     Returns None if any required column is missing or computation fails.
     """
     try:
-        df = df.copy()
-        # Flatten MultiIndex columns (newer yfinance returns (Price, Ticker) tuples)
-        if hasattr(df.columns, "levels") and df.columns.nlevels > 1:
-            df.columns = df.columns.get_level_values(0)
-        # Normalise to Title Case — newer yfinance versions return lowercase
-        df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
+        df = _normalize_columns(df)
         close = df["Close"].squeeze().astype(float)
         high  = df["High"].squeeze().astype(float)
         low   = df["Low"].squeeze().astype(float)
@@ -602,11 +624,7 @@ def _download_batch(
             auto_adjust=True, progress=False,
             group_by="ticker", threads=True,
         )
-        def _norm(df: pd.DataFrame) -> pd.DataFrame:
-            if hasattr(df.columns, "levels") and df.columns.nlevels > 1:
-                df.columns = df.columns.get_level_values(0)
-            df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
-            return df
+        _norm = _normalize_columns
 
         if len(tickers) == 1:
             df = _norm(raw.dropna(how="all"))
