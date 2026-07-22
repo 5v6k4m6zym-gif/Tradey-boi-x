@@ -731,18 +731,18 @@ def _default_params() -> dict:
     try:
         import config.settings as cfg
         return {
-            "min_score":    int(cfg.get("min_score")    or 7),
-            "min_prob":     float(cfg.get("min_prob")   or 0.53),
+            "min_score":    int(cfg.get("min_score")    or 8),
+            "min_prob":     float(cfg.get("min_prob")   or 0.58),
             "sl_mult_hi":   float(cfg.get("sl_mult_hi") or 1.2),
             "sl_mult_mid":  float(cfg.get("sl_mult_mid")or 1.0),
             "sl_mult_lo":   float(cfg.get("sl_mult_lo") or 0.8),
-            "target_hi":    float(cfg.get("target_hi")  or 12.0),
-            "target_mid":   float(cfg.get("target_mid") or 8.0),
-            "target_lo":    float(cfg.get("target_lo")  or 5.0),
+            "target_hi":    float(cfg.get("target_hi")  or 15.0),
+            "target_mid":   float(cfg.get("target_mid") or 10.0),
+            "target_lo":    float(cfg.get("target_lo")  or 7.0),
         }
     except Exception:
         return {
-            "min_score": 7, "min_prob": 0.53,
+            "min_score": 8, "min_prob": 0.58,
             "sl_mult_hi": 1.2, "sl_mult_mid": 1.0, "sl_mult_lo": 0.8,
-            "target_hi": 12.0, "target_mid": 8.0, "target_lo": 5.0,
+            "target_hi": 15.0, "target_mid": 10.0, "target_lo": 7.0,
         }

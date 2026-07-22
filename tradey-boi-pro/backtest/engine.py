@@ -331,8 +331,8 @@ def run_backtest(
     reasons: dict[str, int] = {}
 
     p = {
-        "min_score":         params.get("min_score",         6),
-        "min_prob":          params.get("min_prob",          0.53),
+        "min_score":         params.get("min_score",         8),     # tightened from 6
+        "min_prob":          params.get("min_prob",          0.58),  # tightened from 0.53
         "max_positions":     params.get("max_positions",     5),
         "risk_pct":          params.get("risk_pct",          2.0),
         "brokerage":         params.get("brokerage",         2.0),
@@ -342,9 +342,9 @@ def run_backtest(
         "sl_mult_hi":        params.get("sl_mult_hi",        1.2),
         "sl_mult_mid":       params.get("sl_mult_mid",       1.0),
         "sl_mult_lo":        params.get("sl_mult_lo",        0.8),
-        "target_hi":         params.get("target_hi",         12.0),
-        "target_mid":        params.get("target_mid",        8.0),
-        "target_lo":         params.get("target_lo",         5.0),
+        "target_hi":         params.get("target_hi",         15.0),  # widened from 12
+        "target_mid":        params.get("target_mid",        10.0),  # widened from 8
+        "target_lo":         params.get("target_lo",         7.0),   # widened from 5
         # min_hold_days: stop cannot trigger during the first N days after entry.
         # Prevents entry-day noise (gap opens, spread) from immediately stopping out trades.
         "min_hold_days":     params.get("min_hold_days",     2),

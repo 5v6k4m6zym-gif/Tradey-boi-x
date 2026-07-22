@@ -342,6 +342,32 @@ class IBKRClient:
             log.error(f"place_bracket_order failed: {exc}")
             return {"error": str(exc), "simulated": False}
 
+    def modify_stop_order(self, stop_order_id: int, new_stop: float) -> bool:
+        """
+        Modify an existing IBKR bracket stop order to a new trigger price.
+        Used by PositionManager for breakeven and trailing stop management.
+        """
+        if not IB_AVAILABLE or not self._connected:
+            log.info(f"[SIM] Modify stop order {stop_order_id} → {new_stop:.4f}")
+            return True
+
+        async def _modify():
+            for trade in self._ib.openTrades():
+                if trade.order.orderId == stop_order_id:
+                    trade.order.auxPrice = round(new_stop, 4)
+                    self._ib.placeOrder(trade.contract, trade.order)
+                    await asyncio.sleep(0.5)
+                    log.info(f"Modified stop order {stop_order_id} → {new_stop:.4f}")
+                    return True
+            log.warning(f"modify_stop_order: order {stop_order_id} not found in openTrades")
+            return False
+
+        try:
+            return self._run_on_loop(_modify(), timeout=10)
+        except Exception as exc:
+            log.error(f"modify_stop_order failed: {exc}")
+            return False
+
     def close_position(
         self,
         ticker:   str,

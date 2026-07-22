@@ -43,13 +43,13 @@ def sl_and_target(entry: float, atr_pct: float) -> tuple[float, float]:
     atr = atr_pct / 100 * entry
     if atr_pct >= 3.0:
         sl_mult = cfg.get("sl_mult_hi")  or 1.2
-        tp_pct  = cfg.get("target_hi")   or 12.0
+        tp_pct  = cfg.get("target_hi")   or 15.0
     elif atr_pct >= 1.5:
         sl_mult = cfg.get("sl_mult_mid") or 1.0
-        tp_pct  = cfg.get("target_mid")  or 8.0
+        tp_pct  = cfg.get("target_mid")  or 10.0
     else:
         sl_mult = cfg.get("sl_mult_lo")  or 0.8
-        tp_pct  = cfg.get("target_lo")   or 5.0
+        tp_pct  = cfg.get("target_lo")   or 7.0
 
     stop   = max(entry - sl_mult * atr, entry * 0.88)
     target = entry * (1 + tp_pct / 100)

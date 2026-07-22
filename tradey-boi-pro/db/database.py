@@ -134,6 +134,15 @@ def upsert_position(data: dict) -> int:
         return cur.lastrowid
 
 
+def update_position_stop(position_id: int, new_stop: float):
+    """Slide stop price for an open position (used by BE/trailing stop logic)."""
+    with _lock, _conn() as c:
+        c.execute(
+            "UPDATE positions SET stop_price=? WHERE id=? AND status='OPEN'",
+            (round(new_stop, 4), position_id)
+        )
+
+
 def close_position(position_id: int, exit_price: float, exit_reason: str):
     with _lock, _conn() as c:
         pos = c.execute("SELECT * FROM positions WHERE id=?",

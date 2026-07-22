@@ -82,7 +82,7 @@ def sync_ibkr_positions(broker: "IBKRClient") -> list[str]:
         tracked.add(p["ticker"].upper())
 
     mode     = cfg.get("mode") or "PAPER"
-    hold_days = int(cfg.get("hold_days") or 10)
+    hold_days = int(cfg.get("hold_days") or 15)
     imported  = []
 
     for ibkr_pos in ibkr_positions:

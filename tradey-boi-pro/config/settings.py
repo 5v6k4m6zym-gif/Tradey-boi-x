@@ -20,18 +20,24 @@ DEFAULTS: dict = {
     "max_exposure_pct":      30.0,
     "brokerage":             2.0,           # $ per side
 
-    # Exit parameters (optimal from Tradey Boi X v3 sweep)
+    # Exit parameters — stops from v3 sweep, targets widened for better R:R
     "hold_days":             15,
     "sl_mult_hi":            1.2,
     "sl_mult_mid":           1.0,
     "sl_mult_lo":            0.8,
-    "target_hi":             12.0,
-    "target_mid":            8.0,
-    "target_lo":             5.0,
+    "target_hi":             15.0,    # was 12 — achievable over 15-day hold, improves R:R
+    "target_mid":            10.0,    # was 8
+    "target_lo":             7.0,     # was 5
 
-    # Signal quality gates
-    "min_prob":              0.53,
-    "min_score":             7,
+    # Dynamic stop management (mirrors backtest/engine.py exit mechanics exactly)
+    "min_hold_days":         2,       # stop cannot trigger in first N days (entry-day noise)
+    "be_trigger_r":          1.0,     # slide stop to entry when price hits entry+1R
+    "trail_trigger_r":       1.5,     # start trailing when peak ≥ entry+1.5R
+    "trail_dist_r":          0.7,     # trail 0.7R below peak (tighter = more profit locked)
+
+    # Signal quality gates — tightened from 7/0.53 to filter marginal signals
+    "min_prob":              0.58,    # was 0.53 — AI needs higher confidence
+    "min_score":             8,       # was 7 — fewer but better-quality setups
 
     # Circuit breaker
     "cb_consecutive_losses": 3,
