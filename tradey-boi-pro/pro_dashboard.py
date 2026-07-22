@@ -1360,9 +1360,17 @@ with tab_bt:
             st.warning(
                 "⚠️ **Backtest ran but found 0 trades — showing estimated projection.**  "
                 "The scanner's conditions weren't triggered for any ticker in this period. "
-                "Try lowering **Min score** to 5 or 6, lowering **Min probability** to 0.50, "
+                "Try lowering **Min score** to 3, lowering **Min probability** to 0.50, "
                 "or extending the date range to 12 months, then re-run."
             )
+            _rr = _bt.get("rejection_reasons", {})
+            if _rr:
+                import pandas as _pd_rr
+                st.markdown("**Why signals were rejected** (top filters across all tickers × days):")
+                _rr_df = _pd_rr.DataFrame(
+                    [{"Filter": k, "Rejections": v} for k, v in list(_rr.items())[:10]],
+                )
+                st.dataframe(_rr_df, use_container_width=True, hide_index=True)
         else:
             # No backtest run yet
             st.warning(

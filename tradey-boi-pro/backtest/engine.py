@@ -126,6 +126,11 @@ def run_backtest(
     if params is None:
         params = {}
 
+    # Shared mutable dict for rejection reason tracking.
+    # _score_signal increments counters here; returned in the result dict
+    # so the dashboard can show exactly which filter is blocking trades.
+    reasons: dict[str, int] = {}
+
     p = {
         "min_score":      params.get("min_score",      7),
         "min_prob":       params.get("min_prob",       0.53),
@@ -141,6 +146,7 @@ def run_backtest(
         "target_lo":      params.get("target_lo",      5.0),
         "cb_losses":      params.get("cb_consecutive_losses", 3),
         "cb_pause_days":  params.get("cb_pause_days",  7),
+        "_reasons":       reasons,   # shared mutable — _score_signal writes to this
     }
 
     # Pre-warm the ML model so it loads once, not per-ticker
@@ -434,13 +440,14 @@ def run_backtest(
         closed.append(trade)
 
     return {
-        "trades":           closed,
-        "equity_curve":     equity_crv,
-        "metrics":          _calc_metrics(closed, initial_capital, account),
-        "params_used":      p,
-        "tickers_scanned":  len(available),
-        "tickers_skipped":  skipped,
-        "trading_days":     len(trading_days),
+        "trades":             closed,
+        "equity_curve":       equity_crv,
+        "metrics":            _calc_metrics(closed, initial_capital, account),
+        "params_used":        p,
+        "tickers_scanned":    len(available),
+        "tickers_skipped":    skipped,
+        "trading_days":       len(trading_days),
+        "rejection_reasons":  dict(sorted(reasons.items(), key=lambda x: -x[1])),
     }
 
 

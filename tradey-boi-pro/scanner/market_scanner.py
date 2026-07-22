@@ -428,13 +428,23 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
     scoring rules, adaptive thresholds, and expected-value gate.
     Returns a signal dict or None if the ticker doesn't qualify.
     """
-    if df is None or len(df) < 60:
+    # _reasons is a shared mutable dict passed from the backtest engine.
+    # Each return None increments the matching counter so the caller can show
+    # a breakdown of why 0 trades occurred.
+    _reasons: Optional[dict] = params.get("_reasons")
+
+    def _reject(reason: str):
+        if _reasons is not None:
+            _reasons[reason] = _reasons.get(reason, 0) + 1
         return None
+
+    if df is None or len(df) < 60:
+        return _reject("insufficient_history (<60 rows)")
 
     try:
         feat_df = _compute_x_features(df)
         if feat_df is None or len(feat_df) < 2:
-            return None
+            return _reject("feature_computation_failed")
 
         row  = feat_df.iloc[-1]
         prev = feat_df.iloc[-2]
@@ -442,7 +452,7 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         # ── Guard against NaN in critical indicators ───────────────────────────
         for col in ("ema20", "ema50", "rsi", "macd_diff", "vol_ratio", "atr"):
             if pd.isna(row.get(col)):
-                return None
+                return _reject(f"nan_in_{col}")
 
         # ── AI probability — X's real EnsembleModel ───────────────────────────
         model = _load_x_model()
@@ -457,28 +467,33 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
             prob = None
 
         # Heuristic fallback (only used when model is unavailable)
-        # Stocks that reach this point have already passed all hard filters
-        # (EMA uptrend x2, MACD positive x2, RSI 25-72, vol_ratio >= 0.5),
+        # Stocks that reach this point have already passed all hard filters,
         # so the base probability should reflect that pre-qualification.
         if prob is None:
             rsi_raw = float(row["rsi"])
             vr_raw  = float(row["vol_ratio"])
-            # RSI 40-70 maps to 0.00-0.25 contribution; VR 0.5-3+ maps to 0.00-0.15
             rsi_component = max(0.0, (rsi_raw - 40) / 120)
             vr_component  = min((max(vr_raw - 0.5, 0)) / 20, 0.15)
             prob = min(0.52 + rsi_component + vr_component, 0.82)
             prob = max(prob, 0.40)
 
         # ── Hard filters (X's decide() gates, unchanged) ──────────────────────
-        if float(row["ema20"])     <= float(row["ema50"]):          return None  # uptrend today
-        if float(prev["ema20"])    <= float(prev["ema50"]):         return None  # uptrend prior day
-        if not pd.isna(row.get("macd_diff")) and float(row["macd_diff"])  <= 0: return None  # MACD bull today
-        if not pd.isna(prev.get("macd_diff")) and float(prev["macd_diff"]) <= 0: return None  # MACD bull prior
+        if float(row["ema20"])  <= float(row["ema50"]):
+            return _reject("ema_downtrend_today")
+        if float(prev["ema20"]) <= float(prev["ema50"]):
+            return _reject("ema_downtrend_prev_day")
+        if not pd.isna(row.get("macd_diff")) and float(row["macd_diff"])  <= 0:
+            return _reject("macd_bearish_today")
+        if not pd.isna(prev.get("macd_diff")) and float(prev["macd_diff"]) <= 0:
+            return _reject("macd_bearish_prev_day")
         rsi = float(row["rsi"])
-        if rsi >= 72 or rsi <= 25:                                  return None  # RSI safe zone
+        if rsi >= 72 or rsi <= 25:
+            return _reject(f"rsi_out_of_range ({rsi:.0f})")
         vr = float(row["vol_ratio"]) if not pd.isna(row["vol_ratio"]) else 0
-        if vr < 0.5:                                                return None  # liquidity
-        if prob < 0.40:                                             return None  # AI floor
+        if vr < 0.5:
+            return _reject("low_volume_ratio")
+        if prob < 0.40:
+            return _reject("prob_below_floor")
 
         # ── Scoring (X's rules) ───────────────────────────────────────────────
         is_breakout = bool(int(row.get("breakout", 0)))
@@ -529,7 +544,7 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
 
         # ── Weekly trend gate (X's hard gate — uses existing daily data) ────────
         if not _weekly_trend_ok(df):
-            return None   # Weekly EMA20 < EMA50 — fighting the larger trend
+            return _reject("weekly_ema_downtrend")
 
         # ── Tier classification (X's thresholds) ──────────────────────────────
         if   score >= elite_min and prob >= prob_floor and expected_r > 0:
@@ -539,12 +554,12 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         elif score >= 5:
             tier = "BUY"
         else:
-            return None   # IGNORE — don't surface to ranker
+            return _reject(f"score_too_low ({score})")
 
         # Respect per-params overrides (backtest / analysis mode with lowered gates)
         min_score_override = int(params.get("min_score", 0))
         if min_score_override == 0 and tier == "BUY":
-            return None   # live scan: only ELITE / STRONG BUY pass through
+            return _reject("live_scan_buy_tier_suppressed")
 
         exchange = "ASX" if ticker.endswith(".AX") else "SMART"
 
