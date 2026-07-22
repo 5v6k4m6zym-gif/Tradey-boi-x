@@ -19,16 +19,18 @@ from datetime import datetime
 import threading, time as _time_mod
 
 # ── Background backtest state (module-level so thread can write to it) ────────
-# Streamlit re-runs the script on every interaction; a module-level dict
-# survives re-runs whereas session_state cannot be written from a background thread.
-_BT_STATE: dict = {
+# IMPORTANT: use globals().setdefault() so Streamlit's st.rerun() does NOT reset
+# this dict on every re-render.  A plain `_BT_STATE = {...}` assignment at module
+# level re-executes every rerun (Streamlit runs the whole script via exec() into
+# the same module.__dict__), which would wipe the thread's progress updates.
+_BT_STATE: dict = globals().setdefault("_BT_STATE", {
     "running":   False,
     "done":      False,
     "progress":  (0, 1, ""),   # (done, total, msg)
     "result":    None,
     "error":     None,
     "traceback": None,
-}
+})
 
 import db.database as db
 import config.settings as cfg
