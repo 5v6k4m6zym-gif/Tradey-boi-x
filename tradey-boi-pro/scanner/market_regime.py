@@ -31,9 +31,14 @@ class RegimeData:
     regime:     Regime
     confidence: float         # 0–1
     vix:        Optional[float] = None
-    index_pct_50ema: Optional[float] = None   # price as % above/below 50 EMA
+    index_pct_50ema:  Optional[float] = None   # price as % above/below 50 EMA
     index_pct_200ema: Optional[float] = None
     breadth:    Optional[float] = None        # % stocks above 200d MA (if available)
+    rsi:        Optional[float] = None
+    roc10:      Optional[float] = None        # 10-day rate of change %
+    roc50:      Optional[float] = None        # 50-day rate of change %
+    bull_points: Optional[int]  = None
+    bear_points: Optional[int]  = None
     fetched_at: Optional[datetime] = None
 
     @property
@@ -243,6 +248,18 @@ def _fetch_regime(market: str) -> RegimeData:
         f"50EMA={pct_50ema:+.1f}%  200EMA={pct_200ema:+.1f}%  VIX={vix_val}"
     )
 
+    # ── Compute RSI and ROC for storage (already calculated above for scoring) ──
+    _roc10 = _roc50 = _rsi_val = None
+    if len(index_close) >= 10:
+        _roc10 = round((curr - float(index_close.iloc[-10])) / float(index_close.iloc[-10]) * 100, 2)
+    if len(index_close) >= 50:
+        _roc50 = round((curr - float(index_close.iloc[-50])) / float(index_close.iloc[-50]) * 100, 2)
+    if len(index_close) >= 15:
+        _delta = index_close.diff()
+        _g = _delta.clip(lower=0).ewm(com=13, adjust=False).mean().iloc[-1]
+        _l = (-_delta.clip(upper=0)).ewm(com=13, adjust=False).mean().iloc[-1]
+        _rsi_val = round(100.0 if _l == 0 else 100 - (100 / (1 + _g / _l)), 1)
+
     return RegimeData(
         market           = market,
         regime           = regime,
@@ -250,6 +267,11 @@ def _fetch_regime(market: str) -> RegimeData:
         vix              = round(vix_val, 1) if vix_val else None,
         index_pct_50ema  = round(pct_50ema, 2),
         index_pct_200ema = round(pct_200ema, 2),
+        rsi              = _rsi_val,
+        roc10            = _roc10,
+        roc50            = _roc50,
+        bull_points      = bull_points,
+        bear_points      = bear_points,
         fetched_at       = datetime.utcnow(),
     )
 

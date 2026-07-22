@@ -275,16 +275,22 @@ with tab_scan:
             return
         icons = {"BULL": "🟢", "NEUTRAL": "🟡", "BEAR": "🔴"}
         icon  = icons.get(rd.regime.value, "⚪")
+        pts   = (f"  {rd.bull_points}🟢/{rd.bear_points}🔴"
+                 if rd.bull_points is not None else "")
         col.metric(
             label,
             f"{icon} {rd.regime.value}",
-            delta=f"conf {rd.confidence:.0%}",
+            delta=f"conf {rd.confidence:.0%}{pts}",
             delta_color="off",
         )
-        col.caption(
-            (f"50EMA {rd.index_pct_50ema:+.1f}%  " if rd.index_pct_50ema else "") +
-            (f"VIX {rd.vix}" if rd.vix else "")
-        )
+        lines = []
+        if rd.index_pct_50ema  is not None: lines.append(f"50EMA {rd.index_pct_50ema:+.1f}%")
+        if rd.index_pct_200ema is not None: lines.append(f"200EMA {rd.index_pct_200ema:+.1f}%")
+        if rd.vix               is not None: lines.append(f"VIX {rd.vix:.1f}")
+        if rd.rsi               is not None: lines.append(f"RSI {rd.rsi:.0f}")
+        if rd.roc10             is not None: lines.append(f"10d {rd.roc10:+.1f}%")
+        if rd.roc50             is not None: lines.append(f"50d {rd.roc50:+.1f}%")
+        col.caption("  ·  ".join(lines))
 
     _regime_card(rc1, "🇦🇺 ASX",    live_regimes.get("ASX"))
     _regime_card(rc2, "🇺🇸 US",     live_regimes.get("US"))
