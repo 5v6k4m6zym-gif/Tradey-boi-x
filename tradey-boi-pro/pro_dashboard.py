@@ -42,6 +42,7 @@ st.set_page_config(
 # ── Init DB + defaults ────────────────────────────────────────────────────────
 db.init_db()
 cfg.ensure_defaults()
+cfg.migrate_settings()   # force-write tuned params over any stale DB values
 
 # ── Backtest lock helpers (time-based auto-expiry) ────────────────────────────
 _BT_LOCK_TTL = 20 * 60  # seconds — auto-expire if process was killed

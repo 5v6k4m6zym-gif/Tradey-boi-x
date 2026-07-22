@@ -85,3 +85,29 @@ def ensure_defaults():
     for key, val in DEFAULTS.items():
         if key not in stored:
             set_setting(key, val)
+
+
+# Keys that must be force-updated on every startup to apply tuning improvements.
+# ensure_defaults() only writes MISSING keys — existing DB values are untouched.
+# Any key listed here gets overwritten unconditionally so users always run the
+# latest optimised parameters without needing to manually reset their database.
+_FORCED_UPDATES: dict = {
+    "min_score":         7,      # v3: raised 5→6→7 (breakout OR prob≥0.70 required)
+    "min_prob":          0.55,   # v3: raised 0.50→0.55
+    "target_hi":         10.0,   # v3: lowered 15→10% (achievable in 15-day hold)
+    "target_mid":        7.0,    # v3: lowered 10→7%
+    "target_lo":         5.0,    # v3: lowered 7→5%
+    "trail_trigger_r":   2.0,    # v3: raised 1.5→2.0 (don't trail prematurely)
+    "trail_dist_r":      1.0,    # v3: widened 0.7→1.0 (room to breathe on pullbacks)
+    "sl_mult_hi":        0.8,    # v2: sweep winner tight stops
+    "sl_mult_mid":       0.6,
+    "sl_mult_lo":        0.5,
+    "be_trigger_r":      0.5,    # v2: fast BE protection
+    "hold_days":         15,
+}
+
+
+def migrate_settings():
+    """Force-write all tuned parameters regardless of what is currently in the DB."""
+    for key, val in _FORCED_UPDATES.items():
+        set_setting(key, val)
