@@ -16,6 +16,19 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
+import threading, time as _time_mod
+
+# ── Background backtest state (module-level so thread can write to it) ────────
+# Streamlit re-runs the script on every interaction; a module-level dict
+# survives re-runs whereas session_state cannot be written from a background thread.
+_BT_STATE: dict = {
+    "running":   False,
+    "done":      False,
+    "progress":  (0, 1, ""),   # (done, total, msg)
+    "result":    None,
+    "error":     None,
+    "traceback": None,
+}
 
 import db.database as db
 import config.settings as cfg
@@ -1246,56 +1259,67 @@ with tab_bt:
                     f"(~{_est_mins} min)"
                 )
 
-            progress_bar  = st.progress(0.0)
-            status_text   = st.empty()
-
-            def _progress(done: int, total: int, msg: str):
-                if total > 0:
-                    progress_bar.progress(min(done / total, 1.0))
-                status_text.caption(msg)
-
-            # Clear previous results immediately so stale data isn't shown during the run
+            # ── Launch backtest in a background thread ────────────────────────
+            # Running synchronously in Streamlit's main thread causes the process
+            # to be killed externally when the script times out or is re-run mid-way.
+            # A daemon thread survives Streamlit re-runs and writes results to the
+            # module-level _BT_STATE dict, which persists across re-runs.
             st.session_state.pop("bt_results", None)
-            _set_bt_lock()                            # ← lock: disable scan buttons
+            _set_bt_lock()
 
-            from backtest.engine import run_backtest
-            import traceback as _tb, pathlib as _pl
-            _bt_err = None
-            _bt_tb  = None
-            _bt_results = None
-            with st.spinner(""):
+            def _bt_thread_fn(tickers, start, end, cap, params):
+                import traceback as _tb2, pathlib as _pl2
+                from backtest.engine import run_backtest as _rbt
+                _BT_STATE.update({"running": True, "done": False,
+                                  "result": None, "error": None, "traceback": None,
+                                  "progress": (0, 1, "Starting…")})
+                def _prog(done, total, msg):
+                    _BT_STATE["progress"] = (done, total, msg)
                 try:
-                    _bt_results = run_backtest(
-                        tickers         = bt_tickers,
-                        test_start      = bt_start,
-                        test_end        = bt_end,
-                        initial_capital = float(initial_cap),
-                        params          = bt_params,
-                        progress_cb     = _progress,
-                    )
-                except Exception as _e:
-                    _bt_err = _e
-                    _bt_tb  = _tb.format_exc()
-                    # Write full traceback to file for easy debugging
+                    res = _rbt(tickers=tickers, test_start=start, test_end=end,
+                               initial_capital=float(cap), params=params,
+                               progress_cb=_prog)
+                    _BT_STATE["result"] = res
+                except Exception as _ex:
+                    _BT_STATE["error"]     = str(_ex)
+                    _BT_STATE["traceback"] = _tb2.format_exc()
                     try:
-                        _log_path = _pl.Path(__file__).parent / "bt_error.log"
-                        _log_path.write_text(_bt_tb, encoding="utf-8")
+                        _pl2.Path(__file__).parent.joinpath("bt_error.log").write_text(
+                            _BT_STATE["traceback"], encoding="utf-8")
                     except Exception:
                         pass
                 finally:
-                    _clear_bt_lock()                          # ← unlock
+                    _BT_STATE["running"] = False
+                    _BT_STATE["done"]    = True
+                    _clear_bt_lock()
 
-            if _bt_err is not None:
-                progress_bar.progress(1.0)
-                st.error(
-                    f"❌ **Backtest crashed — full error below.**\n\n"
-                    f"Also saved to `tradey-boi-pro/bt_error.log`"
-                )
-                st.code(_bt_tb, language="text")
-            else:
-                progress_bar.progress(1.0)
-                status_text.caption("✅ Backtest complete")
-                st.session_state["bt_results"] = _bt_results
+            _t = threading.Thread(
+                target=_bt_thread_fn,
+                args=(bt_tickers, bt_start, bt_end, initial_cap, bt_params),
+                daemon=True,
+            )
+            _t.start()
+            st.rerun()   # immediately re-render to show the polling UI
+
+    # ── Poll backtest thread progress / harvest results ───────────────────────
+    if _BT_STATE["running"]:
+        _done_u, _total_u, _msg_u = _BT_STATE["progress"]
+        _pct = min(_done_u / max(_total_u, 1), 0.99)
+        st.progress(_pct, text=f"⏳ {_msg_u}")
+        st.caption("Backtest running in background — you can switch tabs freely.")
+        _time_mod.sleep(1)
+        st.rerun()
+
+    if _BT_STATE["done"]:
+        _BT_STATE["done"] = False   # consume the flag so we don't show twice
+        if _BT_STATE["error"]:
+            st.error(f"❌ **Backtest crashed:** {_BT_STATE['error']}\n\nSaved to `bt_error.log`")
+            if _BT_STATE["traceback"]:
+                st.code(_BT_STATE["traceback"], language="text")
+        elif _BT_STATE["result"] is not None:
+            st.session_state["bt_results"] = _BT_STATE["result"]
+            _BT_STATE["result"] = None
+            st.rerun()
 
     # ── Display results ───────────────────────────────────────────────────────
     results = st.session_state.get("bt_results")
