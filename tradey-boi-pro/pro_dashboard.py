@@ -292,6 +292,12 @@ with tab_scan:
         univ_n = scanner.universe_size if scanner.universe_size > 0 else len(ASX_UNIVERSE) + len(US_UNIVERSE)
         st.metric("Universe Size", f"{univ_n} tickers")
         st.caption(f"ASX {len(ASX_UNIVERSE)}  ·  US {len(US_UNIVERSE)}")
+        if st.button("🔄 Refresh Regime", use_container_width=True,
+                     help="Force re-fetch regime data from Yahoo Finance (bypasses 4-hour cache)"):
+            from scanner.market_regime import clear_cache
+            clear_cache()
+            st.toast("Regime cache cleared — fetching fresh data…")
+            st.rerun()
 
     st.divider()
 

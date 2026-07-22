@@ -103,22 +103,33 @@ def get_all_regimes() -> dict[str, RegimeData]:
     }
 
 
+def clear_cache():
+    """Force the next get_regime() call to re-fetch from Yahoo Finance."""
+    _cache.clear()
+
+
 def _fetch_regime(market: str) -> RegimeData:
     import yfinance as yf
+    import contextlib, io, warnings as _w
 
     if market == "US":
+        # SPY = S&P 500 ETF (index), ^VIX = US volatility, ^NYA = NYSE breadth
         tickers = {"index": "SPY", "vix": "^VIX", "breadth": "^NYA"}
     elif market == "ASX":
-        tickers = {"index": "STW.AX", "vix": "^VIX", "breadth": "^AXJO"}
+        # ^AXJO = ASX 200 index, ^AXVI = ASX 200 VIX, STW.AX = ASX 200 ETF for breadth
+        tickers = {"index": "^AXJO", "vix": "^AXVI", "breadth": "STW.AX"}
     else:
         return RegimeData(market=market, regime=Regime.NEUTRAL, confidence=0.5,
                           fetched_at=datetime.utcnow())
 
     # Download ~1 year of daily data for indicators
-    raw = yf.download(
-        list(tickers.values()), period="1y", interval="1d",
-        auto_adjust=True, progress=False, group_by="ticker", threads=True
-    )
+    _sink = io.StringIO()
+    with contextlib.redirect_stderr(_sink), _w.catch_warnings():
+        _w.simplefilter("ignore")
+        raw = yf.download(
+            list(tickers.values()), period="1y", interval="1d",
+            auto_adjust=True, progress=False, group_by="ticker", threads=False,
+        )
 
     def _get_series(ticker: str) -> pd.Series | None:
         try:
@@ -228,7 +239,7 @@ def _fetch_regime(market: str) -> RegimeData:
 
     log.info(
         f"Regime [{market}]: {regime.value}  conf={confidence:.2f}  "
-        f"bull={bull_points}  bear={bear_points}  total={total}  "
+        f"bull={bull_points}  bear={bear_points}  "
         f"50EMA={pct_50ema:+.1f}%  200EMA={pct_200ema:+.1f}%  VIX={vix_val}"
     )
 
