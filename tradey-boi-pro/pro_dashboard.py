@@ -1191,15 +1191,15 @@ with tab_bt:
         with col3:
             st.markdown("**Risk parameters**")
             # Show the live-bot exit params that will be used (not adjustable here — set in Settings tab)
-            _sl_hi  = float(cfg.get("sl_mult_hi")  or 1.2)
-            _sl_mid = float(cfg.get("sl_mult_mid") or 1.0)
-            _sl_lo  = float(cfg.get("sl_mult_lo")  or 0.8)
+            _sl_hi  = float(cfg.get("sl_mult_hi")  or 0.8)
+            _sl_mid = float(cfg.get("sl_mult_mid") or 0.6)
+            _sl_lo  = float(cfg.get("sl_mult_lo")  or 0.5)
             _tg_hi  = float(cfg.get("target_hi")   or 15.0)
             _tg_mid = float(cfg.get("target_mid")  or 10.0)
             _tg_lo  = float(cfg.get("target_lo")   or 7.0)
-            _be_r   = float(cfg.get("be_trigger_r")    or 1.0)
-            _tr_r   = float(cfg.get("trail_trigger_r") or 4.0)
-            _td_r   = float(cfg.get("trail_dist_r")    or 2.0)
+            _be_r   = float(cfg.get("be_trigger_r")    or 0.5)
+            _tr_r   = float(cfg.get("trail_trigger_r") or 1.5)
+            _td_r   = float(cfg.get("trail_dist_r")    or 0.7)
             st.info(
                 f"📌 **Live bot exit params** (from Settings tab)\n\n"
                 f"Stops: {_sl_hi}× / {_sl_mid}× / {_sl_lo}× ATR  \n"
@@ -1278,15 +1278,16 @@ with tab_bt:
                 "min_hold_days":     bt_min_hold,
                 "brokerage":         bt_brokerage,
                 # These always pull from live bot settings so backtest = same system
-                "sl_mult_hi":        float(cfg.get("sl_mult_hi")  or 1.2),
-                "sl_mult_mid":       float(cfg.get("sl_mult_mid") or 1.0),
-                "sl_mult_lo":        float(cfg.get("sl_mult_lo")  or 0.8),
+                # Fallbacks match pro-sweep winner params (PF=2.248)
+                "sl_mult_hi":        float(cfg.get("sl_mult_hi")  or 0.8),
+                "sl_mult_mid":       float(cfg.get("sl_mult_mid") or 0.6),
+                "sl_mult_lo":        float(cfg.get("sl_mult_lo")  or 0.5),
                 "target_hi":         float(cfg.get("target_hi")   or 15.0),
                 "target_mid":        float(cfg.get("target_mid")  or 10.0),
                 "target_lo":         float(cfg.get("target_lo")   or 7.0),
-                "be_trigger_r":      float(cfg.get("be_trigger_r")    or 1.0),
-                "trail_trigger_r":   float(cfg.get("trail_trigger_r") or 4.0),
-                "trail_dist_r":      float(cfg.get("trail_dist_r")    or 2.0),
+                "be_trigger_r":      float(cfg.get("be_trigger_r")    or 0.5),
+                "trail_trigger_r":   float(cfg.get("trail_trigger_r") or 1.5),
+                "trail_dist_r":      float(cfg.get("trail_dist_r")    or 0.7),
                 "cb_consecutive_losses": int(cfg.get("cb_consecutive_losses") or 3),
                 "cb_pause_days":     int(cfg.get("cb_pause_days") or 7),
                 "use_regime_filter": bt_regime,

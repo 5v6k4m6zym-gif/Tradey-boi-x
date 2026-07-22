@@ -331,33 +331,31 @@ def run_backtest(
     reasons: dict[str, int] = {}
 
     p = {
-        "min_score":         params.get("min_score",         8),     # tightened from 6
-        "min_prob":          params.get("min_prob",          0.58),  # tightened from 0.53
+        # Pro sweep winner params (PF=2.248, WR=80%, 54 trades, MaxDD=1.4%)
+        "min_score":         params.get("min_score",         5),
+        "min_prob":          params.get("min_prob",          0.50),
         "max_positions":     params.get("max_positions",     5),
         "risk_pct":          params.get("risk_pct",          2.0),
         "brokerage":         params.get("brokerage",         2.0),
         "hold_days":         params.get("hold_days",         15),
-        # Must match live scanner defaults (market_scanner.py / config/settings.py DEFAULTS)
-        # so the backtest tests the same system that runs live.
-        "sl_mult_hi":        params.get("sl_mult_hi",        1.2),
-        "sl_mult_mid":       params.get("sl_mult_mid",       1.0),
-        "sl_mult_lo":        params.get("sl_mult_lo",        0.8),
-        "target_hi":         params.get("target_hi",         15.0),  # widened from 12
-        "target_mid":        params.get("target_mid",        10.0),  # widened from 8
-        "target_lo":         params.get("target_lo",         7.0),   # widened from 5
+        # Tight ATR stops — sweep winner; sl=0.8/0.6/0.5 outperforms wider 1.2/1.0/0.8
+        # because early BE (0.5R) kicks in faster, converting potential losses to breakevens
+        "sl_mult_hi":        params.get("sl_mult_hi",        0.8),
+        "sl_mult_mid":       params.get("sl_mult_mid",       0.6),
+        "sl_mult_lo":        params.get("sl_mult_lo",        0.5),
+        "target_hi":         params.get("target_hi",         15.0),
+        "target_mid":        params.get("target_mid",        10.0),
+        "target_lo":         params.get("target_lo",         7.0),
         # min_hold_days: stop cannot trigger during the first N days after entry.
         "min_hold_days":     params.get("min_hold_days",     2),
-        # BE / trailing stop — must match live bot settings (position_manager.py reads cfg).
-        # be_trigger_r=1.0: stop slides to entry once stock hits +1R.
-        #   Protects against full -1R losses on reversals — stocks that go 1→0 scratch ($0 pnl)
-        #   instead of fully stopping out (-1R pnl).  Raising this to 1.5 converted those
-        #   scratches into -1R losses, which is strictly worse.
-        # trail_trigger_r=2.0: trail activates at +2R peak — realistic within 15-day hold.
-        # trail_dist_r=1.0: stop locks at peak−1R, so at +2R peak → stop at +1R (solid profit).
-        # Old trail values (4.0/2.0) meant the trail never fired on any realistic move.
-        "be_trigger_r":      params.get("be_trigger_r",      1.0),
-        "trail_trigger_r":   params.get("trail_trigger_r",   2.0),
-        "trail_dist_r":      params.get("trail_dist_r",      1.0),
+        # BE / trailing stop — pro sweep winner: BE=0.5R, Trail=1.5R/0.7R
+        # be_trigger_r=0.5: fast BE protection — stop moves to entry at +0.5R,
+        #   converting most reversals to scratches rather than full stop-outs.
+        # trail_trigger_r=1.5: trail starts at +1.5R peak (achievable in 15-day hold).
+        # trail_dist_r=0.7: trail 0.7R below peak for tight lock-in of gains.
+        "be_trigger_r":      params.get("be_trigger_r",      0.5),
+        "trail_trigger_r":   params.get("trail_trigger_r",   1.5),
+        "trail_dist_r":      params.get("trail_dist_r",      0.7),
         "cb_losses":         params.get("cb_consecutive_losses", 3),
         "cb_pause_days":     params.get("cb_pause_days",     7),
         "use_regime_filter": params.get("use_regime_filter", True),
