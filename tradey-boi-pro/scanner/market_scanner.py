@@ -648,7 +648,7 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
 
         stop_price   = max(curr_price - sl_mult * atr, curr_price * 0.92)
         stop_dist    = curr_price - stop_price
-        target_price = curr_price + 3.0 * stop_dist   # 3:1 R:R always
+        target_price = curr_price + 2.0 * stop_dist   # 2:1 R:R — achievable, limits drawdown
 
         # ── Expected-value gate (X's formula) ─────────────────────────────────
         expected_r = _expected_value_r(curr_price, atr, prob, is_breakout)

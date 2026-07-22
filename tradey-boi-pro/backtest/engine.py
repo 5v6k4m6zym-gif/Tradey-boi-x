@@ -286,7 +286,7 @@ def _prescan_all(
 
                 stop_price   = max(curr_price - sl_mult * atr, curr_price * 0.92)
                 stop_dist    = curr_price - stop_price
-                target_price = curr_price + 3.0 * stop_dist
+                target_price = curr_price + 2.0 * stop_dist   # 2:1 R:R
 
                 signals[(ticker, ts.date())] = {
                     "ticker":       ticker,
@@ -755,7 +755,7 @@ def run_backtest(
                     sl_mult = p["sl_mult_lo"]
                 stop_price   = max(ep - sl_mult * atr, ep * 0.92)
                 stop_dist    = ep - stop_price
-                target_price = ep + 3.0 * stop_dist
+                target_price = ep + 2.0 * stop_dist   # 2:1 R:R
                 new_signals.append({
                     "ticker":       ticker,
                     "score":        score,
