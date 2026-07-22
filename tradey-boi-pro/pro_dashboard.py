@@ -977,6 +977,16 @@ with tab_bt:
             st.markdown("**Quality gates**")
             bt_min_score = st.slider("Min score",       1, 10,  7, key="bt_min_score")
             bt_min_prob  = st.slider("Min probability", 0.50, 0.75, 0.50, step=0.01, key="bt_min_prob")
+            bt_regime    = st.checkbox(
+                "Market regime filter",
+                value=True,
+                key="bt_regime",
+                help=(
+                    "When ON, skips all long trades on days when the broad market index "
+                    "(XJO for ASX, S&P 500 for US) is below its 50-day moving average. "
+                    "Prevents trading into bear markets where most stocks fall regardless of signal quality."
+                ),
+            )
             st.caption(
                 "ℹ️ These thresholds apply to the **backtest only** and do not affect the live bot. "
                 "The backtest uses the **same ML model and filters as live trading** — "
@@ -1026,20 +1036,21 @@ with tab_bt:
             st.error("No tickers in selected markets.")
         else:
             bt_params = {
-                "min_score":      bt_min_score,
-                "min_prob":       bt_min_prob,
-                "risk_pct":       bt_risk_pct,
-                "max_positions":  bt_max_pos,
-                "hold_days":      bt_hold,
-                "brokerage":      bt_brokerage,
-                "sl_mult_hi":     float(cfg.get("sl_mult_hi")  or 1.2),
-                "sl_mult_mid":    float(cfg.get("sl_mult_mid") or 1.0),
-                "sl_mult_lo":     float(cfg.get("sl_mult_lo")  or 0.8),
-                "target_hi":      float(cfg.get("target_hi")   or 12.0),
-                "target_mid":     float(cfg.get("target_mid")  or 8.0),
-                "target_lo":      float(cfg.get("target_lo")   or 5.0),
+                "min_score":         bt_min_score,
+                "min_prob":          bt_min_prob,
+                "risk_pct":          bt_risk_pct,
+                "max_positions":     bt_max_pos,
+                "hold_days":         bt_hold,
+                "brokerage":         bt_brokerage,
+                "sl_mult_hi":        float(cfg.get("sl_mult_hi")  or 1.2),
+                "sl_mult_mid":       float(cfg.get("sl_mult_mid") or 1.0),
+                "sl_mult_lo":        float(cfg.get("sl_mult_lo")  or 0.8),
+                "target_hi":         float(cfg.get("target_hi")   or 12.0),
+                "target_mid":        float(cfg.get("target_mid")  or 8.0),
+                "target_lo":         float(cfg.get("target_lo")   or 5.0),
                 "cb_consecutive_losses": int(cfg.get("cb_consecutive_losses") or 3),
-                "cb_pause_days":  int(cfg.get("cb_pause_days") or 7),
+                "cb_pause_days":     int(cfg.get("cb_pause_days") or 7),
+                "use_regime_filter": bt_regime,
             }
 
             st.info(

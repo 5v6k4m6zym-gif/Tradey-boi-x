@@ -51,15 +51,17 @@ except Exception as _e:
 
 @dataclass
 class BtPosition:
-    ticker:       str
-    entry_date:   date
-    entry_price:  float
-    stop_price:   float
-    target_price: float
-    quantity:     float
-    max_hold:     int
-    score:        float = 0
-    prob:         float = 0
+    ticker:         str
+    entry_date:     date
+    entry_price:    float
+    stop_price:     float
+    target_price:   float
+    quantity:       float
+    max_hold:       int
+    score:          float = 0
+    prob:           float = 0
+    orig_stop_dist: float = 0.0   # initial risk distance: entry - stop (fixed at open)
+    peak_close:     float = 0.0   # rolling highest close since entry (for trailing)
 
 @dataclass
 class BtTrade:
@@ -149,21 +151,22 @@ def run_backtest(
     reasons: dict[str, int] = {}
 
     p = {
-        "min_score":      params.get("min_score",      7),
-        "min_prob":       params.get("min_prob",       0.53),
-        "max_positions":  params.get("max_positions",  5),
-        "risk_pct":       params.get("risk_pct",       2.0),
-        "brokerage":      params.get("brokerage",      2.0),
-        "hold_days":      params.get("hold_days",      15),
-        "sl_mult_hi":     params.get("sl_mult_hi",     1.2),
-        "sl_mult_mid":    params.get("sl_mult_mid",    1.0),
-        "sl_mult_lo":     params.get("sl_mult_lo",     0.8),
-        "target_hi":      params.get("target_hi",      12.0),
-        "target_mid":     params.get("target_mid",     8.0),
-        "target_lo":      params.get("target_lo",      5.0),
-        "cb_losses":      params.get("cb_consecutive_losses", 3),
-        "cb_pause_days":  params.get("cb_pause_days",  7),
-        "_reasons":       reasons,   # shared mutable — _score_signal writes to this
+        "min_score":         params.get("min_score",         7),
+        "min_prob":          params.get("min_prob",          0.53),
+        "max_positions":     params.get("max_positions",     5),
+        "risk_pct":          params.get("risk_pct",          2.0),
+        "brokerage":         params.get("brokerage",         2.0),
+        "hold_days":         params.get("hold_days",         15),
+        "sl_mult_hi":        params.get("sl_mult_hi",        1.2),
+        "sl_mult_mid":       params.get("sl_mult_mid",       1.0),
+        "sl_mult_lo":        params.get("sl_mult_lo",        0.8),
+        "target_hi":         params.get("target_hi",         12.0),
+        "target_mid":        params.get("target_mid",        8.0),
+        "target_lo":         params.get("target_lo",         5.0),
+        "cb_losses":         params.get("cb_consecutive_losses", 3),
+        "cb_pause_days":     params.get("cb_pause_days",     7),
+        "use_regime_filter": params.get("use_regime_filter", True),
+        "_reasons":          reasons,
     }
 
     # Pre-warm the ML model so it loads once, not per-ticker
@@ -231,6 +234,37 @@ def run_backtest(
     if not available:
         return {"trades": [], "equity_curve": [], "metrics": _empty_metrics(), "params_used": p}
 
+    # ── Market regime: download ^AXJO (ASX) and ^GSPC (US) ──────────────────
+    # Used to block long trades when the broad market is below its 50-day MA.
+    asx_regime: dict[date, bool] = {}   # date → True = uptrend (trade OK)
+    us_regime:  dict[date, bool] = {}
+    if p["use_regime_filter"]:
+        for sym, regime_dict in [("^AXJO", asx_regime), ("^GSPC", us_regime)]:
+            try:
+                _sink2 = io.StringIO()
+                with contextlib.redirect_stderr(_sink2), _warnings.catch_warnings():
+                    _warnings.simplefilter("ignore")
+                    idx_raw = yf.download(
+                        sym,
+                        start=download_start.isoformat(),
+                        end=(test_end + timedelta(days=2)).isoformat(),
+                        interval="1d",
+                        auto_adjust=True,
+                        progress=False,
+                        threads=False,
+                    )
+                idx_df = _norm_cols(idx_raw.dropna(how="all"))
+                if not idx_df.empty:
+                    idx_df["ma50"] = idx_df["Close"].rolling(50).mean()
+                    for d_ts, idx_row in idx_df.iterrows():
+                        d_key = d_ts.date() if hasattr(d_ts, "date") else d_ts
+                        ma = idx_row.get("ma50", float("nan"))
+                        if not math.isnan(float(ma)):
+                            regime_dict[d_key] = float(idx_row["Close"]) > float(ma)
+                log.info(f"Regime data OK for {sym}: {len(regime_dict)} days")
+            except Exception as _re:
+                log.warning(f"Regime index {sym} download failed: {_re} — filter disabled for this market")
+
     # ── Build trading calendar from all available data ─────────────────────
     all_dates: set[date] = set()
     for df in all_data.values():
@@ -279,6 +313,29 @@ def run_backtest(
             day_low   = float(today_rows["Low"].iloc[0])
             day_close = float(today_rows["Close"].iloc[0])
             days_held = (sim_date - pos.entry_date).days
+
+            # ── Dynamic stop management ────────────────────────────────────
+            # Use the original entry-to-stop distance (fixed at open) as 1R.
+            one_r = pos.orig_stop_dist if pos.orig_stop_dist > 0 \
+                    else max(pos.entry_price - pos.stop_price, 0.0001)
+
+            # Update rolling peak close (needed for trailing stop)
+            if day_close > pos.peak_close:
+                pos.peak_close = day_close
+
+            # Break-even stop: once day's high hits entry+1R, slide stop to entry.
+            # Converts potential losses on round-trips into flat scratches.
+            be_trigger = pos.entry_price + one_r
+            if day_high >= be_trigger and pos.stop_price < pos.entry_price:
+                pos.stop_price = pos.entry_price
+
+            # Trailing stop: once peak close exceeds entry+1.5R, trail 1R below peak.
+            # Lets big winners run while locking in gains above break-even.
+            if pos.peak_close >= pos.entry_price + 1.5 * one_r:
+                trail_stop = round(pos.peak_close - one_r, 4)
+                if trail_stop > pos.stop_price:
+                    pos.stop_price = trail_stop
+            # ─────────────────────────────────────────────────────────────
 
             exit_price  = None
             exit_reason = None
@@ -428,6 +485,14 @@ def run_backtest(
         slots = p["max_positions"] - len(open_pos)
 
         for sig in new_signals[:slots]:
+            # Market regime gate: skip if the broad market is in a downtrend
+            if p["use_regime_filter"]:
+                is_asx    = sig["ticker"].upper().endswith(".AX")
+                regime    = asx_regime if is_asx else us_regime
+                # Only block if we actually have data for this date; default=allow
+                if regime and not regime.get(sim_date, True):
+                    continue
+
             # Entry = next trading day's open (find it)
             df     = all_data[sig["ticker"]]
             if hasattr(df.index[0], "date"):
@@ -468,16 +533,19 @@ def run_backtest(
                 stop_price  = entry_price * (1 - sl_pct)
                 target_price = entry_price * (1 + tp_pct)
 
+            orig_dist = round(entry_price - stop_price, 4)
             open_pos.append(BtPosition(
-                ticker       = sig["ticker"],
-                entry_date   = entry_date,
-                entry_price  = entry_price,
-                stop_price   = round(stop_price,   4),
-                target_price = round(target_price, 4),
-                quantity     = qty,
-                max_hold     = p["hold_days"],
-                score        = sig["score"],
-                prob         = sig["prob"],
+                ticker         = sig["ticker"],
+                entry_date     = entry_date,
+                entry_price    = entry_price,
+                stop_price     = round(stop_price,   4),
+                target_price   = round(target_price, 4),
+                quantity       = qty,
+                max_hold       = p["hold_days"],
+                score          = sig["score"],
+                prob           = sig["prob"],
+                orig_stop_dist = orig_dist,
+                peak_close     = entry_price,
             ))
             account -= p["brokerage"]   # entry commission
 
