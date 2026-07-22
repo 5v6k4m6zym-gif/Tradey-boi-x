@@ -342,13 +342,22 @@ class IBKRClient:
             return None
 
         async def _price():
+            import math as _math
             contract = Stock(ticker, exchange, currency)
             await self._ib.qualifyContractsAsync(contract)
             ticker_obj = self._ib.reqMktData(contract, "", False, False)
             await asyncio.sleep(2)
-            price = ticker_obj.last or ticker_obj.close
             self._ib.cancelMktData(contract)
-            return float(price) if price and price == price else None
+            # NaN is truthy in Python — must check explicitly, not use `or`
+            def _valid(v):
+                try:
+                    return v is not None and not _math.isnan(float(v)) and float(v) > 0
+                except (TypeError, ValueError):
+                    return False
+            for candidate in (ticker_obj.last, ticker_obj.close, ticker_obj.bid, ticker_obj.ask):
+                if _valid(candidate):
+                    return float(candidate)
+            return None
 
         try:
             return self._run_on_loop(_price(), timeout=10)
