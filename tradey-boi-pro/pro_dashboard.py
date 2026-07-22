@@ -78,7 +78,10 @@ with st.sidebar:
             bot.stop()
             cfg.set("bot_enabled", False)
             st.rerun()
-        if st.button("🔍 Scan Now", use_container_width=True):
+        _bt_busy = st.session_state.get("_bt_running", False)
+        if st.button("🔍 Scan Now", use_container_width=True,
+                     disabled=_bt_busy,
+                     help="Disabled while backtest is running" if _bt_busy else None):
             bot.force_scan()
             st.toast("Scan triggered!")
     else:
@@ -347,7 +350,10 @@ with tab_scan:
     col_a, col_b = st.columns([1, 2])
     with col_a:
         if bot.is_running():
-            if st.button("⚡ Force Tier 1 Scan Now", type="primary", use_container_width=True):
+            _bt_busy2 = st.session_state.get("_bt_running", False)
+            if _bt_busy2:
+                st.warning("⏸ Backtest is running — scanner paused to avoid conflicts.")
+            elif st.button("⚡ Force Tier 1 Scan Now", type="primary", use_container_width=True):
                 bot.force_scan()
                 st.toast("Full universe scan triggered — results update in ~60s")
         else:
@@ -991,9 +997,17 @@ with tab_bt:
                                            step=0.5, key="bt_brokerage")
 
     # ── Run button ────────────────────────────────────────────────────────────
+    _scan_active = scanner.is_scanning
     run_col, clear_col = st.columns([2, 1])
-    run_bt  = run_col.button("▶ Run Backtest", type="primary", use_container_width=True)
+    run_bt  = run_col.button(
+        "▶ Run Backtest", type="primary", use_container_width=True,
+        disabled=_scan_active,
+        help="Wait for the active scan to finish first" if _scan_active else None,
+    )
     clear_bt = clear_col.button("🗑 Clear Results", use_container_width=True)
+
+    if _scan_active:
+        st.warning("⏸ Scanner is currently running — wait for it to finish before starting a backtest.")
 
     if clear_bt:
         st.session_state.pop("bt_results", None)
@@ -1044,6 +1058,7 @@ with tab_bt:
 
             # Clear previous results immediately so stale data isn't shown during the run
             st.session_state.pop("bt_results", None)
+            st.session_state["_bt_running"] = True   # ← lock: disable scan buttons
 
             from backtest.engine import run_backtest
             import traceback as _tb, pathlib as _pl
@@ -1069,6 +1084,8 @@ with tab_bt:
                         _log_path.write_text(_bt_tb, encoding="utf-8")
                     except Exception:
                         pass
+                finally:
+                    st.session_state["_bt_running"] = False  # ← unlock
 
             if _bt_err is not None:
                 progress_bar.progress(1.0)
