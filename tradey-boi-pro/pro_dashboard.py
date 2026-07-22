@@ -84,6 +84,11 @@ with st.sidebar:
                      help="Disabled while backtest is running" if _bt_busy else None):
             bot.force_scan()
             st.toast("Scan triggered!")
+        if _bt_busy:
+            if st.button("🔓 Unlock Scanner", use_container_width=True,
+                         help="Force-clear the backtest lock if it stalled"):
+                st.session_state["_bt_running"] = False
+                st.rerun()
     else:
         if broker.connected:
             if st.button("▶ Start Bot", use_container_width=True, type="primary"):
@@ -353,6 +358,10 @@ with tab_scan:
             _bt_busy2 = st.session_state.get("_bt_running", False)
             if _bt_busy2:
                 st.warning("⏸ Backtest is running — scanner paused to avoid conflicts.")
+                if st.button("🔓 Unlock Scanner", key="unlock_scan_tab",
+                             help="Force-clear the backtest lock if it stalled"):
+                    st.session_state["_bt_running"] = False
+                    st.rerun()
             elif st.button("⚡ Force Tier 1 Scan Now", type="primary", use_container_width=True):
                 bot.force_scan()
                 st.toast("Full universe scan triggered — results update in ~60s")
@@ -1008,16 +1017,33 @@ with tab_bt:
 
     # ── Run button ────────────────────────────────────────────────────────────
     _scan_active = scanner.is_scanning
-    run_col, clear_col = st.columns([2, 1])
+    _bt_stuck    = st.session_state.get("_bt_running", False)
+    run_col, clear_col, unlock_col = st.columns([2, 1, 1])
     run_bt  = run_col.button(
         "▶ Run Backtest", type="primary", use_container_width=True,
-        disabled=_scan_active,
-        help="Wait for the active scan to finish first" if _scan_active else None,
+        disabled=_scan_active or _bt_stuck,
+        help=(
+            "Wait for the active scan to finish first" if _scan_active
+            else "Backtest lock is stuck — click Unlock first" if _bt_stuck
+            else None
+        ),
     )
-    clear_bt = clear_col.button("🗑 Clear Results", use_container_width=True)
+    clear_bt  = clear_col.button("🗑 Clear Results", use_container_width=True)
+    unlock_bt = unlock_col.button(
+        "🔓 Unlock", use_container_width=True,
+        disabled=not _bt_stuck,
+        help="Force-clear the backtest lock if it stalled" if _bt_stuck else "No lock active",
+    )
+
+    if unlock_bt:
+        st.session_state["_bt_running"] = False
+        st.toast("Backtest lock cleared — scanner is now available.")
+        st.rerun()
 
     if _scan_active:
         st.warning("⏸ Scanner is currently running — wait for it to finish before starting a backtest.")
+    if _bt_stuck:
+        st.warning("⏸ Backtest lock is active. If the backtest stalled, click **🔓 Unlock** to re-enable the scanner.")
 
     if clear_bt:
         st.session_state.pop("bt_results", None)
