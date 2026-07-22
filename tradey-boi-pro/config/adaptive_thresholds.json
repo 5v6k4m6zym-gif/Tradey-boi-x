@@ -1,0 +1,11 @@
+{
+  "prob_floor": 0.58,
+  "sb_base_score": 8,
+  "last_updated": "2026-07-22",
+  "last_checked": "2026-07-22",
+  "last_expectancy": null,
+  "last_win_rate": null,
+  "recent_n": 0,
+  "adjustment_history": [],
+  "_note": "Seeded from settings.py DEFAULTS on 2026-07-22. Auto-managed by adaptive_threshold_update() once ≥10 live trades are resolved. Safety bounds: prob_floor 0.53-0.62, sb_base_score 7-9."
+}

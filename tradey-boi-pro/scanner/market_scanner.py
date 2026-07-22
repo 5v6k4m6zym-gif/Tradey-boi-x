@@ -546,13 +546,20 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
             score      = max(0, score + ticker_adj)
 
         # ── Thresholds: backtest uses slider value; live uses adaptive file ───
+        # In live mode the adaptive file is authoritative, BUT it can only raise
+        # the bar above the settings floor — it cannot ease below manual settings.
+        # This prevents X's cold-start defaults (0.53/7) from silently overriding
+        # the tighter gates set in config/settings.py (0.58/8).
         if params.get("backtest_mode"):
             prob_floor = float(params.get("min_prob",  0.50))
             sb_base    = int(  params.get("min_score", 5))
         else:
-            acfg       = _load_x_adaptive_cfg()
-            prob_floor = float(acfg.get("prob_floor",    params.get("min_prob",  0.53)))
-            sb_base    = int(  acfg.get("sb_base_score", params.get("min_score", 7)))
+            acfg            = _load_x_adaptive_cfg()
+            settings_prob   = float(params.get("min_prob",  0.58))
+            settings_score  = int(  params.get("min_score", 8))
+            # Take whichever is tighter — adaptive OR manual settings floor
+            prob_floor = max(float(acfg.get("prob_floor",    0.58)), settings_prob)
+            sb_base    = max(int(  acfg.get("sb_base_score", 8)),    settings_score)
         elite_min, sb_min = _regime_score_thresholds(sb_base)
 
         # ── ATR / stop / target ───────────────────────────────────────────────

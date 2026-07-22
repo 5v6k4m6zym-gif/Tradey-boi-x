@@ -191,16 +191,18 @@ def adaptive_threshold_update() -> dict:
 
     if expectancy < -0.30:
         # Performance is poor — tighten gates
-        new_prob = min(round(prob_floor + 0.01, 4), 0.60)
+        new_prob = min(round(prob_floor + 0.01, 4), 0.62)   # hard ceiling 0.62
         new_sb   = min(sb_base + 1, 9)
         reason   = (
             f"Tightened: expectancy {expectancy:.3f}R < -0.30R threshold. "
             f"prob {prob_floor:.2f}→{new_prob:.2f}, score {sb_base}→{new_sb}"
         )
     elif expectancy > 0.80 and recent_alerts < 3:
-        # Strong performance AND signals are rare — ease up slightly
-        new_prob = max(round(prob_floor - 0.01, 4), 0.50)
-        new_sb   = max(sb_base - 1, 5)
+        # Strong performance AND signals are rare — ease up slightly, but never
+        # below the manual settings floor (0.58 / 8) so X's loose defaults can't
+        # creep back in through the adaptive easing path.
+        new_prob = max(round(prob_floor - 0.01, 4), 0.58)   # floor matches settings.py
+        new_sb   = max(sb_base - 1, 8)                       # floor matches settings.py
         reason   = (
             f"Eased: expectancy {expectancy:.3f}R > 0.80R and only "
             f"{recent_alerts} signals in 14 days. "
