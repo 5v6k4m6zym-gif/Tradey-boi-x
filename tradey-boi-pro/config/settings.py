@@ -5,6 +5,8 @@ All config persisted in SQLite — user never edits code.
 from __future__ import annotations
 from db.database import get_setting, set_setting, get_all_settings
 
+VERSION = "1.1"
+
 DEFAULTS: dict = {
     # Connection
     "mode":                  "PAPER",      # PAPER | LIVE

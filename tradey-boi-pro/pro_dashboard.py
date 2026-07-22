@@ -33,7 +33,7 @@ from scanner.monitor import TIER1_INTERVAL, TIER2_INTERVAL, TIER3_INTERVAL
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Tradey Boi Pro",
+    page_title="Tradey Boi Pro v1.1",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -92,7 +92,7 @@ bot    = st.session_state.bot
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("🤖 Tradey Boi Pro")
+    st.title("🤖 Tradey Boi Pro v1.1")
     mode       = cfg.get("mode") or "PAPER"
     mode_color = "🟡" if mode == "PAPER" else "🔴"
     st.markdown(f"**Mode:** {mode_color} {mode}")
