@@ -1,0 +1,67 @@
+{
+  "snapshots": [
+    {
+      "trade": 50,
+      "static_wr": 82.5,
+      "adapt_wr": 80.5,
+      "static_pf": 9.43,
+      "adapt_pf": 8.25
+    },
+    {
+      "trade": 100,
+      "static_wr": 88.2,
+      "adapt_wr": 83.5,
+      "static_pf": 31.33,
+      "adapt_pf": 14.67
+    },
+    {
+      "trade": 150,
+      "static_wr": 87.2,
+      "adapt_wr": 84.8,
+      "static_pf": 14.67,
+      "adapt_pf": 14.67
+    },
+    {
+      "trade": 200,
+      "static_wr": 86.2,
+      "adapt_wr": 83.1,
+      "static_pf": 10.5,
+      "adapt_pf": 7.09
+    },
+    {
+      "trade": 250,
+      "static_wr": 86.5,
+      "adapt_wr": 82.7,
+      "static_pf": 12.29,
+      "adapt_pf": 10.5
+    },
+    {
+      "trade": 300,
+      "static_wr": 87.2,
+      "adapt_wr": 83.1,
+      "static_pf": 14.67,
+      "adapt_pf": 10.5
+    }
+  ],
+  "final": {
+    "static": {
+      "wr": 87.16814159292035,
+      "pf": 13.59,
+      "pnl": 73000.0,
+      "trades": 226
+    },
+    "adaptive": {
+      "wr": 83.0827067669173,
+      "pf": 9.82,
+      "pnl": 79400.0,
+      "trades": 266
+    }
+  },
+  "learned_weights": {
+    "RSI": 0.239,
+    "Volume ratio": 3.673,
+    "Breakout": 1.979,
+    "Trend days": -0.41,
+    "ATR pct": -0.568
+  }
+}
