@@ -1,0 +1,309 @@
+{
+  "Single model (v3)": {
+    "phases": {
+      "warmup": {
+        "taken": 60,
+        "won": 44,
+        "pnl": 14400.0,
+        "by_regime": {
+          "BULL": {
+            "taken": 60,
+            "won": 44,
+            "pnl": 14400.0
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          }
+        }
+      },
+      "learn": {
+        "taken": 55,
+        "won": 33,
+        "pnl": 14496.943667593609,
+        "by_regime": {
+          "BULL": {
+            "taken": 38,
+            "won": 28,
+            "pnl": 15122.85506847159
+          },
+          "BEAR": {
+            "taken": 17,
+            "won": 5,
+            "pnl": -625.91140087798
+          },
+          "SIDEWAYS": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          }
+        }
+      },
+      "validate": {
+        "taken": 0,
+        "won": 0,
+        "pnl": 0.0,
+        "by_regime": {
+          "BULL": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          }
+        }
+      }
+    },
+    "weights": {
+      "ALL": {
+        "RSI": 0.02599994622480933,
+        "Volume ratio": -0.13323792168444282,
+        "Breakout": 0.26147484887313055,
+        "Trend days": -0.34959499750698886,
+        "ATR pct": -0.3363903958364668,
+        "Vol\u00d7Breakout": 0.28056740347928094,
+        "RSI momentum": 0.10472627546374681
+      }
+    },
+    "transitions": [],
+    "cb": 2,
+    "calib": 1
+  },
+  "Regime-aware (v4)": {
+    "phases": {
+      "warmup": {
+        "taken": 60,
+        "won": 44,
+        "pnl": 14400.0,
+        "by_regime": {
+          "BULL": {
+            "taken": 50,
+            "won": 37,
+            "pnl": 12200.0
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 10,
+            "won": 7,
+            "pnl": 2200.0
+          }
+        }
+      },
+      "learn": {
+        "taken": 49,
+        "won": 31,
+        "pnl": 14228.76867806647,
+        "by_regime": {
+          "BULL": {
+            "taken": 47,
+            "won": 31,
+            "pnl": 14738.113773899897
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 2,
+            "won": 0,
+            "pnl": -509.34509583342725
+          }
+        }
+      },
+      "validate": {
+        "taken": 7,
+        "won": 6,
+        "pnl": 2200.0,
+        "by_regime": {
+          "BULL": {
+            "taken": 7,
+            "won": 6,
+            "pnl": 2200.0
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          }
+        }
+      }
+    },
+    "weights": {
+      "BULL": {
+        "RSI": 0.044800522139268446,
+        "Volume ratio": -0.027998977463667547,
+        "Breakout": 0.20027872573283229,
+        "Trend days": -0.18504624082672955,
+        "ATR pct": -0.15386092987633998,
+        "Vol\u00d7Breakout": 0.19636313942236097,
+        "RSI momentum": 0.0698554209451004
+      },
+      "BEAR": {
+        "RSI": -0.04145109084386098,
+        "Volume ratio": -0.14598235621795103,
+        "Breakout": 0.11691160682487681,
+        "Trend days": -0.23296038087981802,
+        "ATR pct": -0.22974846945294325,
+        "Vol\u00d7Breakout": 0.12995825622739582,
+        "RSI momentum": 0.03662479210194153
+      },
+      "SIDEWAYS": {
+        "RSI": -0.027074730510911544,
+        "Volume ratio": -0.12817682705836494,
+        "Breakout": 0.129541919645622,
+        "Trend days": -0.22669842971086707,
+        "ATR pct": -0.22003190492615515,
+        "Vol\u00d7Breakout": 0.14059210500183536,
+        "RSI momentum": 0.04265960257424023
+      }
+    },
+    "transitions": [
+      [
+        9,
+        "SIDEWAYS",
+        "BULL"
+      ],
+      [
+        40,
+        "BULL",
+        "SIDEWAYS"
+      ],
+      [
+        41,
+        "SIDEWAYS",
+        "BULL"
+      ],
+      [
+        111,
+        "BULL",
+        "SIDEWAYS"
+      ],
+      [
+        118,
+        "SIDEWAYS",
+        "BEAR"
+      ],
+      [
+        128,
+        "BEAR",
+        "SIDEWAYS"
+      ],
+      [
+        129,
+        "SIDEWAYS",
+        "BEAR"
+      ],
+      [
+        132,
+        "BEAR",
+        "SIDEWAYS"
+      ],
+      [
+        133,
+        "SIDEWAYS",
+        "BEAR"
+      ],
+      [
+        135,
+        "BEAR",
+        "SIDEWAYS"
+      ],
+      [
+        147,
+        "SIDEWAYS",
+        "BEAR"
+      ],
+      [
+        149,
+        "BEAR",
+        "SIDEWAYS"
+      ],
+      [
+        152,
+        "SIDEWAYS",
+        "BEAR"
+      ],
+      [
+        153,
+        "BEAR",
+        "SIDEWAYS"
+      ],
+      [
+        156,
+        "SIDEWAYS",
+        "BEAR"
+      ],
+      [
+        160,
+        "BEAR",
+        "SIDEWAYS"
+      ],
+      [
+        214,
+        "SIDEWAYS",
+        "BULL"
+      ],
+      [
+        215,
+        "BULL",
+        "SIDEWAYS"
+      ],
+      [
+        259,
+        "SIDEWAYS",
+        "BULL"
+      ],
+      [
+        266,
+        "BULL",
+        "SIDEWAYS"
+      ],
+      [
+        280,
+        "SIDEWAYS",
+        "BEAR"
+      ],
+      [
+        281,
+        "BEAR",
+        "SIDEWAYS"
+      ],
+      [
+        283,
+        "SIDEWAYS",
+        "BEAR"
+      ],
+      [
+        286,
+        "BEAR",
+        "SIDEWAYS"
+      ]
+    ],
+    "cb": 2,
+    "calib": 0
+  }
+}
