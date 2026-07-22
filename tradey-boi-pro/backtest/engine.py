@@ -125,12 +125,15 @@ def _detect_signal(df_slice: pd.DataFrame, ticker: str, params: dict) -> dict | 
 # ── Main backtest engine ───────────────────────────────────────────────────────
 
 def run_backtest(
-    tickers:         list[str],
-    test_start:      date,
-    test_end:        date,
-    initial_capital: float = 10_000.0,
-    params:          dict  | None = None,
-    progress_cb:     Callable[[int, int, str], None] | None = None,
+    tickers:             list[str],
+    test_start:          date,
+    test_end:            date,
+    initial_capital:     float = 10_000.0,
+    params:              dict  | None = None,
+    progress_cb:         Callable[[int, int, str], None] | None = None,
+    preloaded_data:      dict  | None = None,
+    preloaded_regimes:   tuple[dict, dict] | None = None,
+    precomputed_signals: dict  | None = None,
 ) -> dict:
     """
     Walk-forward backtest of the Pro scanner.
@@ -151,15 +154,15 @@ def run_backtest(
     reasons: dict[str, int] = {}
 
     p = {
-        "min_score":         params.get("min_score",         7),
+        "min_score":         params.get("min_score",         6),
         "min_prob":          params.get("min_prob",          0.53),
         "max_positions":     params.get("max_positions",     5),
         "risk_pct":          params.get("risk_pct",          2.0),
         "brokerage":         params.get("brokerage",         2.0),
-        "hold_days":         params.get("hold_days",         15),
-        "sl_mult_hi":        params.get("sl_mult_hi",        1.2),
-        "sl_mult_mid":       params.get("sl_mult_mid",       1.0),
-        "sl_mult_lo":        params.get("sl_mult_lo",        0.8),
+        "hold_days":         params.get("hold_days",         10),
+        "sl_mult_hi":        params.get("sl_mult_hi",        0.8),
+        "sl_mult_mid":       params.get("sl_mult_mid",       0.6),
+        "sl_mult_lo":        params.get("sl_mult_lo",        0.5),
         "target_hi":         params.get("target_hi",         12.0),
         "target_mid":        params.get("target_mid",        8.0),
         "target_lo":         params.get("target_lo",         5.0),
@@ -176,94 +179,100 @@ def run_backtest(
         except Exception:
             pass
 
-    # ── Download historical data ─────────────────────────────────────────────
-    # Need 90 extra days before test_start for indicator warm-up
-    download_start = test_start - timedelta(days=120)
-    period_label   = f"{download_start.isoformat()} → {test_end.isoformat()}"
-    log.info(f"Downloading data: {period_label}  ({len(tickers)} tickers)")
-
-    if progress_cb:
-        progress_cb(0, len(tickers), "Downloading historical data…")
-
-    # Batch download — 50 tickers at a time
-    # Suppress yfinance console noise (delisted/missing tickers print to stderr)
     import contextlib, io, warnings as _warnings
-    all_data: dict[str, pd.DataFrame] = {}
-    batch_size = 20                     # smaller batches = more reliable on slow connections
-    batches    = [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
 
-    _total_units = len(tickers) * 2   # first half = download, second half = simulation
+    # ── Download historical data (skipped when preloaded_data is supplied) ───
+    download_start = test_start - timedelta(days=120)
 
-    for b_idx, batch in enumerate(batches):
+    if preloaded_data is not None:
+        all_data = preloaded_data
+        log.info(f"Using preloaded data for {len(all_data)} tickers — skipping download")
+    else:
+        period_label = f"{download_start.isoformat()} → {test_end.isoformat()}"
+        log.info(f"Downloading data: {period_label}  ({len(tickers)} tickers)")
+
         if progress_cb:
-            done = b_idx * batch_size          # 0 → len(tickers) covers first 50%
-            progress_cb(done, _total_units, f"Downloading batch {b_idx+1}/{len(batches)}…")
-        try:
-            _sink = io.StringIO()
-            with contextlib.redirect_stderr(_sink), _warnings.catch_warnings():
-                _warnings.simplefilter("ignore")
-                raw = yf.download(
-                    " ".join(batch),
-                    start=download_start.isoformat(),
-                    end=(test_end + timedelta(days=2)).isoformat(),
-                    interval="1d",
-                    auto_adjust=True,
-                    progress=False,
-                    group_by="ticker",
-                    threads=False,   # threads=True can deadlock on Windows
-                )
-            if len(batch) == 1:
-                df = _norm_cols(raw.dropna(how="all"))
-                if not df.empty:
-                    all_data[batch[0]] = df
-            else:
-                for t in batch:
-                    try:
-                        df = _norm_cols(raw[t].dropna(how="all"))
-                        if not df.empty and len(df) >= 30:
-                            all_data[t] = df
-                    except (KeyError, TypeError):
-                        pass
-        except Exception as e:
-            log.error(f"Batch download error: {e}")
+            progress_cb(0, len(tickers), "Downloading historical data…")
 
-    available    = list(all_data.keys())
-    skipped      = len(tickers) - len(available)
-    log.info(f"Got data for {len(available)}/{len(tickers)} tickers  ({skipped} skipped — no data/delisted)")
+        all_data: dict[str, pd.DataFrame] = {}
+        batch_size   = 20
+        batches      = [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
+        _total_units = len(tickers) * 2
 
-    if not available:
-        return {"trades": [], "equity_curve": [], "metrics": _empty_metrics(), "params_used": p}
-
-    # ── Market regime: download ^AXJO (ASX) and ^GSPC (US) ──────────────────
-    # Used to block long trades when the broad market is below its 50-day MA.
-    asx_regime: dict[date, bool] = {}   # date → True = uptrend (trade OK)
-    us_regime:  dict[date, bool] = {}
-    if p["use_regime_filter"]:
-        for sym, regime_dict in [("^AXJO", asx_regime), ("^GSPC", us_regime)]:
+        for b_idx, batch in enumerate(batches):
+            if progress_cb:
+                progress_cb(b_idx * batch_size, _total_units,
+                            f"Downloading batch {b_idx+1}/{len(batches)}…")
             try:
-                _sink2 = io.StringIO()
-                with contextlib.redirect_stderr(_sink2), _warnings.catch_warnings():
+                _sink = io.StringIO()
+                with contextlib.redirect_stderr(_sink), _warnings.catch_warnings():
                     _warnings.simplefilter("ignore")
-                    idx_raw = yf.download(
-                        sym,
+                    raw = yf.download(
+                        " ".join(batch),
                         start=download_start.isoformat(),
                         end=(test_end + timedelta(days=2)).isoformat(),
                         interval="1d",
                         auto_adjust=True,
                         progress=False,
+                        group_by="ticker",
                         threads=False,
                     )
-                idx_df = _norm_cols(idx_raw.dropna(how="all"))
-                if not idx_df.empty:
-                    idx_df["ma50"] = idx_df["Close"].rolling(50).mean()
-                    for d_ts, idx_row in idx_df.iterrows():
-                        d_key = d_ts.date() if hasattr(d_ts, "date") else d_ts
-                        ma = idx_row.get("ma50", float("nan"))
-                        if not math.isnan(float(ma)):
-                            regime_dict[d_key] = float(idx_row["Close"]) > float(ma)
-                log.info(f"Regime data OK for {sym}: {len(regime_dict)} days")
-            except Exception as _re:
-                log.warning(f"Regime index {sym} download failed: {_re} — filter disabled for this market")
+                if len(batch) == 1:
+                    df = _norm_cols(raw.dropna(how="all"))
+                    if not df.empty:
+                        all_data[batch[0]] = df
+                else:
+                    for t in batch:
+                        try:
+                            df = _norm_cols(raw[t].dropna(how="all"))
+                            if not df.empty and len(df) >= 30:
+                                all_data[t] = df
+                        except (KeyError, TypeError):
+                            pass
+            except Exception as e:
+                log.error(f"Batch download error: {e}")
+
+    available     = list(all_data.keys())
+    skipped       = len(tickers) - len(available)
+    _total_units  = len(available) * 2   # used for progress_cb (download 50% + sim 50%)
+    log.info(f"Got data for {len(available)}/{len(tickers)} tickers  ({skipped} skipped)")
+
+    if not available:
+        return {"trades": [], "equity_curve": [], "metrics": _empty_metrics(), "params_used": p}
+
+    # ── Market regime (skipped when preloaded_regimes is supplied) ──────────
+    if preloaded_regimes is not None:
+        asx_regime, us_regime = preloaded_regimes
+        log.info("Using preloaded regime data — skipping regime download")
+    else:
+        asx_regime: dict[date, bool] = {}
+        us_regime:  dict[date, bool] = {}
+        if p["use_regime_filter"]:
+            for sym, regime_dict in [("^AXJO", asx_regime), ("^GSPC", us_regime)]:
+                try:
+                    _sink2 = io.StringIO()
+                    with contextlib.redirect_stderr(_sink2), _warnings.catch_warnings():
+                        _warnings.simplefilter("ignore")
+                        idx_raw = yf.download(
+                            sym,
+                            start=download_start.isoformat(),
+                            end=(test_end + timedelta(days=2)).isoformat(),
+                            interval="1d",
+                            auto_adjust=True,
+                            progress=False,
+                            threads=False,
+                        )
+                    idx_df = _norm_cols(idx_raw.dropna(how="all"))
+                    if not idx_df.empty:
+                        idx_df["ma50"] = idx_df["Close"].rolling(50).mean()
+                        for d_ts, idx_row in idx_df.iterrows():
+                            d_key = d_ts.date() if hasattr(d_ts, "date") else d_ts
+                            ma    = idx_row.get("ma50", float("nan"))
+                            if not math.isnan(float(ma)):
+                                regime_dict[d_key] = float(idx_row["Close"]) > float(ma)
+                    log.info(f"Regime data OK for {sym}: {len(regime_dict)} days")
+                except Exception as _re:
+                    log.warning(f"Regime index {sym} failed: {_re}")
 
     # ── Build trading calendar from all available data ─────────────────────
     all_dates: set[date] = set()
@@ -411,18 +420,65 @@ def run_backtest(
         open_tickers = {pos.ticker for pos in open_pos}
         new_signals  = []
 
-        for ticker, df in all_data.items():
-            if ticker in open_tickers:
-                continue
-            # Slice to data available on sim_date
-            if hasattr(df.index[0], "date"):
-                mask = [d.date() <= sim_date for d in df.index]
-            else:
-                mask = df.index <= pd.Timestamp(sim_date)
-            df_slice = df[mask]
-            sig = _detect_signal(df_slice, ticker, p)
-            if sig and sig.get("score", 0) >= p["min_score"]:
-                new_signals.append(sig)
+        if precomputed_signals is not None:
+            # ── Fast path: use pre-computed signal cache (no indicator recomputation) ──
+            elite_min = p["min_score"] + 2
+            sb_min    = p["min_score"]
+            for ticker in available:
+                if ticker in open_tickers:
+                    continue
+                raw = precomputed_signals.get((ticker, sim_date))
+                if raw is None:
+                    continue
+                score = raw["score"]
+                prob  = raw["prob"]
+                if score < p["min_score"] or prob < p["min_prob"]:
+                    continue
+                if raw.get("expected_r", 1.0) <= 0:
+                    continue
+                # Determine tier from current min_score
+                if score >= elite_min:
+                    tier = "ELITE"
+                elif score >= sb_min:
+                    tier = "STRONG BUY"
+                else:
+                    continue
+                # Recompute stop/target from stored atr and current sl/target params
+                atr_pct = raw["atr_pct"]
+                atr     = raw["atr"]
+                ep      = raw["entry_price"]
+                if atr_pct >= 3.0:
+                    sl_mult = p["sl_mult_hi"];  tp_pct = p["target_hi"]
+                elif atr_pct >= 1.5:
+                    sl_mult = p["sl_mult_mid"]; tp_pct = p["target_mid"]
+                else:
+                    sl_mult = p["sl_mult_lo"];  tp_pct = p["target_lo"]
+                stop_price   = max(ep - sl_mult * atr, ep * 0.88)
+                target_price = ep * (1 + tp_pct / 100)
+                new_signals.append({
+                    "ticker":       ticker,
+                    "score":        score,
+                    "prob":         prob,
+                    "tier":         tier,
+                    "entry_price":  ep,
+                    "stop_price":   stop_price,
+                    "target_price": target_price,
+                    "atr_pct":      atr_pct,
+                    "exchange":     raw.get("exchange", "SMART"),
+                })
+        else:
+            # ── Slow path: full indicator recomputation per (ticker, day) ────────────
+            for ticker, df in all_data.items():
+                if ticker in open_tickers:
+                    continue
+                if hasattr(df.index[0], "date"):
+                    mask = [d.date() <= sim_date for d in df.index]
+                else:
+                    mask = df.index <= pd.Timestamp(sim_date)
+                df_slice = df[mask]
+                sig = _detect_signal(df_slice, ticker, p)
+                if sig and sig.get("score", 0) >= p["min_score"]:
+                    new_signals.append(sig)
 
         # Sort by score + probability descending
         new_signals.sort(key=lambda s: (s["score"], s["prob"]), reverse=True)

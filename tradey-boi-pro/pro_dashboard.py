@@ -844,7 +844,7 @@ with tab_settings:
                               float(cfg.get("max_exposure_pct") or 30.0), step=5.0, key="set_max_exp")
         max_dl   = st.slider("Daily loss limit (%)", 1.0, 10.0,
                               float(cfg.get("max_daily_loss_pct") or 3.0), step=0.5, key="set_max_dl")
-        hold_d   = st.slider("Max hold days", 5, 30, int(cfg.get("hold_days") or 15), key="set_hold_d")
+        hold_d   = st.slider("Max hold days", 5, 30, int(cfg.get("hold_days") or 10), key="set_hold_d")
 
         st.subheader("Circuit Breaker")
         cb_losses = st.slider("Losses to trigger", 2, 6,
@@ -856,7 +856,7 @@ with tab_settings:
         min_prob      = st.slider("Min probability", 0.50, 0.75,
                                    float(cfg.get("min_prob") or 0.53), step=0.01, key="set_min_prob")
         min_score     = st.slider("Min score (X-style 0–10)", 5, 10,
-                                   int(cfg.get("min_score") or 7), key="set_min_score")
+                                   int(cfg.get("min_score") or 6), key="set_min_score")
         min_composite = st.slider("Min composite score (Pro ranking)", 5.0, 9.5,
                                    float(cfg.get("min_composite") or 7.0), step=0.5,
                                    help="Only STRONG BUY (≥7.0) and ELITE (≥8.5) are traded",
@@ -864,11 +864,11 @@ with tab_settings:
 
         st.subheader("Stop Loss (× ATR)")
         sl_hi  = st.slider("High-vol  (ATR ≥ 3%)", 0.5, 2.5,
-                            float(cfg.get("sl_mult_hi")  or 1.2), step=0.1, key="set_sl_hi")
+                            float(cfg.get("sl_mult_hi")  or 0.8), step=0.1, key="set_sl_hi")
         sl_mid = st.slider("Mid-vol   (1.5–3%)", 0.5, 2.5,
-                            float(cfg.get("sl_mult_mid") or 1.0), step=0.1, key="set_sl_mid")
+                            float(cfg.get("sl_mult_mid") or 0.6), step=0.1, key="set_sl_mid")
         sl_lo  = st.slider("Low-vol   (< 1.5%)", 0.5, 2.5,
-                            float(cfg.get("sl_mult_lo")  or 0.8), step=0.1, key="set_sl_lo")
+                            float(cfg.get("sl_mult_lo")  or 0.5), step=0.1, key="set_sl_lo")
 
         st.subheader("Profit Targets (%)")
         tgt_hi  = st.slider("High-vol target",  5.0, 25.0,
@@ -975,7 +975,7 @@ with tab_bt:
                 f"US: {len(_BT_US)} tickers"
             )
             st.markdown("**Quality gates**")
-            bt_min_score = st.slider("Min score",       1, 10,  7, key="bt_min_score")
+            bt_min_score = st.slider("Min score",       1, 10,  6, key="bt_min_score")
             bt_min_prob  = st.slider("Min probability", 0.50, 0.75, 0.50, step=0.01, key="bt_min_prob")
             bt_regime    = st.checkbox(
                 "Market regime filter",
@@ -1001,7 +1001,7 @@ with tab_bt:
             bt_max_pos   = st.slider("Max positions",  1, 10,
                                      int(cfg.get("max_positions") or 5), key="bt_max_pos")
             bt_hold      = st.slider("Max hold days",  5, 30,
-                                     int(cfg.get("hold_days") or 15), key="bt_hold")
+                                     int(cfg.get("hold_days") or 10), key="bt_hold")
             bt_brokerage = st.number_input("Brokerage per side ($)",
                                            value=float(cfg.get("brokerage") or 2.0),
                                            step=0.5, key="bt_brokerage")
@@ -1042,9 +1042,9 @@ with tab_bt:
                 "max_positions":     bt_max_pos,
                 "hold_days":         bt_hold,
                 "brokerage":         bt_brokerage,
-                "sl_mult_hi":        float(cfg.get("sl_mult_hi")  or 1.2),
-                "sl_mult_mid":       float(cfg.get("sl_mult_mid") or 1.0),
-                "sl_mult_lo":        float(cfg.get("sl_mult_lo")  or 0.8),
+                "sl_mult_hi":        float(cfg.get("sl_mult_hi")  or 0.8),
+                "sl_mult_mid":       float(cfg.get("sl_mult_mid") or 0.6),
+                "sl_mult_lo":        float(cfg.get("sl_mult_lo")  or 0.5),
                 "target_hi":         float(cfg.get("target_hi")   or 12.0),
                 "target_mid":        float(cfg.get("target_mid")  or 8.0),
                 "target_lo":         float(cfg.get("target_lo")   or 5.0),
