@@ -1,0 +1,273 @@
+{
+  "Static (no learning)": {
+    "phases": {
+      "warmup": {
+        "taken": 41,
+        "won": 33,
+        "pnl": 11600.0,
+        "by_regime": {
+          "BULL": {
+            "taken": 41,
+            "won": 33,
+            "pnl": 11600.0
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          }
+        }
+      },
+      "learn": {
+        "taken": 97,
+        "won": 44,
+        "pnl": 7000.0,
+        "by_regime": {
+          "BULL": {
+            "taken": 33,
+            "won": 25,
+            "pnl": 8400.0
+          },
+          "BEAR": {
+            "taken": 59,
+            "won": 14,
+            "pnl": -3400.0
+          },
+          "SIDEWAYS": {
+            "taken": 5,
+            "won": 5,
+            "pnl": 2000.0
+          }
+        }
+      },
+      "validate": {
+        "taken": 94,
+        "won": 82,
+        "pnl": 30400.0,
+        "by_regime": {
+          "BULL": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 94,
+            "won": 82,
+            "pnl": 30400.0
+          }
+        }
+      }
+    },
+    "weights": {},
+    "cb": 0,
+    "calib": 0,
+    "transitions": []
+  },
+  "Single adaptive (v3)": {
+    "phases": {
+      "warmup": {
+        "taken": 60,
+        "won": 44,
+        "pnl": 14400.0,
+        "by_regime": {
+          "BULL": {
+            "taken": 60,
+            "won": 44,
+            "pnl": 14400.0
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          }
+        }
+      },
+      "learn": {
+        "taken": 55,
+        "won": 33,
+        "pnl": 14496.943667593609,
+        "by_regime": {
+          "BULL": {
+            "taken": 38,
+            "won": 28,
+            "pnl": 15122.85506847159
+          },
+          "BEAR": {
+            "taken": 17,
+            "won": 5,
+            "pnl": -625.91140087798
+          },
+          "SIDEWAYS": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          }
+        }
+      },
+      "validate": {
+        "taken": 0,
+        "won": 0,
+        "pnl": 0.0,
+        "by_regime": {
+          "BULL": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          }
+        }
+      }
+    },
+    "weights": {
+      "ALL": {
+        "RSI": 0.02599994622480933,
+        "Volume ratio": -0.13323792168444282,
+        "Breakout": 0.26147484887313055,
+        "Trend days": -0.34959499750698886,
+        "ATR pct": -0.3363903958364668,
+        "Vol\u00d7Breakout": 0.28056740347928094,
+        "RSI momentum": 0.10472627546374681
+      }
+    },
+    "cb": 2,
+    "calib": 0,
+    "transitions": []
+  },
+  "Regime-aware (v5)": {
+    "phases": {
+      "warmup": {
+        "taken": 60,
+        "won": 44,
+        "pnl": 14400.0,
+        "by_regime": {
+          "BULL": {
+            "taken": 32,
+            "won": 23,
+            "pnl": 7400.0
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 28,
+            "won": 21,
+            "pnl": 7000.0
+          }
+        }
+      },
+      "learn": {
+        "taken": 56,
+        "won": 34,
+        "pnl": 14623.125053088723,
+        "by_regime": {
+          "BULL": {
+            "taken": 54,
+            "won": 33,
+            "pnl": 14525.127459758882
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 2,
+            "won": 1,
+            "pnl": 97.99759332984098
+          }
+        }
+      },
+      "validate": {
+        "taken": 0,
+        "won": 0,
+        "pnl": 0.0,
+        "by_regime": {
+          "BULL": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "BEAR": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          },
+          "SIDEWAYS": {
+            "taken": 0,
+            "won": 0,
+            "pnl": 0.0
+          }
+        }
+      }
+    },
+    "weights": {
+      "BULL": {
+        "RSI": 0.008471309209650647,
+        "Volume ratio": -0.06956213314229641,
+        "Breakout": 0.3357635101545272,
+        "Trend days": -0.10921657906011044,
+        "ATR pct": -0.07574377204776726,
+        "Vol\u00d7Breakout": 0.23424382434073773,
+        "RSI momentum": 0.04565368118065832
+      },
+      "BEAR": {
+        "RSI": 0.0,
+        "Volume ratio": 0.0,
+        "Breakout": 0.0,
+        "Trend days": 0.0,
+        "ATR pct": 0.0,
+        "Vol\u00d7Breakout": 0.0,
+        "RSI momentum": 0.0
+      },
+      "SIDEWAYS": {
+        "RSI": 0.02098806965205449,
+        "Volume ratio": -0.09106904793295743,
+        "Breakout": 0.15296134070248074,
+        "Trend days": -0.30672776587188605,
+        "ATR pct": -0.30890549047261356,
+        "Vol\u00d7Breakout": 0.20893355333579458,
+        "RSI momentum": 0.08200092031735948
+      }
+    },
+    "cb": 2,
+    "calib": 0,
+    "transitions": [
+      [
+        28,
+        "SIDEWAYS",
+        "BULL"
+      ],
+      [
+        125,
+        "BULL",
+        "SIDEWAYS"
+      ]
+    ]
+  }
+}
