@@ -594,10 +594,10 @@ def run_backtest(
             if day_high >= be_trigger and pos.stop_price < pos.entry_price:
                 pos.stop_price = pos.entry_price
 
-            # Trailing stop: once peak close exceeds entry+1.5R, trail 1R below peak.
-            # Lets big winners run while locking in gains above break-even.
+            # Trailing stop: once peak close exceeds entry+1.5R, trail 0.7R below peak.
+            # Tighter than 1R — locks in more profit on reversals without killing win rate.
             if pos.peak_close >= pos.entry_price + 1.5 * one_r:
-                trail_stop = round(pos.peak_close - one_r, 4)
+                trail_stop = round(pos.peak_close - 0.7 * one_r, 4)
                 if trail_stop > pos.stop_price:
                     pos.stop_price = trail_stop
             # ─────────────────────────────────────────────────────────────
