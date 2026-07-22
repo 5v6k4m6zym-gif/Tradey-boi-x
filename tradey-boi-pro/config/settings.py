@@ -25,12 +25,16 @@ DEFAULTS: dict = {
     # Exit parameters — pro-sweep winner: tight ATR stops + 15-day hold + early BE
     # Backtest result: PF=2.248, WR=80%, ROI=+6.4%, 54 trades, MaxDD=1.4%
     "hold_days":             15,
-    "sl_mult_hi":            0.8,     # tight stop for high-ATR stocks (≥3% ATR)
-    "sl_mult_mid":           0.6,     # tight stop for mid-ATR stocks (1.5-3% ATR)
-    "sl_mult_lo":            0.5,     # tight stop for low-ATR stocks (<1.5% ATR)
-    "target_hi":             10.0,   # lowered from 15% — achievable in 15-day hold
-    "target_mid":            7.0,    # lowered from 10%
-    "target_lo":             5.0,    # lowered from 7%
+    # Stops widened so daily noise doesn't prematurely trigger them.
+    # Targets now derived as 3× stop distance at trade entry (3:1 R:R always).
+    # The target_hi/mid/lo keys are kept for dashboard display only — the engine
+    # computes target_price = entry + 3 × stop_dist and ignores these values.
+    "sl_mult_hi":            1.5,     # high-ATR (≥3% ATR): 4.5% stop on 3% ATR stock
+    "sl_mult_mid":           1.2,     # mid-ATR (1.5-3%): 2.4% stop on 2% ATR stock
+    "sl_mult_lo":            1.0,     # low-ATR (<1.5%): 1% stop on 1% ATR stock
+    "target_hi":             10.0,    # display only — actual target = 3× stop dist
+    "target_mid":            7.0,
+    "target_lo":             5.0,
 
     # Dynamic stop management — pro-sweep winner: BE=0.5R, Trail=1.5R/0.7R
     "min_hold_days":         2,       # stop cannot trigger in first N days (entry-day noise)
@@ -99,9 +103,9 @@ _FORCED_UPDATES: dict = {
     "target_lo":         5.0,    # v3: lowered 7→5%
     "trail_trigger_r":   2.0,    # v3: raised 1.5→2.0 (don't trail prematurely)
     "trail_dist_r":      1.0,    # v3: widened 0.7→1.0 (room to breathe on pullbacks)
-    "sl_mult_hi":        0.8,    # v2: sweep winner tight stops
-    "sl_mult_mid":       0.6,
-    "sl_mult_lo":        0.5,
+    "sl_mult_hi":        1.5,    # v4: widened — outside daily noise range
+    "sl_mult_mid":       1.2,
+    "sl_mult_lo":        1.0,
     "be_trigger_r":      0.5,    # v2: fast BE protection
     "hold_days":         15,
 }

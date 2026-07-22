@@ -637,15 +637,18 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
         atr         = float(row["atr"]) if not pd.isna(row["atr"]) else curr_price * 0.015
         atr_pct     = atr / curr_price * 100 if curr_price > 0 else 0
 
+        # Stop: wider multipliers so daily noise doesn't trigger prematurely.
+        # Target: always 3× the stop distance (consistent 3:1 R:R regardless of ATR tier).
         if atr_pct >= 3.0:
-            sl_mult = params.get("sl_mult_hi",  1.2);  tp_pct = params.get("target_hi",  12.0)
+            sl_mult = params.get("sl_mult_hi",  1.5)
         elif atr_pct >= 1.5:
-            sl_mult = params.get("sl_mult_mid", 1.0);  tp_pct = params.get("target_mid",  8.0)
+            sl_mult = params.get("sl_mult_mid", 1.2)
         else:
-            sl_mult = params.get("sl_mult_lo",  0.8);  tp_pct = params.get("target_lo",   5.0)
+            sl_mult = params.get("sl_mult_lo",  1.0)
 
-        stop_price   = max(curr_price - sl_mult * atr, curr_price * 0.88)
-        target_price = curr_price * (1 + tp_pct / 100)
+        stop_price   = max(curr_price - sl_mult * atr, curr_price * 0.92)
+        stop_dist    = curr_price - stop_price
+        target_price = curr_price + 3.0 * stop_dist   # 3:1 R:R always
 
         # ── Expected-value gate (X's formula) ─────────────────────────────────
         expected_r = _expected_value_r(curr_price, atr, prob, is_breakout)

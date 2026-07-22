@@ -276,16 +276,17 @@ def _prescan_all(
                 else:
                     continue
 
-                # ── Stop / target ─────────────────────────────────────────────
+                # ── Stop / target (3:1 R:R always) ───────────────────────────
                 if atr_pct >= 3.0:
-                    sl_mult = p.get("sl_mult_hi",  0.8); tp_pct = p.get("target_hi",  12.0)
+                    sl_mult = p.get("sl_mult_hi",  1.5)
                 elif atr_pct >= 1.5:
-                    sl_mult = p.get("sl_mult_mid", 0.6); tp_pct = p.get("target_mid",  8.0)
+                    sl_mult = p.get("sl_mult_mid", 1.2)
                 else:
-                    sl_mult = p.get("sl_mult_lo",  0.5); tp_pct = p.get("target_lo",   5.0)
+                    sl_mult = p.get("sl_mult_lo",  1.0)
 
-                stop_price   = max(curr_price - sl_mult * atr, curr_price * 0.88)
-                target_price = curr_price * (1 + tp_pct / 100)
+                stop_price   = max(curr_price - sl_mult * atr, curr_price * 0.92)
+                stop_dist    = curr_price - stop_price
+                target_price = curr_price + 3.0 * stop_dist
 
                 signals[(ticker, ts.date())] = {
                     "ticker":       ticker,
@@ -348,11 +349,11 @@ def run_backtest(
         "risk_pct":          params.get("risk_pct",          2.0),
         "brokerage":         params.get("brokerage",         2.0),
         "hold_days":         params.get("hold_days",         15),
-        # Tight ATR stops — sweep winner; sl=0.8/0.6/0.5 outperforms wider 1.2/1.0/0.8
-        # because early BE (0.5R) kicks in faster, converting potential losses to breakevens
-        "sl_mult_hi":        params.get("sl_mult_hi",        0.8),
-        "sl_mult_mid":       params.get("sl_mult_mid",       0.6),
-        "sl_mult_lo":        params.get("sl_mult_lo",        0.5),
+        # Wider ATR stops — outside daily noise so trades can develop before stopping out.
+        # Target is always 3× stop distance (computed at signal time), giving 3:1 R:R.
+        "sl_mult_hi":        params.get("sl_mult_hi",        1.5),
+        "sl_mult_mid":       params.get("sl_mult_mid",       1.2),
+        "sl_mult_lo":        params.get("sl_mult_lo",        1.0),
         # Targets calibrated to realistic 15-day move potential for quality stocks.
         # Previous 15/10/7% were too ambitious — breakouts typically move 6-10% in 2wks.
         # Lower targets = more hits, faster capital recycling, same R:R (stops are tight).
@@ -742,18 +743,19 @@ def run_backtest(
                 # Quality stocks (large/liquid mid-cap) trade at normal threshold.
                 if not is_quality_ticker(ticker) and tier != "ELITE":
                     continue
-                # Recompute stop/target from stored atr and current sl/target params
+                # Recompute stop/target with 3:1 R:R
                 atr_pct = raw["atr_pct"]
                 atr     = raw["atr"]
                 ep      = raw["entry_price"]
                 if atr_pct >= 3.0:
-                    sl_mult = p["sl_mult_hi"];  tp_pct = p["target_hi"]
+                    sl_mult = p["sl_mult_hi"]
                 elif atr_pct >= 1.5:
-                    sl_mult = p["sl_mult_mid"]; tp_pct = p["target_mid"]
+                    sl_mult = p["sl_mult_mid"]
                 else:
-                    sl_mult = p["sl_mult_lo"];  tp_pct = p["target_lo"]
-                stop_price   = max(ep - sl_mult * atr, ep * 0.88)
-                target_price = ep * (1 + tp_pct / 100)
+                    sl_mult = p["sl_mult_lo"]
+                stop_price   = max(ep - sl_mult * atr, ep * 0.92)
+                stop_dist    = ep - stop_price
+                target_price = ep + 3.0 * stop_dist
                 new_signals.append({
                     "ticker":       ticker,
                     "score":        score,
