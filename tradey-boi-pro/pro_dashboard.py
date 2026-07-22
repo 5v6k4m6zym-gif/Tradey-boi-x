@@ -1368,7 +1368,14 @@ with tab_bt:
             if _BT_STATE["traceback"]:
                 st.code(_BT_STATE["traceback"], language="text")
         elif _BT_STATE["result"] is not None:
-            st.session_state["bt_results"] = _BT_STATE["result"]
+            _raw_res = _BT_STATE["result"]
+            # Pop heavy preloaded artifacts into their own session keys so they
+            # don't travel with every bt_results reference, then reuse them in
+            # the stop-parameter sweep without re-downloading anything.
+            st.session_state["_bt_preloaded_data"]      = _raw_res.pop("_preloaded_data", None)
+            st.session_state["_bt_preloaded_regimes"]   = _raw_res.pop("_preloaded_regimes", None)
+            st.session_state["_bt_precomputed_signals"] = _raw_res.pop("_precomputed_signals", None)
+            st.session_state["bt_results"] = _raw_res
             _BT_STATE["result"] = None
             st.rerun()
         else:
@@ -1567,6 +1574,96 @@ with tab_bt:
             _er_df = pd.DataFrame(_er_rows)
             st.caption("**Exit breakdown** — use this to diagnose what's driving losses:")
             st.dataframe(_er_df, hide_index=True, use_container_width=True)
+
+        # ── Stop parameter sweep ──────────────────────────────────────────────
+        if trades:
+            with st.expander("🔍 Find Optimal Stop Parameters — test 27 combinations automatically"):
+                st.caption(
+                    "Reuses already-downloaded market data (no re-download). "
+                    "Tests all combinations of **Break-Even** (0.5 / 1.0 / 1.5 R) × "
+                    "**Trail Trigger** (1.5 / 2.0 / 2.5 R) × "
+                    "**Trail Distance** (0.5 / 0.7 / 1.0 R). "
+                    "Takes ~1-3 minutes."
+                )
+                _pre_data = st.session_state.get("_bt_preloaded_data")
+                _pre_reg  = st.session_state.get("_bt_preloaded_regimes")
+                _pre_sig  = st.session_state.get("_bt_precomputed_signals")
+
+                if _pre_data is None:
+                    st.info("Preloaded data not found — run the backtest once to enable the sweep.")
+                else:
+                    if st.button("▶ Run Stop Sweep (27 combos)", key="stop_sweep_btn"):
+                        st.session_state.pop("sweep_results", None)
+                        _base_p = dict(results["params_used"])
+                        _sweep_combos = [
+                            {**_base_p,
+                             "be_trigger_r":    _be,
+                             "trail_trigger_r": _tt,
+                             "trail_dist_r":    _td}
+                            for _be in [0.5, 1.0, 1.5]
+                            for _tt in [1.5, 2.0, 2.5]
+                            for _td in [0.5, 0.7, 1.0]
+                        ]
+                        _sw_bar = st.progress(0.0, text="Starting sweep…")
+
+                        def _sw_cb(done, total, msg):
+                            _sw_bar.progress(min(done / max(total, 1), 0.99), text=msg)
+
+                        from backtest.engine import parameter_sweep as _sweep_fn
+                        _sw_out = _sweep_fn(
+                            tickers=[],
+                            test_start=bt_start,
+                            test_end=bt_end,
+                            sweep=_sweep_combos,
+                            initial_capital=float(initial_cap),
+                            progress_cb=_sw_cb,
+                            preloaded_data=_pre_data,
+                            preloaded_regimes=_pre_reg,
+                            precomputed_signals=_pre_sig,
+                        )
+                        _sw_bar.progress(1.0, text="Done!")
+                        st.session_state["sweep_results"] = _sw_out
+                        st.rerun()
+
+                    _sw_res = st.session_state.get("sweep_results")
+                    if _sw_res:
+                        _best_s = _sw_res[0]
+                        _best_p = _best_s["params"]
+                        _best_m = _best_s["metrics"]
+                        st.success(
+                            f"🏆 Best: BE = **{_best_p['be_trigger_r']}R**, "
+                            f"Trail trigger = **{_best_p['trail_trigger_r']}R**, "
+                            f"Trail dist = **{_best_p['trail_dist_r']}R**  "
+                            f"→ PF **{_best_m['profit_factor']:.3f}** · "
+                            f"Win {_best_m['win_rate']*100:.0f}% · "
+                            f"ROI {_best_m['roi_pct']:+.1f}%"
+                        )
+                        _sw_table = []
+                        for _rank, _s in enumerate(_sw_res[:15], 1):
+                            _sp, _sm = _s["params"], _s["metrics"]
+                            _sw_table.append({
+                                "#":             _rank,
+                                "BE (R)":        _sp.get("be_trigger_r"),
+                                "Trail Trig (R)": _sp.get("trail_trigger_r"),
+                                "Trail Dist (R)": _sp.get("trail_dist_r"),
+                                "PF":            f"{_sm['profit_factor']:.3f}",
+                                "Win %":         f"{_sm['win_rate']*100:.0f}%",
+                                "Avg Win $":     f"${_sm['avg_win']:,.0f}",
+                                "Avg Loss $":    f"${_sm['avg_loss']:,.0f}",
+                                "ROI %":         f"{_sm['roi_pct']:+.1f}%",
+                                "Trades":        _sm['trade_count'],
+                            })
+                        st.dataframe(pd.DataFrame(_sw_table), hide_index=True, use_container_width=True)
+
+                        if st.button("✅ Apply Best Parameters to Bot", key="apply_best_stops"):
+                            from config import settings as _cfg_sw
+                            _cfg_sw.set("be_trigger_r",    _best_p["be_trigger_r"])
+                            _cfg_sw.set("trail_trigger_r", _best_p["trail_trigger_r"])
+                            _cfg_sw.set("trail_dist_r",    _best_p["trail_dist_r"])
+                            st.success(
+                                f"✅ Applied to bot — BE={_best_p['be_trigger_r']}R, "
+                                f"Trail={_best_p['trail_trigger_r']}R / {_best_p['trail_dist_r']}R"
+                            )
 
         st.divider()
 

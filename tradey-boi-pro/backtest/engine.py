@@ -910,14 +910,18 @@ def run_backtest(
         closed.append(trade)
 
     return {
-        "trades":             closed,
-        "equity_curve":       equity_crv,
-        "metrics":            _calc_metrics(closed, initial_capital, account),
-        "params_used":        p,
-        "tickers_scanned":    len(available),
-        "tickers_skipped":    skipped,
-        "trading_days":       len(trading_days),
-        "rejection_reasons":  dict(sorted(reasons.items(), key=lambda x: -x[1])),
+        "trades":               closed,
+        "equity_curve":         equity_crv,
+        "metrics":              _calc_metrics(closed, initial_capital, account),
+        "params_used":          p,
+        "tickers_scanned":      len(available),
+        "tickers_skipped":      skipped,
+        "trading_days":         len(trading_days),
+        "rejection_reasons":    dict(sorted(reasons.items(), key=lambda x: -x[1])),
+        # Cached for fast re-use in parameter sweeps — caller should pop & store externally
+        "_preloaded_data":      all_data,
+        "_preloaded_regimes":   (asx_regime, us_regime),
+        "_precomputed_signals": precomputed_signals,
     }
 
 
@@ -997,18 +1001,30 @@ def parameter_sweep(
     test_start:  date,
     test_end:    date,
     sweep:       list[dict],
-    initial_capital: float = 10_000.0,
-    progress_cb: Callable | None = None,
+    initial_capital:      float = 10_000.0,
+    progress_cb:          Callable | None = None,
+    preloaded_data:       dict  | None = None,
+    preloaded_regimes:    tuple | None = None,
+    precomputed_signals:  dict  | None = None,
 ) -> list[dict]:
     """
     Run backtest for each param set in `sweep`.
     Returns list of {params, metrics} sorted by profit_factor desc.
+
+    Pass preloaded_data / preloaded_regimes / precomputed_signals to reuse
+    already-downloaded market data — makes the sweep ~50× faster by skipping
+    the yfinance download and indicator pre-scan on every iteration.
     """
     results = []
     for i, param_set in enumerate(sweep):
         if progress_cb:
             progress_cb(i, len(sweep), f"Sweep {i+1}/{len(sweep)}…")
-        res = run_backtest(tickers, test_start, test_end, initial_capital, param_set)
+        res = run_backtest(
+            tickers, test_start, test_end, initial_capital, param_set,
+            preloaded_data=preloaded_data,
+            preloaded_regimes=preloaded_regimes,
+            precomputed_signals=precomputed_signals,
+        )
         results.append({"params": param_set, "metrics": res["metrics"]})
     results.sort(key=lambda r: r["metrics"]["profit_factor"], reverse=True)
     return results
