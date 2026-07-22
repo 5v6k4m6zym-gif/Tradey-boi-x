@@ -21,6 +21,7 @@ from engine.signal_bridge import get_pending_signals
 from engine.executor import execute_signal
 from engine.position_manager import PositionManager
 from engine.adaptive import adaptive_threshold_update
+from engine.ibkr_sync import sync_ibkr_positions
 
 if TYPE_CHECKING:
     from broker.ibkr_client import IBKRClient
@@ -113,6 +114,14 @@ class BotRunner:
     def _trade_cycle(self):
         if not self._broker.connected:
             return
+
+        # Sync any IBKR positions that aren't in the database yet
+        try:
+            imported = sync_ibkr_positions(self._broker)
+            for ticker in imported:
+                self._log(f"[SYNC] Auto-imported IBKR position: {ticker}")
+        except Exception as e:
+            log.warning(f"IBKR position sync error (non-fatal): {e}")
 
         # Only pass ELITE + STRONG BUY signals to the bridge
         actionable = self._monitor.actionable_signals
