@@ -21,6 +21,10 @@ import yfinance as yf
 
 log = logging.getLogger("Backtest")
 
+# Quality universe: quality stocks trade at normal min_score;
+# extended (small/speculative) stocks only trade on ELITE signals.
+from scanner.universe import is_quality_ticker
+
 # Import the real scanner so the backtest tests the actual ML strategy
 try:
     from scanner.market_scanner import (
@@ -725,6 +729,10 @@ def run_backtest(
                     tier = "STRONG BUY"
                 else:
                     continue
+                # Extended universe gate: non-quality stocks only on ELITE signals.
+                # Quality stocks (large/liquid mid-cap) trade at normal threshold.
+                if not is_quality_ticker(ticker) and tier != "ELITE":
+                    continue
                 # Recompute stop/target from stored atr and current sl/target params
                 atr_pct = raw["atr_pct"]
                 atr     = raw["atr"]
@@ -758,6 +766,9 @@ def run_backtest(
                 df_slice = df.loc[:_ts_le]
                 sig = _detect_signal(df_slice, ticker, p)
                 if sig and sig.get("score", 0) >= p["min_score"]:
+                    # Extended universe gate: non-quality stocks only on ELITE
+                    if not is_quality_ticker(ticker) and sig.get("tier") != "ELITE":
+                        continue
                     new_signals.append(sig)
 
         # Sort by score + probability descending

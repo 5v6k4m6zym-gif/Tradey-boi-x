@@ -231,14 +231,26 @@ def _vwap_mtf_check(ticker: str) -> tuple[int, bool]:
 def _apply_live_filters(signals: list[dict], min_score: int) -> list[dict]:
     """
     Post-filter applied only during live scanning (NOT in the backtest).
-    Applies VWAP and multi-timeframe checks with per-ticker yfinance calls.
-    Kept as a separate step so the backtest path (which calls _score_signal
-    directly) is never contaminated with today's intraday data.
+    Applies VWAP, multi-timeframe checks, and extended-universe quality gate.
+
+    Quality gate: stocks outside the quality universe (large/liquid mid-cap)
+    are only traded when their signal reaches ELITE tier.  This prevents noisy
+    signals from speculative small caps from dragging down overall win rate while
+    still capturing rare genuine breakouts from the extended universe.
     """
+    from scanner.universe import is_quality_ticker
+
     kept = []
     for sig in signals:
         ticker      = sig["ticker"]
         score       = sig["score"]
+        tier        = sig.get("tier", "")
+
+        # Extended universe gate: non-quality stocks only on ELITE signals
+        if not is_quality_ticker(ticker) and tier != "ELITE":
+            log.debug(f"Extended-universe gate {ticker}: tier={tier} (need ELITE)")
+            continue
+
         vwap_score, mtf_ok = _vwap_mtf_check(ticker)
 
         # Below VWAP AND 1h misaligned — veto
@@ -263,7 +275,7 @@ def _apply_live_filters(signals: list[dict], min_score: int) -> list[dict]:
 
     removed = len(signals) - len(kept)
     if removed:
-        log.info(f"_apply_live_filters: removed {removed}/{len(signals)} signals via VWAP/MTF")
+        log.info(f"_apply_live_filters: removed {removed}/{len(signals)} signals via quality gate/VWAP/MTF")
     return kept
 
 
