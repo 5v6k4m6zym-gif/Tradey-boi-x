@@ -585,14 +585,56 @@ with tab_pos:
     st.header("📋 Open Positions")
     open_pos = db.open_positions()
 
+    # ── Price fetch with yfinance fallback ────────────────────────────────────
+    # IBKR price preferred; when gateway is offline fall back to yfinance
+    # (delayed ~15 min) so P&L still updates without a live connection.
+    import time as _time
+    _price_cache: dict = st.session_state.setdefault("_pos_price_cache", {})
+
+    def _live_price(ticker: str, exchange: str, entry_price: float) -> tuple[float, str]:
+        """Returns (price, source) where source is 'IBKR', 'Yahoo', or 'Entry'."""
+        ibkr_px = broker.get_current_price(
+            ticker, exchange, "AUD" if exchange == "ASX" else "USD"
+        )
+        if ibkr_px:
+            _price_cache[ticker] = (_time.time(), ibkr_px, "IBKR")
+            return ibkr_px, "IBKR"
+
+        # Check cache (5-min TTL)
+        cached = _price_cache.get(ticker)
+        if cached and _time.time() - cached[0] < 300:
+            return cached[1], cached[2]
+
+        # yfinance fallback
+        try:
+            import yfinance as _yf, warnings as _w, io as _io, contextlib as _cl
+            _sink = _io.StringIO()
+            with _cl.redirect_stderr(_sink), _w.catch_warnings():
+                _w.simplefilter("ignore")
+                _raw = _yf.download(ticker, period="2d", interval="1d",
+                                    auto_adjust=True, progress=False, threads=False)
+            if not _raw.empty:
+                cols = list(_raw.columns)
+                close_col = next(
+                    (c for c in cols if (c[0] if isinstance(c, tuple) else c) == "Close"),
+                    None
+                )
+                if close_col is not None:
+                    px = float(_raw[close_col].dropna().iloc[-1])
+                    _price_cache[ticker] = (_time.time(), px, "Yahoo")
+                    return px, "Yahoo"
+        except Exception:
+            pass
+
+        return entry_price, "Entry"
+
     if not open_pos:
         st.info("No open positions.")
     else:
         for pos in open_pos:
-            curr_price = broker.get_current_price(
-                pos["ticker"], pos["exchange"],
-                "AUD" if pos["exchange"] == "ASX" else "USD"
-            ) or pos["entry_price"]
+            curr_price, price_src = _live_price(
+                pos["ticker"], pos["exchange"], pos["entry_price"]
+            )
 
             unreal_pnl  = (curr_price - pos["entry_price"]) * pos["quantity"]
             unreal_pct  = (curr_price - pos["entry_price"]) / pos["entry_price"] * 100
@@ -608,12 +650,13 @@ with tab_pos:
                     f"{pnl_icon} **{unreal_pct:+.1f}%**  (${unreal_pnl:+,.0f})"
                 )
                 c1, c2, c3, c4, c5, c6 = st.columns(6)
-                c1.metric("Entry",   f"${pos['entry_price']:.3f}")
-                c2.metric("Current", f"${curr_price:.3f}")
-                c3.metric("Stop",    f"${pos['stop_price']:.3f}")
-                c4.metric("Target",  f"${pos['target_price']:.3f}")
-                c5.metric("Qty",     f"{pos['quantity']:.0f}")
-                c6.metric("Days",    f"{days_held}d  ({days_left}d left)")
+                src_label = {"IBKR": "Current (live)", "Yahoo": "Current (delayed)", "Entry": "Current (no data)"}.get(price_src, "Current")
+                c1.metric("Entry",      f"${pos['entry_price']:.3f}")
+                c2.metric(src_label,    f"${curr_price:.3f}")
+                c3.metric("Stop",       f"${pos['stop_price']:.3f}")
+                c4.metric("Target",     f"${pos['target_price']:.3f}")
+                c5.metric("Qty",        f"{pos['quantity']:.0f}")
+                c6.metric("Days",       f"{days_held}d  ({days_left}d left)")
                 if pos.get("signal_score"):
                     src = pos.get("notes", "")
                     st.caption(
