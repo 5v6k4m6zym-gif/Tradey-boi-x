@@ -1192,6 +1192,12 @@ with tab_bt:
                                      int(cfg.get("max_positions") or 5), key="bt_max_pos")
             bt_hold      = st.slider("Max hold days",  5, 30,
                                      int(cfg.get("hold_days") or 10), key="bt_hold")
+            bt_min_hold  = st.slider(
+                "Min hold days (stop grace period)", 0, 5,
+                int(cfg.get("min_hold_days") or 2), key="bt_min_hold",
+                help="Stop loss cannot trigger during the first N days after entry. "
+                     "Prevents immediate stop-outs from entry-day spread or gap noise.",
+            )
             bt_brokerage = st.number_input("Brokerage per side ($)",
                                            value=float(cfg.get("brokerage") or 2.0),
                                            step=0.5, key="bt_brokerage")
@@ -1248,13 +1254,14 @@ with tab_bt:
                 "risk_pct":          bt_risk_pct,
                 "max_positions":     bt_max_pos,
                 "hold_days":         bt_hold,
+                "min_hold_days":     bt_min_hold,
                 "brokerage":         bt_brokerage,
-                "sl_mult_hi":        float(cfg.get("sl_mult_hi")  or 0.8),
-                "sl_mult_mid":       float(cfg.get("sl_mult_mid") or 0.6),
-                "sl_mult_lo":        float(cfg.get("sl_mult_lo")  or 0.5),
-                "target_hi":         float(cfg.get("target_hi")   or 12.0),
-                "target_mid":        float(cfg.get("target_mid")  or 8.0),
-                "target_lo":         float(cfg.get("target_lo")   or 5.0),
+                "sl_mult_hi":        float(cfg.get("sl_mult_hi")  or 2.0),
+                "sl_mult_mid":       float(cfg.get("sl_mult_mid") or 1.5),
+                "sl_mult_lo":        float(cfg.get("sl_mult_lo")  or 1.0),
+                "target_hi":         float(cfg.get("target_hi")   or 15.0),
+                "target_mid":        float(cfg.get("target_mid")  or 10.0),
+                "target_lo":         float(cfg.get("target_lo")   or 7.0),
                 "cb_consecutive_losses": int(cfg.get("cb_consecutive_losses") or 3),
                 "cb_pause_days":     int(cfg.get("cb_pause_days") or 7),
                 "use_regime_filter": bt_regime,
@@ -1509,6 +1516,32 @@ with tab_bt:
                 font=dict(color="white"), height=280,
             )
             st.plotly_chart(fig3, use_container_width=True)
+
+        # ── Exit reason breakdown (diagnostic) ───────────────────────────────
+        if trades:
+            _label_map = {
+                "STOP_HIT":     "Stop Hit",
+                "TARGET_HIT":   "Target Hit",
+                "ABOVE_TARGET": "Ran Past Target",
+                "MAX_HOLD":     "Max Hold",
+                "END_OF_TEST":  "Open at End",
+                "ELITE_BUMP":   "Elite Bump",
+            }
+            _er_rows = []
+            for _reason, _cnt in sorted(m.get("exit_reasons", {}).items(),
+                                        key=lambda x: -x[1]):
+                _subset = [t for t in trades if t.exit_reason == _reason]
+                _pnl_avg = sum(t.pnl for t in _subset) / len(_subset) if _subset else 0
+                _wins    = sum(1 for t in _subset if t.pnl >= 0)
+                _er_rows.append({
+                    "Exit Reason": _label_map.get(_reason, _reason),
+                    "Count":       _cnt,
+                    "Win %":       f"{_wins/_cnt*100:.0f}%" if _cnt else "—",
+                    "Avg P&L":     f"${_pnl_avg:+,.0f}",
+                })
+            _er_df = pd.DataFrame(_er_rows)
+            st.caption("**Exit breakdown** — use this to diagnose what's driving losses:")
+            st.dataframe(_er_df, hide_index=True, use_container_width=True)
 
         st.divider()
 

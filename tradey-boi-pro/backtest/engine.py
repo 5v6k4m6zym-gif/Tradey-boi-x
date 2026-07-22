@@ -337,12 +337,17 @@ def run_backtest(
         "risk_pct":          params.get("risk_pct",          2.0),
         "brokerage":         params.get("brokerage",         2.0),
         "hold_days":         params.get("hold_days",         10),
-        "sl_mult_hi":        params.get("sl_mult_hi",        0.8),
-        "sl_mult_mid":       params.get("sl_mult_mid",       0.6),
-        "sl_mult_lo":        params.get("sl_mult_lo",        0.5),
-        "target_hi":         params.get("target_hi",         12.0),
-        "target_mid":        params.get("target_mid",        8.0),
-        "target_lo":         params.get("target_lo",         5.0),
+        # sl_mult defaults widened: 0.5-0.8× ATR sits inside daily noise;
+        # use 1.5-2.0× so the breakeven/trailing stop mechanics have room to work.
+        "sl_mult_hi":        params.get("sl_mult_hi",        2.0),
+        "sl_mult_mid":       params.get("sl_mult_mid",       1.5),
+        "sl_mult_lo":        params.get("sl_mult_lo",        1.0),
+        "target_hi":         params.get("target_hi",         15.0),
+        "target_mid":        params.get("target_mid",        10.0),
+        "target_lo":         params.get("target_lo",         7.0),
+        # min_hold_days: stop cannot trigger during the first N days after entry.
+        # Prevents entry-day noise (gap opens, spread) from immediately stopping out trades.
+        "min_hold_days":     params.get("min_hold_days",     2),
         "cb_losses":         params.get("cb_consecutive_losses", 3),
         "cb_pause_days":     params.get("cb_pause_days",     7),
         "use_regime_filter": params.get("use_regime_filter", True),
@@ -601,7 +606,10 @@ def run_backtest(
             exit_reason = None
 
             # Conservative: stop checked before target (worst-case)
-            if day_low <= pos.stop_price:
+            # min_hold_days guard: don't allow a stop exit in the first N calendar
+            # days after entry — protects against entry-day spread / gap noise.
+            _past_min_hold = days_held >= p.get("min_hold_days", 2)
+            if day_low <= pos.stop_price and _past_min_hold:
                 exit_price  = pos.stop_price
                 exit_reason = "STOP_HIT"
             elif day_high >= pos.target_price:
@@ -816,12 +824,18 @@ def run_backtest(
             # Adjust stop/target relative to actual entry (in case entry gaps up)
             stop_price   = sig["stop_price"]
             target_price = sig["target_price"]
-            if entry_price > sig["entry_price"] * 1.02:
-                # Entry gapped up — recalculate stop from entry
-                sl_pct     = (sig["entry_price"] - stop_price) / sig["entry_price"]
-                tp_pct     = (target_price - sig["entry_price"]) / sig["entry_price"]
-                stop_price  = entry_price * (1 - sl_pct)
-                target_price = entry_price * (1 + tp_pct)
+            # Re-anchor stop AND target to the actual entry price whenever
+            # the stock has gapped significantly from the signal-day close
+            # (handles BOTH gap-up and gap-down — previously only gap-up was adjusted).
+            _gap_pct = abs(entry_price - sig["entry_price"]) / max(sig["entry_price"], 0.001)
+            if _gap_pct > 0.005:
+                _sl_pct  = (sig["entry_price"] - stop_price)   / max(sig["entry_price"], 0.001)
+                _tp_pct  = (target_price        - sig["entry_price"]) / max(sig["entry_price"], 0.001)
+                stop_price   = entry_price * (1 - _sl_pct)
+                target_price = entry_price * (1 + _tp_pct)
+                # If gap-down pushed stop below entry, skip — risk is undefined
+                if stop_price >= entry_price:
+                    continue
 
             orig_dist = round(entry_price - stop_price, 4)
             open_pos.append(BtPosition(
