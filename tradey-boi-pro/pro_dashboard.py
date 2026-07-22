@@ -69,6 +69,9 @@ def _set_bt_lock():
 def _clear_bt_lock():
     st.session_state["_bt_running"]    = False
     st.session_state["_bt_start_time"] = 0
+    # Also clear the background thread state so the polling loop stops
+    _BT_STATE["running"] = False
+    _BT_STATE["done"]    = False
 
 def _bt_lock_age_str() -> str:
     import time as _t
