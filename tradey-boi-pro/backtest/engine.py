@@ -194,7 +194,7 @@ def run_backtest(
         if progress_cb:
             progress_cb(0, len(tickers), "Downloading historical data…")
 
-        import concurrent.futures as _cf
+        import socket as _socket
 
         all_data: dict[str, pd.DataFrame] = {}
         batch_size   = 20
@@ -204,94 +204,70 @@ def run_backtest(
         _dl_start_str = download_start.isoformat()
         _dl_end_str   = (test_end + timedelta(days=2)).isoformat()
 
-        def _fetch_one(sym: str) -> tuple[str, pd.DataFrame | None]:
-            """Download a single ticker, returning (sym, df_or_None)."""
-            try:
-                _s = io.StringIO()
-                with contextlib.redirect_stderr(_s), _warnings.catch_warnings():
-                    _warnings.simplefilter("ignore")
-                    raw = yf.download(
-                        sym,
-                        start=_dl_start_str,
-                        end=_dl_end_str,
-                        interval="1d",
-                        auto_adjust=True,
-                        progress=False,
-                        threads=False,
-                    )
-                df = _norm_cols(raw.dropna(how="all"))
-                return sym, df if (not df.empty and len(df) >= 30) else None
-            except Exception:
-                return sym, None
-
-        def _fetch_batch(batch: list[str]) -> dict[str, pd.DataFrame]:
-            """Download a batch of tickers; returns {sym: df} for tickers with data."""
-            _sink = io.StringIO()
-            with contextlib.redirect_stderr(_sink), _warnings.catch_warnings():
-                _warnings.simplefilter("ignore")
-                raw = yf.download(
-                    " ".join(batch),
-                    start=_dl_start_str,
-                    end=_dl_end_str,
-                    interval="1d",
-                    auto_adjust=True,
-                    progress=False,
-                    group_by="ticker",
-                    threads=False,
-                )
-            result: dict[str, pd.DataFrame] = {}
-            if len(batch) == 1:
-                df = _norm_cols(raw.dropna(how="all"))
-                if not df.empty and len(df) >= 30:
-                    result[batch[0]] = df
-            else:
-                for t in batch:
-                    try:
-                        df = _norm_cols(raw[t].dropna(how="all"))
-                        if not df.empty and len(df) >= 30:
-                            result[t] = df
-                    except (KeyError, TypeError):
-                        pass
-            return result
-
-        BATCH_TIMEOUT = 45   # seconds per batch before falling back to per-ticker
+        # Socket timeout — cuts the actual TCP connection if Yahoo Finance hangs.
+        # ThreadPoolExecutor cannot cancel hung threads in Python; socket timeout can.
+        _SOCK_TIMEOUT = 30   # seconds before a stalled connection raises socket.timeout
 
         for b_idx, batch in enumerate(batches):
             if progress_cb:
                 progress_cb(b_idx * batch_size, _total_units,
                             f"Downloading batch {b_idx+1}/{len(batches)}…")
 
-            # Try the whole batch first; if it hangs > BATCH_TIMEOUT fall back
-            batch_ok = False
+            _prev_timeout = _socket.getdefaulttimeout()
             try:
-                with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
-                    _fut = _ex.submit(_fetch_batch, batch)
-                    try:
-                        result = _fut.result(timeout=BATCH_TIMEOUT)
-                        all_data.update(result)
-                        batch_ok = True
-                    except _cf.TimeoutError:
-                        log.warning(
-                            f"Batch {b_idx+1} timed out after {BATCH_TIMEOUT}s "
-                            f"— retrying tickers one by one"
-                        )
+                _socket.setdefaulttimeout(_SOCK_TIMEOUT)
+                _sink = io.StringIO()
+                with contextlib.redirect_stderr(_sink), _warnings.catch_warnings():
+                    _warnings.simplefilter("ignore")
+                    raw = yf.download(
+                        " ".join(batch),
+                        start=_dl_start_str,
+                        end=_dl_end_str,
+                        interval="1d",
+                        auto_adjust=True,
+                        progress=False,
+                        group_by="ticker",
+                        threads=False,
+                    )
+                if len(batch) == 1:
+                    df = _norm_cols(raw.dropna(how="all"))
+                    if not df.empty and len(df) >= 30:
+                        all_data[batch[0]] = df
+                else:
+                    for t in batch:
+                        try:
+                            df = _norm_cols(raw[t].dropna(how="all"))
+                            if not df.empty and len(df) >= 30:
+                                all_data[t] = df
+                        except (KeyError, TypeError):
+                            pass
             except Exception as e:
-                log.error(f"Batch {b_idx+1} download error: {e}")
-
-            if not batch_ok:
-                # Per-ticker fallback with individual timeouts
+                log.warning(
+                    f"Batch {b_idx+1}/{len(batches)} failed ({type(e).__name__}: {e}) "
+                    f"— retrying one ticker at a time"
+                )
+                # Per-ticker fallback — each gets its own socket timeout window
                 for sym in batch:
                     try:
-                        with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
-                            _fut = _ex.submit(_fetch_one, sym)
-                            try:
-                                sym_r, df = _fut.result(timeout=20)
-                                if df is not None:
-                                    all_data[sym_r] = df
-                            except _cf.TimeoutError:
-                                log.warning(f"  {sym} timed out — skipping")
-                    except Exception as e:
-                        log.error(f"  {sym} download error: {e}")
+                        _sink2 = io.StringIO()
+                        with contextlib.redirect_stderr(_sink2), _warnings.catch_warnings():
+                            _warnings.simplefilter("ignore")
+                            raw1 = yf.download(
+                                sym,
+                                start=_dl_start_str,
+                                end=_dl_end_str,
+                                interval="1d",
+                                auto_adjust=True,
+                                progress=False,
+                                threads=False,
+                            )
+                        df = _norm_cols(raw1.dropna(how="all"))
+                        if not df.empty and len(df) >= 30:
+                            all_data[sym] = df
+                    except Exception as e2:
+                        log.debug(f"  {sym} skipped: {type(e2).__name__}: {e2}")
+            finally:
+                _socket.setdefaulttimeout(_prev_timeout)
 
     available     = list(all_data.keys())
     skipped       = len(tickers) - len(available)
