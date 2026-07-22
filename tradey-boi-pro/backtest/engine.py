@@ -353,19 +353,22 @@ def run_backtest(
         "sl_mult_hi":        params.get("sl_mult_hi",        0.8),
         "sl_mult_mid":       params.get("sl_mult_mid",       0.6),
         "sl_mult_lo":        params.get("sl_mult_lo",        0.5),
-        "target_hi":         params.get("target_hi",         15.0),
-        "target_mid":        params.get("target_mid",        10.0),
-        "target_lo":         params.get("target_lo",         7.0),
+        # Targets calibrated to realistic 15-day move potential for quality stocks.
+        # Previous 15/10/7% were too ambitious — breakouts typically move 6-10% in 2wks.
+        # Lower targets = more hits, faster capital recycling, same R:R (stops are tight).
+        "target_hi":         params.get("target_hi",         10.0),
+        "target_mid":        params.get("target_mid",         7.0),
+        "target_lo":         params.get("target_lo",          5.0),
         # min_hold_days: stop cannot trigger during the first N days after entry.
         "min_hold_days":     params.get("min_hold_days",     2),
-        # BE / trailing stop — pro sweep winner: BE=0.5R, Trail=1.5R/0.7R
-        # be_trigger_r=0.5: fast BE protection — stop moves to entry at +0.5R,
-        #   converting most reversals to scratches rather than full stop-outs.
-        # trail_trigger_r=1.5: trail starts at +1.5R peak (achievable in 15-day hold).
-        # trail_dist_r=0.7: trail 0.7R below peak for tight lock-in of gains.
+        # BE / trailing stop:
+        # be_trigger_r=0.5: fast BE protection — stop moves to entry at +0.5R.
+        # trail_trigger_r=2.0: raised from 1.5 — don't start trailing until the move
+        #   is established, so normal pullbacks don't eject trades before target.
+        # trail_dist_r=1.0: widened from 0.7 — gives 1R of breathing room on pullbacks.
         "be_trigger_r":      params.get("be_trigger_r",      0.5),
-        "trail_trigger_r":   params.get("trail_trigger_r",   1.5),
-        "trail_dist_r":      params.get("trail_dist_r",      0.7),
+        "trail_trigger_r":   params.get("trail_trigger_r",   2.0),
+        "trail_dist_r":      params.get("trail_dist_r",      1.0),
         "cb_losses":         params.get("cb_consecutive_losses", 3),
         "cb_pause_days":     params.get("cb_pause_days",     7),
         "use_regime_filter": params.get("use_regime_filter", True),

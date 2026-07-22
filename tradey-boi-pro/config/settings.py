@@ -28,15 +28,15 @@ DEFAULTS: dict = {
     "sl_mult_hi":            0.8,     # tight stop for high-ATR stocks (≥3% ATR)
     "sl_mult_mid":           0.6,     # tight stop for mid-ATR stocks (1.5-3% ATR)
     "sl_mult_lo":            0.5,     # tight stop for low-ATR stocks (<1.5% ATR)
-    "target_hi":             15.0,
-    "target_mid":            10.0,
-    "target_lo":             7.0,
+    "target_hi":             10.0,   # lowered from 15% — achievable in 15-day hold
+    "target_mid":            7.0,    # lowered from 10%
+    "target_lo":             5.0,    # lowered from 7%
 
     # Dynamic stop management — pro-sweep winner: BE=0.5R, Trail=1.5R/0.7R
     "min_hold_days":         2,       # stop cannot trigger in first N days (entry-day noise)
     "be_trigger_r":          0.5,     # slide stop to entry at +0.5R — fast BE protection reduces avg loss
-    "trail_trigger_r":       1.5,     # start trailing at +1.5R peak
-    "trail_dist_r":          0.7,     # trail 0.7R below peak
+    "trail_trigger_r":       2.0,     # raised from 1.5 — don't trail until move is established
+    "trail_dist_r":          1.0,     # widened from 0.7 — room to breathe on pullbacks
 
     # Signal quality gates — pro-sweep winner: score≥5, prob≥0.50
     # Lowered from 8/0.58: oversold-recovery signals (RSI 35-42, vol>1.5) score 5
