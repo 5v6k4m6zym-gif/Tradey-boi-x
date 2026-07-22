@@ -54,9 +54,9 @@ def get_pending_signals(
 
     scanner_signals: pre-filtered actionable list from TieredMonitor.actionable_signals
     """
-    min_prob        = float(cfg.get("min_prob")        or 0.53)
-    min_score       = int(cfg.get("min_score")         or 7)
-    min_composite   = float(cfg.get("min_composite")   or 7.0)
+    min_prob        = float(cfg.get("min_prob")        or 0.58)
+    min_score       = int(cfg.get("min_score")         or 8)
+    min_composite   = float(cfg.get("min_composite")   or 7.5)   # was 7.0 hardcoded
     handled         = _already_handled()
 
     combined: dict[str, dict] = {}
@@ -68,14 +68,19 @@ def get_pending_signals(
             continue
         if sig.get("tier") not in ACTIONABLE_TIERS:
             continue
-        # Regime veto
-        if sig.get("regime_alignment") == "BEAR":
-            log.debug(f"Regime veto: {ticker} skipped (BEAR)")
+        # Regime veto — 3-tier matching the backtest regime filter logic
+        regime_align = sig.get("regime_alignment", "UNKNOWN")
+        if regime_align == "BEAR":
+            log.debug(f"Regime veto BEAR: {ticker} skipped")
             continue
-        # Quality gates — use original model prob (ai_confidence is reduced by ranker)
         composite = float(sig.get("composite_score", sig.get("score", 0)))
         raw_prob  = float(sig.get("prob", sig.get("ai_confidence", 0)))
-        if composite < min_composite:
+        # NEUTRAL: require 0.5 extra composite points — only near-ELITE signals pass
+        effective_min_composite = (
+            min_composite + 0.5 if regime_align == "NEUTRAL" else min_composite
+        )
+        if composite < effective_min_composite:
+            log.debug(f"Composite veto ({regime_align}): {ticker} {composite:.1f} < {effective_min_composite:.1f}")
             continue
         if raw_prob < min_prob:
             continue

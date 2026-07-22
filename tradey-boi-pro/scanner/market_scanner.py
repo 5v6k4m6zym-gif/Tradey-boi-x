@@ -322,19 +322,20 @@ def _regime_score_thresholds(sb_base: int) -> tuple[int, int]:
 def _expected_value_r(price: float, atr: float, prob: float, breakout: bool) -> float:
     """
     Reject setups where the ATR-implied reward:risk is too thin even at the
-    given win probability.  Identical formula to X's expected_value_r().
+    given win probability.  Targets match config/settings.py DEFAULTS exactly
+    (15%/10%/7%) so the EV calculation reflects the actual exit parameters.
     """
     if price <= 0 or atr <= 0:
         return -1.0
     atr_pct = atr / price * 100
     if atr_pct >= 3.0:
-        base_target_pct, sl_mult = 8.0, 1.2
+        base_target_pct, sl_mult = 15.0, 1.2   # was 8.0 — now matches settings
     elif atr_pct >= 1.5:
-        base_target_pct, sl_mult = 5.0, 1.0
+        base_target_pct, sl_mult = 10.0, 1.0   # was 5.0
     else:
-        base_target_pct, sl_mult = 3.0, 0.8
+        base_target_pct, sl_mult =  7.0, 0.8   # was 3.0
     if breakout:
-        base_target_pct *= 1.25
+        base_target_pct *= 1.10   # breakout bonus (conservative — was 1.25, harder to hit 15%)
     denom = sl_mult * atr_pct
     if denom <= 0:
         return -1.0

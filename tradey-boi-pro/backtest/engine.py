@@ -356,6 +356,10 @@ def run_backtest(
         "cb_losses":         params.get("cb_consecutive_losses", 3),
         "cb_pause_days":     params.get("cb_pause_days",     7),
         "use_regime_filter": params.get("use_regime_filter", True),
+        # min_expected_r: minimum EV in R units — gate rejects low-expectancy setups.
+        # At prob=0.58 with 15%/10%/7% targets, realistic expected_r is 2–4R,
+        # so 1.5 is a meaningful filter without being too aggressive.
+        "min_expected_r":    params.get("min_expected_r",    1.5),
         "_reasons":          reasons,
     }
 
@@ -490,8 +494,12 @@ def run_backtest(
         asx_regime, us_regime = preloaded_regimes
         log.info("Using preloaded regime data — skipping regime download")
     else:
-        asx_regime: dict[date, bool] = {}
-        us_regime:  dict[date, bool] = {}
+        # 3-tier regime: 2=BULL (above 50MA), 1=NEUTRAL (above 200MA only), 0=BEAR (below 200MA)
+        # Old filter used only 50MA (too coarse — market can fall through 200MA
+        # undetected).  New filter blocks all trades in BEAR and requires a higher
+        # score (elite_min) in NEUTRAL so only the very best setups trade in choppy markets.
+        asx_regime: dict[date, int] = {}
+        us_regime:  dict[date, int] = {}
         if p["use_regime_filter"]:
             for sym, regime_dict in [("^AXJO", asx_regime), ("^GSPC", us_regime)]:
                 try:
@@ -509,12 +517,21 @@ def run_backtest(
                         )
                     idx_df = _norm_cols(idx_raw.dropna(how="all"))
                     if not idx_df.empty:
-                        idx_df["ma50"] = idx_df["Close"].rolling(50).mean()
+                        idx_df["ma50"]  = idx_df["Close"].rolling(50).mean()
+                        idx_df["ma200"] = idx_df["Close"].rolling(200).mean()
                         for d_ts, idx_row in idx_df.iterrows():
-                            d_key = d_ts.date() if hasattr(d_ts, "date") else d_ts
-                            ma    = idx_row.get("ma50", float("nan"))
-                            if not math.isnan(float(ma)):
-                                regime_dict[d_key] = float(idx_row["Close"]) > float(ma)
+                            d_key  = d_ts.date() if hasattr(d_ts, "date") else d_ts
+                            ma50   = idx_row.get("ma50",  float("nan"))
+                            ma200  = idx_row.get("ma200", float("nan"))
+                            close  = float(idx_row["Close"])
+                            if math.isnan(float(ma50)):
+                                continue
+                            if not math.isnan(float(ma200)) and close < float(ma200):
+                                regime_dict[d_key] = 0   # BEAR — below 200 MA
+                            elif close > float(ma50):
+                                regime_dict[d_key] = 2   # BULL — above 50 MA
+                            else:
+                                regime_dict[d_key] = 1   # NEUTRAL — between 200 and 50 MA
                     log.info(f"Regime data OK for {sym}: {len(regime_dict)} days")
                 except Exception as _re:
                     log.warning(f"Regime index {sym} failed: {_re}")
@@ -696,7 +713,7 @@ def run_backtest(
                 prob  = raw["prob"]
                 if score < p["min_score"] or prob < p["min_prob"]:
                     continue
-                if raw.get("expected_r", 1.0) <= 0:
+                if raw.get("expected_r", 0.0) < p["min_expected_r"]:
                     continue
                 # Determine tier from current min_score
                 if score >= elite_min:
@@ -792,13 +809,16 @@ def run_backtest(
         slots = p["max_positions"] - len(open_pos)
 
         for sig in new_signals[:slots]:
-            # Market regime gate: skip if the broad market is in a downtrend
+            # 3-tier regime gate: BEAR=block, NEUTRAL=elite only, BULL=trade normally
             if p["use_regime_filter"]:
-                is_asx    = sig["ticker"].upper().endswith(".AX")
-                regime    = asx_regime if is_asx else us_regime
-                # Only block if we actually have data for this date; default=allow
-                if regime and not regime.get(sim_date, True):
-                    continue
+                is_asx = sig["ticker"].upper().endswith(".AX")
+                regime = asx_regime if is_asx else us_regime
+                if regime:
+                    r = regime.get(sim_date, 2)   # 0=BEAR, 1=NEUTRAL, 2=BULL; default BULL
+                    if r == 0:
+                        continue   # No trades when index is below 200-day MA
+                    if r == 1 and sig["score"] < elite_min:
+                        continue   # NEUTRAL: only ELITE-tier signals (need 1 extra point)
 
             # Entry = next trading day's open — vectorized index comparison
             df     = all_data[sig["ticker"]]

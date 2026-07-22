@@ -38,6 +38,8 @@ DEFAULTS: dict = {
     # Signal quality gates — tightened from 7/0.53 to filter marginal signals
     "min_prob":              0.58,    # was 0.53 — AI needs higher confidence
     "min_score":             8,       # was 7 — fewer but better-quality setups
+    "min_expected_r":        1.5,     # minimum EV in R units (gates low R:R setups)
+    "min_composite":         7.5,     # live bot: composite_score threshold (ranker 0-10 scale)
 
     # Circuit breaker
     "cb_consecutive_losses": 3,
