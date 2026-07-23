@@ -96,6 +96,11 @@ if "broker" not in st.session_state:
 if "bot" not in st.session_state:
     from engine.bot_runner import BotRunner
     st.session_state.bot = BotRunner(st.session_state.broker)
+    # Auto-start bot if it was running before a page reload / Streamlit restart.
+    # The bot's _trade_cycle skips safely when broker isn't connected yet,
+    # so it's safe to start before the IBKR handshake completes.
+    if cfg.get("bot_enabled"):
+        st.session_state.bot.start()
 
 broker = st.session_state.broker
 bot    = st.session_state.bot

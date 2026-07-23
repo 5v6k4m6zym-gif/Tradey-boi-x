@@ -87,8 +87,29 @@ class BotRunner:
     # ── Trade execution loop (checks every 5 min for new actionable signals) ──
 
     def _loop(self):
+        _was_connected = False
         while not self._stop.is_set():
             try:
+                # ── Reconnect-aware logging ────────────────────────────────
+                now_connected = self._broker.connected
+                if now_connected and not _was_connected:
+                    log.info("IBKR reconnected — bot resuming normal operation")
+                    self._log("[SYSTEM] IBKR reconnected — resuming")
+                elif not now_connected and _was_connected:
+                    log.warning("IBKR disconnected — bot idling until reconnect")
+                    self._log("[SYSTEM] IBKR disconnected — idling (will auto-resume)")
+                _was_connected = now_connected
+
+                # ── Watchdog: revive monitor / PM if their threads died ────
+                if not self._monitor.is_running():
+                    log.warning("TieredMonitor thread was dead — restarting")
+                    self._log("[WATCHDOG] Restarted scanner thread")
+                    self._monitor.start()
+                if not self._pm.is_running():
+                    log.warning("PositionManager thread was dead — restarting")
+                    self._log("[WATCHDOG] Restarted position manager thread")
+                    self._pm.start()
+
                 self._trade_cycle()
                 self._maybe_run_adaptive_update()
             except Exception as e:
