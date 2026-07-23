@@ -237,23 +237,30 @@ with tab_dash:
     metrics  = performance_metrics()
     open_pos = db.open_positions()
 
-    # If IBKR offline, estimate account value from local DB P&L
-    if acct_val == 0 and open_pos:
-        import time as _t2
-        _acct_cache = st.session_state.setdefault("_pos_price_cache", {})
-        realised    = performance_metrics().get("total_pnl", 0)
-        unreal      = sum(
-            (_acct_cache.get(p["ticker"], (0, p["entry_price"], ""))[1] - p["entry_price"])
-            * p["quantity"]
-            for p in open_pos
-        )
-        acct_val = realised + unreal  # best-effort estimate
+    # Unrealised P&L from open positions (uses price cache populated by Positions tab)
+    _acct_cache = st.session_state.get("_pos_price_cache", {})
+    _unreal_pnl = sum(
+        (_acct_cache[p["ticker"]][1] - p["entry_price"]) * p["quantity"]
+        for p in open_pos
+        if p["ticker"] in _acct_cache and len(_acct_cache[p["ticker"]]) >= 2
+    )
+
+    # If IBKR offline, estimate account value: starting capital + realised + unrealised
+    if acct_val == 0:
+        starting_cap = float(cfg.get("starting_capital") or cfg.get("initial_capital") or 10000)
+        acct_val     = starting_cap + metrics["total_pnl"] + _unreal_pnl
+
+    # Total P&L = closed trades (realised) + open positions (unrealised)
+    _total_pnl_display = metrics["total_pnl"] + _unreal_pnl
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Account Value",   f"${acct_val:,.0f}")
     c2.metric("Open Positions",  f"{len(open_pos)} / {cfg.get('max_positions') or 5}")
     c3.metric("ELITE Signals",  len(scanner.elite_signals))
-    c4.metric("Total P&L",       f"${metrics['total_pnl']:+,.0f}")
+    c4.metric("Total P&L",       f"${_total_pnl_display:+,.0f}",
+              delta=f"Realised ${metrics['total_pnl']:+,.0f}  ·  Open ${_unreal_pnl:+,.0f}",
+              delta_color="normal" if _total_pnl_display >= 0 else "inverse",
+              help="Realised P&L from closed trades + unrealised P&L from open positions")
     c5.metric("Win Rate",        f"{metrics['win_rate']*100:.0f}%" if metrics["trade_count"] else "—")
 
     st.divider()
@@ -377,6 +384,68 @@ with tab_scan:
             clear_cache()
             st.toast("Regime cache cleared — fetching fresh data…")
             st.rerun()
+
+    # ── Factor breakdown ──────────────────────────────────────────────────────
+    from scanner.market_regime import get_etf_movers
+    _fb_asx = live_regimes.get("ASX")
+    _fb_us  = live_regimes.get("US")
+
+    if _fb_asx or _fb_us:
+        with st.expander("🔬 Regime Factor Breakdown", expanded=False):
+            fb_c1, fb_c2 = st.columns(2)
+            for _col, _rd, _label in [
+                (fb_c1, _fb_asx, "🇦🇺 ASX"),
+                (fb_c2, _fb_us,  "🇺🇸 US"),
+            ]:
+                with _col:
+                    st.markdown(f"**{_label}**")
+                    if _rd and _rd.factors:
+                        _rows = []
+                        for f in _rd.factors:
+                            _b, _br = f["bull"], f["bear"]
+                            if _b > 0:
+                                _sign = f"🟢 +{_b} bull"
+                            elif _br > 0:
+                                _sign = f"🔴 +{_br} bear"
+                            else:
+                                _sign = "⚪ neutral"
+                            _rows.append({
+                                "Factor": f["factor"],
+                                "Score":  _sign,
+                                "Detail": f["note"],
+                            })
+                        st.dataframe(
+                            pd.DataFrame(_rows),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        st.caption(
+                            f"Total: {_rd.bull_points}🟢 bull  /  {_rd.bear_points}🔴 bear  "
+                            f"→ threshold: bull ≥ 1.5× bear for BULL"
+                        )
+                    elif _rd:
+                        st.caption("No factor data — refresh regime to populate.")
+                    else:
+                        st.caption("Regime not yet loaded.")
+
+    # ── Top ETF movers ────────────────────────────────────────────────────────
+    st.subheader("📊 Top ETF Movers (Today)")
+    etf_c1, etf_c2 = st.columns(2)
+
+    for _col, _market, _label in [(etf_c1, "ASX", "🇦🇺 ASX"), (etf_c2, "US", "🇺🇸 US")]:
+        with _col:
+            st.markdown(f"**{_label}**")
+            _movers = get_etf_movers(_market, n=3)
+            if _movers:
+                for _m in _movers:
+                    _arrow = "▲" if _m["direction"] == "up" else "▼"
+                    _clr   = "green" if _m["direction"] == "up" else "red"
+                    st.markdown(
+                        f":{_clr}[{_arrow} **{_m['ticker']}** ({_m['name']})  "
+                        f"{_m['change_pct']:+.2f}%]  `${_m['price']:.2f}`"
+                    )
+            else:
+                st.caption("No data — market may be closed or data unavailable.")
 
     st.divider()
 
