@@ -298,11 +298,21 @@ with tab_dash:
                     else:
                         h2.caption("Start bot")
         else:
-            st.info(
-                "No qualifying signals yet.\n\n"
-                "Start the bot to begin scanning. Pro scans ASX + US stocks "
-                "continuously (Tier 1 every 60 min, Tier 2 every 15 min, Tier 3 every 5 min)."
-            )
+            if bot.is_running():
+                if scanner.scan_count == 0:
+                    st.info("🔍 First scan in progress — signals will appear here shortly.")
+                else:
+                    st.info(
+                        f"📭 No qualifying signals from the last scan ({scanner.scan_count} scan(s) completed).\n\n"
+                        "Markets may be quiet or no setups met the ELITE / STRONG BUY criteria. "
+                        "The scanner will keep checking — next update within the tier interval."
+                    )
+            else:
+                st.info(
+                    "No qualifying signals yet.\n\n"
+                    "Start the bot to begin scanning. Pro scans ASX + US stocks "
+                    "continuously (Tier 1 every 60 min, Tier 2 every 15 min, Tier 3 every 5 min)."
+                )
 
     with col_log:
         st.subheader("📝 Activity Log")
@@ -451,11 +461,21 @@ with tab_scan:
     all_signals = scanner.signals
 
     if not all_signals:
-        st.info(
-            "No results yet.\n\n"
-            "Start the bot — the first Tier 1 scan runs immediately, covering the full "
-            f"~{len(ASX_UNIVERSE)+len(US_UNIVERSE)}-ticker universe."
-        )
+        if bot.is_running():
+            if scanner.scan_count == 0:
+                st.info("🔍 First Tier 1 scan in progress — ranked results will appear here once complete.")
+            else:
+                st.info(
+                    f"📭 No qualifying signals from the last scan ({scanner.scan_count} scan(s) completed).\n\n"
+                    "The full universe was scanned but no setup met the scoring threshold. "
+                    "The bot is still running and will rescan on the next tier interval."
+                )
+        else:
+            st.info(
+                "No results yet.\n\n"
+                "Start the bot — the first Tier 1 scan runs immediately, covering the full "
+                f"~{len(ASX_UNIVERSE)+len(US_UNIVERSE)}-ticker universe."
+            )
     else:
         # Tier counts
         tier_counts = {t: 0 for t in ["ELITE", "STRONG BUY", "BUY", "WATCH"]}
