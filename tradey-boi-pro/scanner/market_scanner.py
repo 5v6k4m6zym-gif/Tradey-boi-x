@@ -561,40 +561,45 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
             prob = min(0.52 + rsi_component + vr_component, 0.82)
             prob = max(prob, 0.40)
 
-        # ── Hard filters ──────────────────────────────────────────────────────
-        if float(row["ema20"])  <= float(row["ema50"]):
-            return _reject("ema_downtrend_today")
-        if float(prev["ema20"]) <= float(prev["ema50"]):
-            return _reject("ema_downtrend_prev_day")
-        if not pd.isna(row.get("macd_diff")) and float(row["macd_diff"])  <= 0:
-            return _reject("macd_bearish_today")
-        if not pd.isna(prev.get("macd_diff")) and float(prev["macd_diff"]) <= 0:
-            return _reject("macd_bearish_prev_day")
-        rsi = float(row["rsi"])
-        if rsi >= 72 or rsi <= 38:
-            return _reject(f"rsi_out_of_range ({rsi:.0f})")
-        vr = float(row["vol_ratio"]) if not pd.isna(row["vol_ratio"]) else 0
-        if vr < 1.5:
-            return _reject("low_volume_ratio (<1.5×)")
-        if prob < 0.40:
-            return _reject("prob_below_floor")
+        # ── Hard filters (skipped in display-only mode) ───────────────────────
+        # allow_watch=True is ONLY set by the display pass in scan_all.
+        # The live execution path never passes allow_watch, so bot decisions
+        # are completely unaffected by this flag.
+        _display_only = bool(params.get("allow_watch"))
 
-        # ── Momentum confirmation ──────────────────────────────────────────────
-        # Price must be rising today — no signals on down days
-        if float(row["Close"]) <= float(prev["Close"]):
-            return _reject("price_falling_today")
-        # EMA20 itself must be accelerating upward — not just above EMA50
-        if float(row["ema20"]) <= float(prev["ema20"]):
-            return _reject("ema20_not_rising")
-        # 20-day trend: stock must be net positive over the past month.
-        # Prevents dead-cat bounce entries where EMA20>EMA50 but the stock
-        # is still broadly falling off a peak.
-        if len(feat_df) >= 21:
-            close_20d = float(feat_df.iloc[-21].get("Close", float("nan")))
-            if not pd.isna(close_20d) and close_20d > 0:
-                ret_20d = (float(row["Close"]) - close_20d) / close_20d
-                if ret_20d < 0:
-                    return _reject("20d_downtrend")
+        if not _display_only:
+            if float(row["ema20"])  <= float(row["ema50"]):
+                return _reject("ema_downtrend_today")
+            if float(prev["ema20"]) <= float(prev["ema50"]):
+                return _reject("ema_downtrend_prev_day")
+            if not pd.isna(row.get("macd_diff")) and float(row["macd_diff"])  <= 0:
+                return _reject("macd_bearish_today")
+            if not pd.isna(prev.get("macd_diff")) and float(prev["macd_diff"]) <= 0:
+                return _reject("macd_bearish_prev_day")
+            rsi = float(row["rsi"])
+            if rsi >= 72 or rsi <= 38:
+                return _reject(f"rsi_out_of_range ({rsi:.0f})")
+            vr = float(row["vol_ratio"]) if not pd.isna(row["vol_ratio"]) else 0
+            if vr < 1.5:
+                return _reject("low_volume_ratio (<1.5×)")
+            if prob < 0.40:
+                return _reject("prob_below_floor")
+
+            # ── Momentum confirmation ──────────────────────────────────────────
+            if float(row["Close"]) <= float(prev["Close"]):
+                return _reject("price_falling_today")
+            if float(row["ema20"]) <= float(prev["ema20"]):
+                return _reject("ema20_not_rising")
+            if len(feat_df) >= 21:
+                close_20d = float(feat_df.iloc[-21].get("Close", float("nan")))
+                if not pd.isna(close_20d) and close_20d > 0:
+                    ret_20d = (float(row["Close"]) - close_20d) / close_20d
+                    if ret_20d < 0:
+                        return _reject("20d_downtrend")
+
+        # ── Read indicators (safe defaults when hard filters were skipped) ────
+        rsi = float(row["rsi"]) if not pd.isna(row.get("rsi")) else 50.0
+        vr  = float(row["vol_ratio"]) if not pd.isna(row.get("vol_ratio")) else 0
 
         # ── Scoring (X's rules) ───────────────────────────────────────────────
         is_breakout = bool(int(row.get("breakout", 0)))
