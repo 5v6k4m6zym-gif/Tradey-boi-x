@@ -701,9 +701,9 @@ with tab_scan:
             if ticker in _queued_tickers:
                 return "🤖 Auto-executing"
             if tier in ("ELITE", "STRONG BUY"):
-                return "⏳ Pending hard-filter pass"
+                return "❌ Not ELITE/STRONG BUY in live scan"
             if tier == "BUY":
-                return "⚠️ Not yet — score too low"
+                return "❌ Not ELITE/STRONG BUY in live scan"
             return "❌ Does not qualify"
 
         total_scanned = len(display_pool)
