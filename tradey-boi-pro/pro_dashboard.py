@@ -549,8 +549,8 @@ with tab_scan:
 
                 st.dataframe(
                     _df_sec.style
-                        .applymap(_colour_today, subset=["Today"])
-                        .applymap(_colour_week,  subset=["1 Week"]),
+                        .map(_colour_today, subset=["Today"])
+                        .map(_colour_week,  subset=["1 Week"]),
                     use_container_width=True,
                     hide_index=True,
                 )
