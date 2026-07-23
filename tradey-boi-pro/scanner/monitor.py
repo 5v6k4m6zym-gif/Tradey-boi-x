@@ -57,6 +57,7 @@ class TieredMonitor:
         self._all_signals:   list[dict] = []    # latest full ranked list
         self._tier2_signals: list[dict] = []    # last tier-2 refresh
         self._tier3_signals: list[dict] = []    # last tier-3 deep watch
+        self._top_scanned:   list[dict] = []    # all scored tickers (incl WATCH), top-N for display
 
         # ── State ─────────────────────────────────────────────────────────────
         self._regimes:       dict[str, RegimeData] = {}
@@ -158,6 +159,13 @@ class TieredMonitor:
     def scan_count(self) -> int:
         return self._scan_count
 
+    @property
+    def top_scanned(self) -> list[dict]:
+        """All tickers that passed hard filters this scan, sorted by score desc.
+        Includes WATCH-tier tickers — use this for 'top N' display regardless of qualification."""
+        with self._lock:
+            return list(self._top_scanned)
+
     # ── Tier 1 — Full universe, 60 min ────────────────────────────────────────
 
     def _tier1_loop(self):
@@ -213,8 +221,13 @@ class TieredMonitor:
 
             ranked = rank_signals(raw_signals, df_cache, regimes)
 
+            # Extract all-scored list attached by scan_all (no extra downloads)
+            top_scanned = df_cache.pop("__top_scanned_list__", [])  # type: ignore[arg-type]
+            df_cache.pop("__top_scanned__", None)   # remove sentinel key
+
             with self._lock:
                 self._all_signals   = ranked
+                self._top_scanned   = top_scanned
                 # Seed both shortlists so Tier 2 and Tier 3 can run immediately
                 self._tier2_signals = ranked[:TIER2_SIZE]
                 self._tier3_signals = ranked[:TIER3_SIZE]
@@ -225,7 +238,8 @@ class TieredMonitor:
             sbuy  = len([s for s in ranked if s.get("tier") == "STRONG BUY"])
             self._status = (
                 f"Tier 1 done — {len(ranked)} signals  "
-                f"ELITE={elite}  STRONG BUY={sbuy}"
+                f"ELITE={elite}  STRONG BUY={sbuy}  "
+                f"({len(top_scanned)} tickers scored)"
             )
             log.info(self._status)
         except Exception as e:

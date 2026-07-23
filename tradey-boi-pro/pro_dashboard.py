@@ -458,17 +458,21 @@ with tab_scan:
     # ── Signal results by tier ────────────────────────────────────────────────
     st.subheader("📋 Ranked Opportunities")
 
-    all_signals = scanner.signals
+    all_signals   = scanner.signals       # qualifying signals only (ELITE / STRONG BUY)
+    top_scanned   = scanner.top_scanned   # ALL scored tickers including WATCH
 
-    if not all_signals:
+    # Use top_scanned as the display pool — always show best N even if nothing qualifies
+    display_pool  = top_scanned if top_scanned else all_signals
+
+    if not display_pool:
         if bot.is_running():
             if scanner.scan_count == 0:
-                st.info("🔍 First Tier 1 scan in progress — ranked results will appear here once complete.")
+                st.info("🔍 First Tier 1 scan in progress — results will appear here once complete.")
             else:
                 st.info(
-                    f"📭 No qualifying signals from the last scan ({scanner.scan_count} scan(s) completed).\n\n"
-                    "The full universe was scanned but no setup met the scoring threshold. "
-                    "The bot is still running and will rescan on the next tier interval."
+                    f"📭 Scan complete ({scanner.scan_count} run(s)) — no tickers passed the hard filters.\n\n"
+                    "Hard filters require: EMA20 > EMA50, MACD positive, RSI 38–72, volume ratio ≥ 1.5×, "
+                    "price rising. The bot will rescan on the next tier interval."
                 )
         else:
             st.info(
@@ -477,16 +481,17 @@ with tab_scan:
                 f"~{len(ASX_UNIVERSE)+len(US_UNIVERSE)}-ticker universe."
             )
     else:
-        # ── Tier summary counts ───────────────────────────────────────────────
+        # ── Tier summary counts (from qualifying signals) ─────────────────────
         tier_counts = {t: 0 for t in ["ELITE", "STRONG BUY", "BUY", "WATCH"]}
-        for s in all_signals:
-            tier_counts[s.get("tier", "WATCH")] = tier_counts.get(s.get("tier", "WATCH"), 0) + 1
+        for s in display_pool:
+            t = s.get("tier", "WATCH")
+            tier_counts[t] = tier_counts.get(t, 0) + 1
 
         kc1, kc2, kc3, kc4 = st.columns(4)
-        kc1.metric("⭐ ELITE",       tier_counts["ELITE"],       help="Score ≥ 8.5 — trade immediately")
-        kc2.metric("🟢 STRONG BUY", tier_counts["STRONG BUY"], help="Score ≥ 7.0 — trade next open")
-        kc3.metric("🔵 BUY",        tier_counts["BUY"],         help="Score ≥ 5.5 — watch only")
-        kc4.metric("⚪ WATCH",      tier_counts["WATCH"],        help="Score < 5.5 — below threshold")
+        kc1.metric("⭐ ELITE",       tier_counts["ELITE"],       help="Score ≥ 8.5 — bot auto-executes")
+        kc2.metric("🟢 STRONG BUY", tier_counts["STRONG BUY"], help="Score ≥ 7.0 — bot auto-executes")
+        kc3.metric("🔵 BUY",        tier_counts["BUY"],         help="Score ≥ 5.5 — does not qualify yet")
+        kc4.metric("⚪ WATCH",      tier_counts["WATCH"],        help="Score < 5.5 — does not qualify")
 
         # ── Market filter + top-N selector ────────────────────────────────────
         _fc1, _fc2 = st.columns([2, 1])
@@ -494,7 +499,7 @@ with tab_scan:
         top_n       = _fc2.selectbox("Show top", [10, 20, 50], index=0, key="scan_topn")
 
         market_filtered = [
-            s for s in all_signals
+            s for s in display_pool
             if show_market == "All"
             or (show_market == "ASX" and s.get("ticker", "").endswith(".AX"))
             or (show_market == "US"  and not s.get("ticker", "").endswith(".AX"))
@@ -507,39 +512,40 @@ with tab_scan:
             return {
                 "ELITE":      "🤖 Auto-executing",
                 "STRONG BUY": "🤖 Auto-executing",
-                "BUY":        "⚠️ Not yet (score too low)",
+                "BUY":        "⚠️ Not yet — score too low",
                 "WATCH":      "❌ Does not qualify",
             }.get(tier, "❌ Does not qualify")
 
+        total_scanned = len(display_pool)
+        qualifying    = tier_counts["ELITE"] + tier_counts["STRONG BUY"]
         st.caption(
-            f"Top {len(top_signals)} of {len(all_signals)} ranked tickers — "
-            "all tiers shown · bot auto-executes ELITE and STRONG BUY"
+            f"Top {len(top_signals)} of {total_scanned} scored tickers — "
+            f"{qualifying} qualify for auto-execution · bot auto-executes ELITE and STRONG BUY"
         )
 
         rows = []
         for i, s in enumerate(top_signals, start=1):
             tier = s.get("tier", "WATCH")
             rows.append({
-                "#":           i,
-                "Ticker":      s.get("ticker"),
-                "Score /10":   round(float(s.get("composite_score", s.get("score", 0))), 2),
-                "Tier":        tier,
+                "#":            i,
+                "Ticker":       s.get("ticker"),
+                "Score /10":    round(float(s.get("composite_score", s.get("score", 0))), 2),
+                "Tier":         tier,
                 "Auto-Execute": _auto_badge(tier),
-                "AI Conf":     f"{float(s.get('ai_confidence', s.get('prob', 0)))*100:.0f}%",
-                "R/R":         s.get("risk_reward", "—"),
-                "Entry $":     round(float(s.get("entry_price", 0)), 3),
-                "Stop $":      round(float(s.get("stop_price", 0)), 3),
-                "Target $":    round(float(s.get("target_price", 0)), 3),
-                "Regime":      s.get("regime_alignment", "—"),
-                "RSI":         round(float(s.get("rsi", 0)), 0) if s.get("rsi") else "—",
-                "Vol Ratio":   round(float(s.get("vol_ratio", 0)), 1) if s.get("vol_ratio") else "—",
-                "Found":       s.get("signal_date", "")[:16],
+                "AI Conf":      f"{float(s.get('ai_confidence', s.get('prob', 0)))*100:.0f}%",
+                "R/R":          s.get("risk_reward", "—"),
+                "Entry $":      round(float(s.get("entry_price", 0)), 3),
+                "Stop $":       round(float(s.get("stop_price", 0)), 3),
+                "Target $":     round(float(s.get("target_price", 0)), 3),
+                "RSI":          round(float(s.get("rsi", 0)), 0) if s.get("rsi") else "—",
+                "Vol Ratio":    round(float(s.get("vol_ratio", 0)), 1) if s.get("vol_ratio") else "—",
+                "Found":        s.get("signal_date", "")[:16],
             })
 
         df_sigs = pd.DataFrame(rows)
         st.dataframe(df_sigs, use_container_width=True, hide_index=True)
 
-        # ── Auto-executing now banner ──────────────────────────────────────────
+        # ── Auto-executing now banners ─────────────────────────────────────────
         auto_sigs = [s for s in top_signals if s.get("tier") in ("ELITE", "STRONG BUY")]
         if auto_sigs:
             for sig in auto_sigs[:5]:

@@ -673,13 +673,16 @@ def _score_signal(df: pd.DataFrame, ticker: str, params: dict) -> Optional[dict]
             tier = "STRONG BUY"
         elif score >= 5:
             tier = "BUY"
+        elif params.get("allow_watch"):
+            tier = "WATCH"
         else:
             return _reject(f"score_too_low ({score})")
 
         # BUY tier is display-only — only STRONG BUY and ELITE qualify for execution.
         # In backtest mode the engine's own min_score gate handles filtering,
         # so BUY signals are passed through there for visibility.
-        if not params.get("backtest_mode") and tier == "BUY":
+        # allow_watch=True skips this gate so the dashboard can show all scored tickers.
+        if not params.get("backtest_mode") and not params.get("allow_watch") and tier == "BUY":
             return _reject("live_scan_buy_tier_suppressed")
 
         exchange = "ASX" if ticker.endswith(".AX") else "SMART"
@@ -791,6 +794,23 @@ def scan_all(
     signals = _apply_live_filters(signals, min_score)
 
     log.info(f"scan_all: {len(signals)} signals after HTF filter")
+
+    # ── Relaxed pass: collect ALL scored tickers for "top N" display ──────────
+    # Uses the already-downloaded df_cache — no extra network calls.
+    # allow_watch=True means tickers that pass hard filters but fail the
+    # score/prob/BUY-suppression gate still get returned as WATCH tier.
+    watch_params = {**params, "allow_watch": True, "backtest_mode": True}
+    all_scored: list[dict] = []
+    for ticker, df in df_cache.items():
+        sig = _score_signal(df, ticker, watch_params)
+        if sig:
+            all_scored.append(sig)
+    all_scored.sort(key=lambda s: (s["score"], s["prob"]), reverse=True)
+    df_cache["__top_scanned__"] = pd.DataFrame()   # sentinel — not a real ticker
+    # Attach top-scanned list to df_cache under a reserved key so monitor can
+    # read it without changing scan_all's return signature.
+    df_cache["__top_scanned_list__"] = all_scored  # type: ignore[assignment]
+
     return (signals, df_cache) if return_cache else signals
 
 
