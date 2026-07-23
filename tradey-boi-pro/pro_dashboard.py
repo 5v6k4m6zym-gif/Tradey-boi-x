@@ -449,6 +449,52 @@ with tab_scan:
 
     st.divider()
 
+    # ── Sector performance ────────────────────────────────────────────────────
+    from scanner.market_regime import get_sector_performance
+    st.subheader("🏭 Sectors")
+    sec_c1, sec_c2 = st.columns(2)
+
+    for _col, _market, _label in [(sec_c1, "ASX", "🇦🇺 ASX"), (sec_c2, "US", "🇺🇸 US")]:
+        with _col:
+            st.markdown(f"**{_label}**")
+            _sectors = get_sector_performance(_market)
+            if _sectors:
+                _rows = []
+                for _s in _sectors:
+                    _d  = _s["change_1d"]
+                    _w  = _s["change_1w"]
+                    _d_str = f"{'▲' if _d >= 0 else '▼'} {_d:+.2f}%"
+                    _w_str = f"{_w:+.2f}%" if _w is not None else "—"
+                    _rows.append({
+                        "Sector":  _s["sector"],
+                        "Today":   _d_str,
+                        "1 Week":  _w_str,
+                    })
+                _df_sec = pd.DataFrame(_rows)
+
+                def _colour_today(val):
+                    colour = "color: #22c55e" if "▲" in str(val) else "color: #ef4444"
+                    return colour
+
+                def _colour_week(val):
+                    try:
+                        v = float(str(val).replace("%", "").replace("+", ""))
+                        return "color: #22c55e" if v >= 0 else "color: #ef4444"
+                    except Exception:
+                        return ""
+
+                st.dataframe(
+                    _df_sec.style
+                        .applymap(_colour_today, subset=["Today"])
+                        .applymap(_colour_week,  subset=["1 Week"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.caption("No sector data — market may be closed.")
+
+    st.divider()
+
     # ── Scan tier status ──────────────────────────────────────────────────────
     st.subheader("⏱ Scan Tier Status")
     tc1, tc2, tc3, tc4 = st.columns(4)

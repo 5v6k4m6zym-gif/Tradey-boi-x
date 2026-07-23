@@ -411,6 +411,103 @@ def get_etf_movers(market: str, n: int = 3) -> list[dict]:
         return []
 
 
+# ── Sector performance ─────────────────────────────────────────────────────────
+
+_SECTOR_CACHE: dict[str, tuple[datetime, list]] = {}
+_SECTOR_TTL = timedelta(minutes=30)
+
+_ASX_SECTORS = [
+    ("^AXEJ", "Energy"),
+    ("^AXMJ", "Materials"),
+    ("^AXFJ", "Financials"),
+    ("^AXTJ", "Technology"),
+    ("^AXHJ", "Health Care"),
+    ("^AXIJ", "Industrials"),
+    ("^AXCJ", "Consumer Disc."),
+    ("^AXSJ", "Consumer Staples"),
+    ("^AXPJ", "Property"),
+    ("^AXUJ", "Utilities"),
+]
+
+_US_SECTORS = [
+    ("XLK",  "Technology"),
+    ("XLE",  "Energy"),
+    ("XLF",  "Financials"),
+    ("XLV",  "Health Care"),
+    ("XLI",  "Industrials"),
+    ("XLY",  "Consumer Disc."),
+    ("XLP",  "Consumer Staples"),
+    ("XLB",  "Materials"),
+    ("XLRE", "Real Estate"),
+    ("XLU",  "Utilities"),
+    ("XLC",  "Comm. Services"),
+]
+
+
+def get_sector_performance(market: str) -> list[dict]:
+    """
+    Return sector performance for ASX or US.
+    Each dict: {sector, ticker, change_1d, change_1w}
+    Sorted by 1d change descending. Cached 30 min.
+    """
+    market = market.upper()
+    cached = _SECTOR_CACHE.get(market)
+    if cached and (datetime.utcnow() - cached[0]) < _SECTOR_TTL:
+        return cached[1]
+
+    sector_list = _ASX_SECTORS if market == "ASX" else _US_SECTORS
+    tickers     = [t for t, _ in sector_list]
+    name_map    = {t: nm for t, nm in sector_list}
+
+    try:
+        import yfinance as yf
+        import contextlib, io, warnings as _w
+        _sink = io.StringIO()
+        with contextlib.redirect_stderr(_sink), _w.catch_warnings():
+            _w.simplefilter("ignore")
+            raw = yf.download(
+                tickers, period="10d", interval="1d",
+                auto_adjust=True, progress=False,
+                group_by="ticker", threads=False,
+            )
+
+        def _closes(ticker):
+            try:
+                df = raw[ticker].copy() if len(tickers) > 1 else raw.copy()
+                if hasattr(df.columns, "levels") and df.columns.nlevels > 1:
+                    df.columns = df.columns.get_level_values(0)
+                df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
+                return df["Close"].squeeze().dropna()
+            except Exception:
+                return None
+
+        results = []
+        for ticker in tickers:
+            closes = _closes(ticker)
+            if closes is None or len(closes) < 2:
+                continue
+            curr = float(closes.iloc[-1])
+            prev = float(closes.iloc[-2])
+            chg_1d = (curr - prev) / prev * 100 if prev > 0 else 0.0
+            chg_1w = (curr - float(closes.iloc[-6])) / float(closes.iloc[-6]) * 100 \
+                     if len(closes) >= 6 and float(closes.iloc[-6]) > 0 else None
+            results.append({
+                "sector":    name_map.get(ticker, ticker),
+                "ticker":    ticker,
+                "change_1d": round(chg_1d, 2),
+                "change_1w": round(chg_1w, 2) if chg_1w is not None else None,
+                "price":     round(curr, 3),
+            })
+
+        results.sort(key=lambda x: x["change_1d"], reverse=True)
+        _SECTOR_CACHE[market] = (datetime.utcnow(), results)
+        return results
+
+    except Exception as e:
+        log.warning(f"get_sector_performance({market}): {e}")
+        return []
+
+
 def regime_summary(rd: RegimeData) -> str:
     icon  = {"BULL": "🟢", "NEUTRAL": "🟡", "BEAR": "🔴"}[rd.regime.value]
     vix_s = f"  VIX={rd.vix}" if rd.vix else ""
