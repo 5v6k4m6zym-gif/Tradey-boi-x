@@ -34,13 +34,15 @@ class IBKRClient:
         self._loop:     Optional[asyncio.AbstractEventLoop] = None
         self._thread:   Optional[threading.Thread] = None
         self._lock      = threading.Lock()
-        self._connected = False
-        self._error_msg = ""
-        self._last_ping: Optional[datetime] = None
+        self._connected   = False
+        self._connecting  = False   # True while initial handshake is in progress
+        self._error_msg   = ""
+        self._last_ping:  Optional[datetime] = None
         self._host      = "127.0.0.1"
         self._port      = 4002
         self._client_id = 1
         self._stop_flag = False
+        self._attempt   = 0         # total connection attempts (for status display)
 
         self.account_summary: dict = {}
         self.positions:       list = []
@@ -49,9 +51,11 @@ class IBKRClient:
     # ── Public lifecycle ─────────────────────────────────────────────────────
 
     def connect(self, host: str, port: int, client_id: int = 1) -> bool:
+        """Connect (blocking — waits up to 15 s for handshake)."""
         if not IB_AVAILABLE:
-            self._connected = True
-            self._error_msg = ""
+            self._connected   = True
+            self._connecting  = False
+            self._error_msg   = ""
             self._start_sim_thread()
             return True
 
@@ -59,7 +63,8 @@ class IBKRClient:
             return True
 
         self._host, self._port, self._client_id = host, port, client_id
-        self._stop_flag = False
+        self._stop_flag  = False
+        self._connecting = True
 
         # Kill any existing thread
         if self._thread and self._thread.is_alive():
@@ -79,11 +84,37 @@ class IBKRClient:
             time.sleep(0.5)
             if self._connected or self._error_msg.startswith("Fatal"):
                 break
+        self._connecting = False
         return self._connected
 
+    def connect_async(self, host: str, port: int, client_id: int = 1) -> None:
+        """
+        Fire-and-forget connect. Returns immediately; _async_main loop keeps
+        retrying until successful. Use when you don't want to block the caller
+        (e.g. dashboard startup auto-connect).
+        """
+        if self._connected or self._connecting:
+            return
+        if not IB_AVAILABLE:
+            self.connect(host, port, client_id)
+            return
+
+        self._host, self._port, self._client_id = host, port, client_id
+        self._stop_flag  = False
+        self._connecting = True
+
+        if self._thread and self._thread.is_alive():
+            return   # already trying — don't double-spawn
+
+        self._thread = threading.Thread(
+            target=self._thread_main, daemon=True, name="IBKRThread"
+        )
+        self._thread.start()
+
     def disconnect(self):
-        self._stop_flag = True
-        self._connected = False
+        self._stop_flag  = True
+        self._connected  = False
+        self._connecting = False
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
 
@@ -107,15 +138,21 @@ class IBKRClient:
         """
         Async reconnect loop. The event loop is running the whole time,
         so ib_insync heartbeats fire automatically — no ib.sleep() needed.
+        Retries indefinitely with exponential back-off (5 s → 30 s max).
         """
         host, port, client_id = self._host, self._port, self._client_id
+        backoff = 5
 
         while not self._stop_flag:
-            self._ib = IB()
+            self._ib        = IB()
+            self._connecting = True
             try:
                 await self._ib.connectAsync(host, port, clientId=client_id, timeout=10)
-                self._connected = True
-                self._error_msg = ""
+                self._connected  = True
+                self._connecting = False
+                self._error_msg  = ""
+                self._attempt   += 1
+                backoff          = 5   # reset on success
                 log.info(f"Connected to IBKR {host}:{port} (client {client_id})")
 
                 # Immediate account data pull
@@ -131,20 +168,23 @@ class IBKRClient:
                         tick = 0
 
                 if not self._stop_flag:
-                    log.warning("IBKR disconnected — reconnecting in 5s…")
+                    log.warning(f"IBKR disconnected — reconnecting in {backoff}s…")
 
             except Exception as exc:
-                self._error_msg = str(exc)
-                log.error(f"IBKR connect error: {exc}")
+                self._error_msg  = str(exc)
+                self._connecting = False
+                log.warning(f"IBKR connect attempt failed ({exc}) — retry in {backoff}s")
             finally:
-                self._connected = False
+                self._connected  = False
+                self._connecting = False
                 try:
                     self._ib.disconnect()
                 except Exception:
                     pass
 
             if not self._stop_flag:
-                await asyncio.sleep(5)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)   # cap at 30 s
 
     # ── Account refresh (runs on the event loop) ─────────────────────────────
 
@@ -253,6 +293,20 @@ class IBKRClient:
     @property
     def connected(self) -> bool:
         return self._connected
+
+    @property
+    def is_connecting(self) -> bool:
+        """True while a connection attempt is in progress (not yet connected)."""
+        return self._connecting and not self._connected
+
+    @property
+    def status(self) -> str:
+        """Human-readable connection status string."""
+        if self._connected:
+            return "connected"
+        if self._connecting:
+            return "connecting"
+        return "disconnected"
 
     @property
     def error(self) -> str:

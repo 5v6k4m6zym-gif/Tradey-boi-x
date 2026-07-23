@@ -82,6 +82,16 @@ def _bt_lock_age_str() -> str:
 if "broker" not in st.session_state:
     from broker.ibkr_client import IBKRClient
     st.session_state.broker = IBKRClient()
+    # Auto-connect on first load if settings are already saved
+    _b = st.session_state.broker
+    _saved_host = cfg.get("ibkr_host")
+    _saved_port = cfg.get("ibkr_port")
+    if _saved_host and _saved_port:
+        _b.connect_async(
+            str(_saved_host),
+            int(_saved_port),
+            int(cfg.get("ibkr_client_id") or 1),
+        )
 
 if "bot" not in st.session_state:
     from engine.bot_runner import BotRunner
@@ -97,8 +107,9 @@ with st.sidebar:
     mode_color = "🟡" if mode == "PAPER" else "🔴"
     st.markdown(f"**Mode:** {mode_color} {mode}")
 
-    conn_color = "🟢" if broker.connected else "🔴"
-    st.markdown(f"**IBKR:** {conn_color} {'Connected' if broker.connected else 'Disconnected'}")
+    _conn_icon  = "🟢" if broker.connected else ("🟡" if broker.is_connecting else "🔴")
+    _conn_label = "Connected" if broker.connected else ("Reconnecting…" if broker.is_connecting else "Disconnected")
+    st.markdown(f"**IBKR:** {_conn_icon} {_conn_label}")
 
     if broker.connected:
         # Throttle: refresh IBKR account values at most once every 30 s
@@ -145,9 +156,22 @@ with st.sidebar:
                 bot.start()
                 cfg.set("bot_enabled", True)
                 st.rerun()
-        else:
+        elif broker.is_connecting:
             st.button("▶ Start Bot", disabled=True, use_container_width=True,
-                      help="Connect to IBKR first")
+                      help="Waiting for IBKR connection…")
+        else:
+            _sb_c1, _sb_c2 = st.columns(2)
+            with _sb_c1:
+                st.button("▶ Start Bot", disabled=True, use_container_width=True,
+                          help="IBKR not connected")
+            with _sb_c2:
+                if st.button("🔌", use_container_width=True, help="Retry IBKR connection"):
+                    broker.connect_async(
+                        str(cfg.get("ibkr_host") or "127.0.0.1"),
+                        int(cfg.get("ibkr_port") or 4002),
+                        int(cfg.get("ibkr_client_id") or 1),
+                    )
+                    st.rerun()
 
     # ── Regime summary ────────────────────────────────────────────────────────
     _sr = scanner.regimes
@@ -178,38 +202,73 @@ tab_dash, tab_scan, tab_pos, tab_perf, tab_health, tab_settings, tab_bt, tab_ana
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_dash:
     if not broker.connected:
-        # ── Connection wizard ────────────────────────────────────────────────
-        st.header("🔌 Connect to Interactive Brokers")
-        st.info(
-            "**Before connecting:**\n"
-            "1. Install & open [IB Gateway](https://www.interactivebrokers.com.au/en/trading/ibgateway.php) "
-            "or Trader Workstation (TWS)\n"
-            "2. Enable API: Configure → Settings → API → Enable ActiveX and Socket Clients ✅\n"
-            "3. Socket port: **7497** (paper) or **7496** (live)\n"
-            "4. Click Connect"
-        )
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            host = st.text_input("Host", value=cfg.get("ibkr_host") or "127.0.0.1")
-        with col2:
-            mode_sel = st.selectbox("Mode", ["Paper Trading", "Live Trading"],
-                index=0 if (cfg.get("mode") or "PAPER") == "PAPER" else 1)
-            port = 4002 if mode_sel == "Paper Trading" else 4001
-        with col3:
-            cid = st.number_input("Client ID", value=int(cfg.get("ibkr_client_id") or 1),
-                                   min_value=1, max_value=99)
-        if st.button("🔌 Connect", type="primary", use_container_width=True):
-            mode_val = "PAPER" if mode_sel == "Paper Trading" else "LIVE"
-            cfg.set("ibkr_host", host); cfg.set("ibkr_port", port)
-            cfg.set("ibkr_client_id", cid); cfg.set("mode", mode_val)
-            with st.spinner("Connecting to IB Gateway…"):
-                ok = broker.connect(host, port, cid)
-            if ok:
-                st.success("✅ Connected!")
+        _has_saved = bool(cfg.get("ibkr_host") and cfg.get("ibkr_port"))
+
+        if _has_saved and broker.is_connecting:
+            # Auto-reconnect in progress — show status and let the page continue
+            st.info(
+                f"🔄 Reconnecting to IB Gateway ({cfg.get('ibkr_host')}:{cfg.get('ibkr_port')})…  "
+                "The dashboard will update automatically once connected.",
+                icon="🔄",
+            )
+            # Offer a manual override in case Gateway needs restarting
+            if st.button("⚙️ Change connection settings", use_container_width=False):
+                cfg.set("ibkr_host", None)   # clear so wizard shows next refresh
                 st.rerun()
-            else:
-                st.error(f"❌ Failed: {broker.error}")
-        st.stop()
+
+        elif _has_saved and not broker.is_connecting:
+            # Saved settings exist but not currently trying — kick off a fresh attempt
+            st.warning(
+                f"⚠️ Not connected to IBKR ({cfg.get('ibkr_host')}:{cfg.get('ibkr_port')}).  "
+                "Auto-reconnect is active — retrying in the background.",
+                icon="⚠️",
+            )
+            rcol1, rcol2 = st.columns([1, 4])
+            with rcol1:
+                if st.button("🔌 Reconnect now", type="primary", use_container_width=True):
+                    broker.connect_async(
+                        str(cfg.get("ibkr_host")),
+                        int(cfg.get("ibkr_port")),
+                        int(cfg.get("ibkr_client_id") or 1),
+                    )
+                    st.rerun()
+            with rcol2:
+                if st.button("⚙️ Change connection settings", use_container_width=True):
+                    cfg.set("ibkr_host", None)
+                    st.rerun()
+
+        else:
+            # ── First-time setup wizard (no saved settings) ──────────────────
+            st.header("🔌 Connect to Interactive Brokers")
+            st.info(
+                "**Before connecting:**\n"
+                "1. Install & open [IB Gateway](https://www.interactivebrokers.com.au/en/trading/ibgateway.php) "
+                "or Trader Workstation (TWS)\n"
+                "2. Enable API: Configure → Settings → API → Enable ActiveX and Socket Clients ✅\n"
+                "3. Socket port: **4002** (Gateway paper) or **4001** (Gateway live)\n"
+                "4. Click Connect — settings are saved and auto-reconnect activates from then on"
+            )
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                host = st.text_input("Host", value="127.0.0.1")
+            with col2:
+                mode_sel = st.selectbox("Mode", ["Paper Trading", "Live Trading"],
+                    index=0 if (cfg.get("mode") or "PAPER") == "PAPER" else 1)
+                port = 4002 if mode_sel == "Paper Trading" else 4001
+            with col3:
+                cid = st.number_input("Client ID", value=1, min_value=1, max_value=99)
+            if st.button("🔌 Connect", type="primary", use_container_width=True):
+                mode_val = "PAPER" if mode_sel == "Paper Trading" else "LIVE"
+                cfg.set("ibkr_host", host); cfg.set("ibkr_port", port)
+                cfg.set("ibkr_client_id", cid); cfg.set("mode", mode_val)
+                with st.spinner("Connecting to IB Gateway…"):
+                    ok = broker.connect(host, port, cid)
+                if ok:
+                    st.success("✅ Connected! Settings saved — auto-reconnect is now active.")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Failed: {broker.error}")
+            st.stop()
 
     # ── Market status ─────────────────────────────────────────────────────────
     st.header("📊 Dashboard")
