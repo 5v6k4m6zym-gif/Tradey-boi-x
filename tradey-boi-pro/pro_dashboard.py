@@ -502,39 +502,58 @@ with tab_scan:
 
         top_signals = market_filtered[:top_n]
 
-        # ── Helper: qualify badge ─────────────────────────────────────────────
-        def _qualify_badge(tier: str) -> str:
+        # ── Helper: auto-execute status badge ────────────────────────────────
+        def _auto_badge(tier: str) -> str:
             return {
-                "ELITE":      "✅ Trade now",
-                "STRONG BUY": "✅ Trade next open",
-                "BUY":        "⚠️ Below threshold",
+                "ELITE":      "🤖 Auto-executing",
+                "STRONG BUY": "🤖 Auto-executing",
+                "BUY":        "⚠️ Not yet (score too low)",
                 "WATCH":      "❌ Does not qualify",
             }.get(tier, "❌ Does not qualify")
 
-        st.caption(f"Top {len(top_signals)} of {len(all_signals)} ranked tickers — all tiers shown")
+        st.caption(
+            f"Top {len(top_signals)} of {len(all_signals)} ranked tickers — "
+            "all tiers shown · bot auto-executes ELITE and STRONG BUY"
+        )
 
         rows = []
         for i, s in enumerate(top_signals, start=1):
             tier = s.get("tier", "WATCH")
             rows.append({
-                "#":          i,
-                "Ticker":     s.get("ticker"),
-                "Score /10":  round(float(s.get("composite_score", s.get("score", 0))), 2),
-                "Tier":       tier,
-                "Qualifies":  _qualify_badge(tier),
-                "AI Conf":    f"{float(s.get('ai_confidence', s.get('prob', 0)))*100:.0f}%",
-                "R/R":        s.get("risk_reward", "—"),
-                "Entry $":    round(float(s.get("entry_price", 0)), 3),
-                "Stop $":     round(float(s.get("stop_price", 0)), 3),
-                "Target $":   round(float(s.get("target_price", 0)), 3),
-                "Regime":     s.get("regime_alignment", "—"),
-                "RSI":        round(float(s.get("rsi", 0)), 0) if s.get("rsi") else "—",
-                "Vol Ratio":  round(float(s.get("vol_ratio", 0)), 1) if s.get("vol_ratio") else "—",
-                "Found":      s.get("signal_date", "")[:16],
+                "#":           i,
+                "Ticker":      s.get("ticker"),
+                "Score /10":   round(float(s.get("composite_score", s.get("score", 0))), 2),
+                "Tier":        tier,
+                "Auto-Execute": _auto_badge(tier),
+                "AI Conf":     f"{float(s.get('ai_confidence', s.get('prob', 0)))*100:.0f}%",
+                "R/R":         s.get("risk_reward", "—"),
+                "Entry $":     round(float(s.get("entry_price", 0)), 3),
+                "Stop $":      round(float(s.get("stop_price", 0)), 3),
+                "Target $":    round(float(s.get("target_price", 0)), 3),
+                "Regime":      s.get("regime_alignment", "—"),
+                "RSI":         round(float(s.get("rsi", 0)), 0) if s.get("rsi") else "—",
+                "Vol Ratio":   round(float(s.get("vol_ratio", 0)), 1) if s.get("vol_ratio") else "—",
+                "Found":       s.get("signal_date", "")[:16],
             })
 
         df_sigs = pd.DataFrame(rows)
         st.dataframe(df_sigs, use_container_width=True, hide_index=True)
+
+        # ── Auto-executing now banner ──────────────────────────────────────────
+        auto_sigs = [s for s in top_signals if s.get("tier") in ("ELITE", "STRONG BUY")]
+        if auto_sigs:
+            for sig in auto_sigs[:5]:
+                tier_icon = "⭐" if sig.get("tier") == "ELITE" else "🟢"
+                st.success(
+                    f"{tier_icon} **{sig['ticker']}** — {sig['tier']}  ·  "
+                    f"Score **{sig.get('composite_score', sig.get('score', 0)):.1f}/10**  ·  "
+                    f"Entry **${sig.get('entry_price', 0):.3f}**  ·  "
+                    f"Stop **${sig.get('stop_price', 0):.3f}**  ·  "
+                    f"Target **${sig.get('target_price', 0):.3f}**  ·  "
+                    f"R/R **{sig.get('risk_reward', '?')}**  ·  "
+                    f"AI **{float(sig.get('ai_confidence', sig.get('prob', 0)))*100:.0f}%**  ·  "
+                    f"🤖 Bot has queued this for execution"
+                )
 
         # ── Factor breakdown for #1 signal ────────────────────────────────────
         if top_signals and top_signals[0].get("ranked_factors"):
@@ -548,29 +567,6 @@ with tab_scan:
                     )
                 ])
                 st.dataframe(factor_df, hide_index=True, use_container_width=True)
-
-        # ── ELITE trade buttons ────────────────────────────────────────────────
-        elite = [s for s in top_signals if s.get("tier") == "ELITE"]
-        if elite and bot.is_running():
-            st.subheader("⭐ ELITE — Trade Now")
-            for sig in elite[:3]:
-                with st.container(border=True):
-                    ec1, ec2, ec3 = st.columns([3, 2, 1])
-                    ec1.markdown(f"**{sig['ticker']}**  ⭐ ELITE  — Score {sig.get('composite_score',0):.1f}/10")
-                    ec2.caption(
-                        f"Entry ${sig.get('entry_price',0):.3f}  ·  "
-                        f"Stop ${sig.get('stop_price',0):.3f}  ·  "
-                        f"Target ${sig.get('target_price',0):.3f}  ·  "
-                        f"R/R {sig.get('risk_reward','?')}"
-                    )
-                    if ec3.button("Trade", key=f"elite_{sig['ticker']}", type="primary"):
-                        from engine.executor import execute_signal
-                        res = execute_signal(sig, broker)
-                        if res["ok"]:
-                            st.success(f"✅ {sig['ticker']} order placed")
-                        else:
-                            st.error(f"❌ {res['reason']}")
-                        st.rerun()
 
     st.divider()
 
