@@ -687,9 +687,14 @@ with tab_scan:
         top_signals = market_filtered[:top_n]
 
         # ── Real execution queue (signals that passed ALL hard filters) ───────
+        # Use scanner.actionable_signals (live hard-filter pass only) as the
+        # source of truth for badges — NOT get_pending_signals, which also
+        # pulls X signal_log.json and inflates the set.
+        _live_actioned  = scanner.actionable_signals   # ELITE/STRONG BUY from live scan
+        _queued_tickers = {s["ticker"] for s in _live_actioned}
+        # Full bridge output (including X signals) is still used for the banner
         from engine.signal_bridge import get_pending_signals as _get_pending
-        _real_queue    = _get_pending(scanner_signals=scanner.actionable_signals)
-        _queued_tickers = {s["ticker"] for s in _real_queue}
+        _real_queue = _get_pending(scanner_signals=_live_actioned)
 
         # ── Helper: auto-execute status badge ────────────────────────────────
         def _auto_badge(tier: str, ticker: str = "") -> str:
