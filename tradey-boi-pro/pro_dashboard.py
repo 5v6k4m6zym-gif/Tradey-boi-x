@@ -686,14 +686,20 @@ with tab_scan:
 
         top_signals = market_filtered[:top_n]
 
+        # ── Real execution queue (signals that passed ALL hard filters) ───────
+        from engine.signal_bridge import get_pending_signals as _get_pending
+        _real_queue    = _get_pending(scanner_signals=scanner.actionable_signals)
+        _queued_tickers = {s["ticker"] for s in _real_queue}
+
         # ── Helper: auto-execute status badge ────────────────────────────────
-        def _auto_badge(tier: str) -> str:
-            return {
-                "ELITE":      "🤖 Auto-executing",
-                "STRONG BUY": "🤖 Auto-executing",
-                "BUY":        "⚠️ Not yet — score too low",
-                "WATCH":      "❌ Does not qualify",
-            }.get(tier, "❌ Does not qualify")
+        def _auto_badge(tier: str, ticker: str = "") -> str:
+            if ticker in _queued_tickers:
+                return "🤖 Auto-executing"
+            if tier in ("ELITE", "STRONG BUY"):
+                return "⏳ Pending hard-filter pass"
+            if tier == "BUY":
+                return "⚠️ Not yet — score too low"
+            return "❌ Does not qualify"
 
         total_scanned = len(display_pool)
         qualifying    = tier_counts["ELITE"] + tier_counts["STRONG BUY"]
@@ -710,7 +716,7 @@ with tab_scan:
                 "Ticker":       s.get("ticker"),
                 "Score /10":    round(float(s.get("composite_score", s.get("score", 0))), 2),
                 "Tier":         tier,
-                "Auto-Execute": _auto_badge(tier),
+                "Auto-Execute": _auto_badge(tier, s.get("ticker", "")),
                 "AI Conf":      f"{float(s.get('ai_confidence', s.get('prob', 0)))*100:.0f}%",
                 "R/R":          s.get("risk_reward", "—"),
                 "Entry $":      round(float(s.get("entry_price", 0)), 3),
@@ -724,8 +730,10 @@ with tab_scan:
         df_sigs = pd.DataFrame(rows)
         st.dataframe(df_sigs, use_container_width=True, hide_index=True)
 
-        # ── Auto-executing now banners ─────────────────────────────────────────
-        auto_sigs = [s for s in top_signals if s.get("tier") in ("ELITE", "STRONG BUY")]
+        # ── Auto-executing now banners (only real queue — passed ALL hard filters) ──
+        # _real_queue is already fetched above; filter to what's visible in top_signals
+        visible_tickers = {s["ticker"] for s in top_signals}
+        auto_sigs = [s for s in _real_queue if s.get("ticker") in visible_tickers]
         if auto_sigs:
             for sig in auto_sigs[:5]:
                 tier_icon = "⭐" if sig.get("tier") == "ELITE" else "🟢"
