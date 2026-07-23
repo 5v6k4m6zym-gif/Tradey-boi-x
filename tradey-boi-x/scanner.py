@@ -497,7 +497,15 @@ if __name__ == "__main__":
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Single scan starting…")
         if markets_open():
             m = train_model()
-            run_scan(m)
+            fired = wrap_run_scan(run_scan)(m)
+            if fired == 0:
+                try:
+                    regime = market_regime("SPY")
+                    ok = send_no_elite_setups_alert(regime)
+                    print(f"  📭 No elite setups — 'HOLD CASH' sent (regime: {regime})" if ok
+                          else "  ⚠️  No-elite-setups alert failed (Discord unreachable)")
+                except Exception as _ne:
+                    print(f"  ⚠️  No-elite-setups alert error: {_ne}")
         else:
             print("Markets closed — skipping scan.")
     elif "--minutes" in sys.argv:
