@@ -477,93 +477,100 @@ with tab_scan:
                 f"~{len(ASX_UNIVERSE)+len(US_UNIVERSE)}-ticker universe."
             )
     else:
-        # Tier counts
+        # ── Tier summary counts ───────────────────────────────────────────────
         tier_counts = {t: 0 for t in ["ELITE", "STRONG BUY", "BUY", "WATCH"]}
         for s in all_signals:
             tier_counts[s.get("tier", "WATCH")] = tier_counts.get(s.get("tier", "WATCH"), 0) + 1
 
         kc1, kc2, kc3, kc4 = st.columns(4)
-        kc1.metric("⭐ ELITE",       tier_counts["ELITE"],       help="Composite ≥ 8.5 — trade immediately")
-        kc2.metric("🟢 STRONG BUY", tier_counts["STRONG BUY"], help="Composite ≥ 7.0 — trade next open")
-        kc3.metric("🔵 BUY",        tier_counts["BUY"],         help="Composite ≥ 5.5 — watch only")
-        kc4.metric("⚪ WATCH",      tier_counts["WATCH"],        help="Below threshold — monitor")
+        kc1.metric("⭐ ELITE",       tier_counts["ELITE"],       help="Score ≥ 8.5 — trade immediately")
+        kc2.metric("🟢 STRONG BUY", tier_counts["STRONG BUY"], help="Score ≥ 7.0 — trade next open")
+        kc3.metric("🔵 BUY",        tier_counts["BUY"],         help="Score ≥ 5.5 — watch only")
+        kc4.metric("⚪ WATCH",      tier_counts["WATCH"],        help="Score < 5.5 — below threshold")
 
-        # Tier filter
-        show_tiers = st.multiselect(
-            "Show tiers",
-            ["ELITE", "STRONG BUY", "BUY", "WATCH"],
-            default=["ELITE", "STRONG BUY"],
-        )
-        show_market = st.selectbox("Market", ["All", "ASX", "US"], index=0)
+        # ── Market filter + top-N selector ────────────────────────────────────
+        _fc1, _fc2 = st.columns([2, 1])
+        show_market = _fc1.selectbox("Market", ["All", "ASX", "US"], index=0, key="scan_mkt")
+        top_n       = _fc2.selectbox("Show top", [10, 20, 50], index=0, key="scan_topn")
 
-        filtered = [
+        market_filtered = [
             s for s in all_signals
-            if s.get("tier", "WATCH") in show_tiers
-            and (show_market == "All"
-                 or (show_market == "ASX" and s.get("ticker","").endswith(".AX"))
-                 or (show_market == "US"  and not s.get("ticker","").endswith(".AX")))
+            if show_market == "All"
+            or (show_market == "ASX" and s.get("ticker", "").endswith(".AX"))
+            or (show_market == "US"  and not s.get("ticker", "").endswith(".AX"))
         ]
 
-        st.caption(f"Showing {len(filtered)} of {len(all_signals)} signals")
+        top_signals = market_filtered[:top_n]
 
-        if filtered:
-            rows = []
-            for s in filtered:
-                rows.append({
-                    "Rank":       s.get("rank", "—"),
-                    "Ticker":     s.get("ticker"),
-                    "Tier":       s.get("tier", "?"),
-                    "Score":      round(float(s.get("composite_score", s.get("score", 0))), 1),
-                    "AI Conf":    f"{float(s.get('ai_confidence', s.get('prob', 0)))*100:.0f}%",
-                    "R/R":        s.get("risk_reward", "?"),
-                    "Entry $":    round(float(s.get("entry_price", 0)), 3),
-                    "Stop $":     round(float(s.get("stop_price", 0)), 3),
-                    "Target $":   round(float(s.get("target_price", 0)), 3),
-                    "ATR %":      round(float(s.get("atr_pct", 0)), 1),
-                    "Regime":     s.get("regime_alignment", "?"),
-                    "RSI":        round(float(s.get("rsi", 0)), 0) if s.get("rsi") else "—",
-                    "Vol Ratio":  round(float(s.get("vol_ratio", 0)), 1) if s.get("vol_ratio") else "—",
-                    "Source":     s.get("source", "pro"),
-                    "Found":      s.get("signal_date", "")[:16],
-                })
-            df_sigs = pd.DataFrame(rows)
-            st.dataframe(df_sigs, use_container_width=True, hide_index=True)
+        # ── Helper: qualify badge ─────────────────────────────────────────────
+        def _qualify_badge(tier: str) -> str:
+            return {
+                "ELITE":      "✅ Trade now",
+                "STRONG BUY": "✅ Trade next open",
+                "BUY":        "⚠️ Below threshold",
+                "WATCH":      "❌ Does not qualify",
+            }.get(tier, "❌ Does not qualify")
 
-            # Factor breakdown for top signal
-            if filtered and filtered[0].get("ranked_factors"):
-                with st.expander(f"🔬 Factor breakdown — #{filtered[0]['ticker']}"):
-                    factors = filtered[0]["ranked_factors"]
-                    factor_df = pd.DataFrame([
-                        {"Factor": k, "Score (0–1)": round(v, 3), "Weight": w}
-                        for (k, v), w in zip(
-                            factors.items(),
-                            [0.30, 0.20, 0.15, 0.20, 0.10, 0.05]
-                        )
-                    ])
-                    st.dataframe(factor_df, hide_index=True, use_container_width=True)
+        st.caption(f"Top {len(top_signals)} of {len(all_signals)} ranked tickers — all tiers shown")
 
-            # Manual trade buttons for ELITE signals
-            elite = [s for s in filtered if s.get("tier") == "ELITE"]
-            if elite and bot.is_running():
-                st.subheader("⭐ ELITE — Trade Now")
-                for sig in elite[:3]:
-                    with st.container(border=True):
-                        ec1, ec2, ec3 = st.columns([3, 2, 1])
-                        ec1.markdown(f"**{sig['ticker']}**  ⭐ ELITE  — Score {sig.get('composite_score',0):.1f}")
-                        ec2.caption(
-                            f"Entry ${sig.get('entry_price',0):.3f}  ·  "
-                            f"Stop ${sig.get('stop_price',0):.3f}  ·  "
-                            f"Target ${sig.get('target_price',0):.3f}  ·  "
-                            f"R/R {sig.get('risk_reward','?')}"
-                        )
-                        if ec3.button("Trade", key=f"elite_{sig['ticker']}", type="primary"):
-                            from engine.executor import execute_signal
-                            res = execute_signal(sig, broker)
-                            if res["ok"]:
-                                st.success(f"✅ {sig['ticker']} order placed")
-                            else:
-                                st.error(f"❌ {res['reason']}")
-                            st.rerun()
+        rows = []
+        for i, s in enumerate(top_signals, start=1):
+            tier = s.get("tier", "WATCH")
+            rows.append({
+                "#":          i,
+                "Ticker":     s.get("ticker"),
+                "Score /10":  round(float(s.get("composite_score", s.get("score", 0))), 2),
+                "Tier":       tier,
+                "Qualifies":  _qualify_badge(tier),
+                "AI Conf":    f"{float(s.get('ai_confidence', s.get('prob', 0)))*100:.0f}%",
+                "R/R":        s.get("risk_reward", "—"),
+                "Entry $":    round(float(s.get("entry_price", 0)), 3),
+                "Stop $":     round(float(s.get("stop_price", 0)), 3),
+                "Target $":   round(float(s.get("target_price", 0)), 3),
+                "Regime":     s.get("regime_alignment", "—"),
+                "RSI":        round(float(s.get("rsi", 0)), 0) if s.get("rsi") else "—",
+                "Vol Ratio":  round(float(s.get("vol_ratio", 0)), 1) if s.get("vol_ratio") else "—",
+                "Found":      s.get("signal_date", "")[:16],
+            })
+
+        df_sigs = pd.DataFrame(rows)
+        st.dataframe(df_sigs, use_container_width=True, hide_index=True)
+
+        # ── Factor breakdown for #1 signal ────────────────────────────────────
+        if top_signals and top_signals[0].get("ranked_factors"):
+            with st.expander(f"🔬 Factor breakdown — {top_signals[0]['ticker']} (rank #1)"):
+                factors = top_signals[0]["ranked_factors"]
+                factor_df = pd.DataFrame([
+                    {"Factor": k, "Score (0–1)": round(v, 3), "Weight": w}
+                    for (k, v), w in zip(
+                        factors.items(),
+                        [0.30, 0.20, 0.15, 0.20, 0.10, 0.05]
+                    )
+                ])
+                st.dataframe(factor_df, hide_index=True, use_container_width=True)
+
+        # ── ELITE trade buttons ────────────────────────────────────────────────
+        elite = [s for s in top_signals if s.get("tier") == "ELITE"]
+        if elite and bot.is_running():
+            st.subheader("⭐ ELITE — Trade Now")
+            for sig in elite[:3]:
+                with st.container(border=True):
+                    ec1, ec2, ec3 = st.columns([3, 2, 1])
+                    ec1.markdown(f"**{sig['ticker']}**  ⭐ ELITE  — Score {sig.get('composite_score',0):.1f}/10")
+                    ec2.caption(
+                        f"Entry ${sig.get('entry_price',0):.3f}  ·  "
+                        f"Stop ${sig.get('stop_price',0):.3f}  ·  "
+                        f"Target ${sig.get('target_price',0):.3f}  ·  "
+                        f"R/R {sig.get('risk_reward','?')}"
+                    )
+                    if ec3.button("Trade", key=f"elite_{sig['ticker']}", type="primary"):
+                        from engine.executor import execute_signal
+                        res = execute_signal(sig, broker)
+                        if res["ok"]:
+                            st.success(f"✅ {sig['ticker']} order placed")
+                        else:
+                            st.error(f"❌ {res['reason']}")
+                        st.rerun()
 
     st.divider()
 
