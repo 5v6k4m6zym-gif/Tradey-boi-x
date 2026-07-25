@@ -342,34 +342,34 @@ def run_backtest(
     reasons: dict[str, int] = {}
 
     p = {
-        # Pro sweep winner params (PF=2.248, WR=80%, 54 trades, MaxDD=1.4%)
-        "min_score":         params.get("min_score",         7),
-        "min_prob":          params.get("min_prob",          0.55),
+        # Pro sweep winner params (stop_sweep_winner.json — PF=2.248, WR=80%, 54 trades)
+        # These defaults match the validated sweep winner exactly so any backtest run
+        # without explicit params reproduces the sweep result.
+        "min_score":         params.get("min_score",         5),
+        "min_prob":          params.get("min_prob",          0.50),
         "max_positions":     params.get("max_positions",     5),
         "risk_pct":          params.get("risk_pct",          2.0),
         "brokerage":         params.get("brokerage",         2.0),
         "hold_days":         params.get("hold_days",         15),
-        # Wider ATR stops — outside daily noise so trades can develop before stopping out.
-        # Target is always 3× stop distance (computed at signal time), giving 3:1 R:R.
-        "sl_mult_hi":        params.get("sl_mult_hi",        1.5),
-        "sl_mult_mid":       params.get("sl_mult_mid",       1.2),
-        "sl_mult_lo":        params.get("sl_mult_lo",        1.0),
-        # Targets calibrated to realistic 15-day move potential for quality stocks.
-        # Previous 15/10/7% were too ambitious — breakouts typically move 6-10% in 2wks.
-        # Lower targets = more hits, faster capital recycling, same R:R (stops are tight).
+        # Tight ATR stops — sweep winner (0.8/0.6/0.5) beats wider stops every time.
+        # Cuts losers fast and leaves room for winners to compound.
+        "sl_mult_hi":        params.get("sl_mult_hi",        0.8),
+        "sl_mult_mid":       params.get("sl_mult_mid",       0.6),
+        "sl_mult_lo":        params.get("sl_mult_lo",        0.5),
+        # Target is 2× stop distance at entry (2:1 R:R) — computed dynamically.
+        # target_hi/mid/lo are display-only percentage estimates for the dashboard.
         "target_hi":         params.get("target_hi",         10.0),
         "target_mid":        params.get("target_mid",         7.0),
         "target_lo":         params.get("target_lo",          5.0),
         # min_hold_days: stop cannot trigger during the first N days after entry.
         "min_hold_days":     params.get("min_hold_days",     2),
-        # BE / trailing stop:
+        # BE / trailing stop — sweep winner values:
         # be_trigger_r=0.5: fast BE protection — stop moves to entry at +0.5R.
-        # trail_trigger_r=2.0: raised from 1.5 — don't start trailing until the move
-        #   is established, so normal pullbacks don't eject trades before target.
-        # trail_dist_r=1.0: widened from 0.7 — gives 1R of breathing room on pullbacks.
+        # trail_trigger_r=1.5: start trailing at +1.5R (locks profit on established moves).
+        # trail_dist_r=0.7: trail 0.7R below rolling peak (tight enough to capture gains).
         "be_trigger_r":      params.get("be_trigger_r",      0.5),
-        "trail_trigger_r":   params.get("trail_trigger_r",   2.0),
-        "trail_dist_r":      params.get("trail_dist_r",      1.0),
+        "trail_trigger_r":   params.get("trail_trigger_r",   1.5),
+        "trail_dist_r":      params.get("trail_dist_r",      0.7),
         "cb_losses":         params.get("cb_consecutive_losses", 3),
         "cb_pause_days":     params.get("cb_pause_days",     7),
         "use_regime_filter": params.get("use_regime_filter", True),

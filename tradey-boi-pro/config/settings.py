@@ -41,14 +41,14 @@ DEFAULTS: dict = {
     # Dynamic stop management — pro-sweep winner: BE=0.5R, Trail=1.5R/0.7R
     "min_hold_days":         2,       # stop cannot trigger in first N days (entry-day noise)
     "be_trigger_r":          0.5,     # slide stop to entry at +0.5R — fast BE protection reduces avg loss
-    "trail_trigger_r":       2.0,     # raised from 1.5 — don't trail until move is established
-    "trail_dist_r":          1.0,     # widened from 0.7 — room to breathe on pullbacks
+    "trail_trigger_r":       1.5,     # sweep winner: trail activates at +1.5R (locks in profit)
+    "trail_dist_r":          0.7,     # sweep winner: trails 0.7R below rolling peak
 
     # Signal quality gates — pro-sweep winner: score≥5, prob≥0.50
-    # Lowered from 8/0.58: oversold-recovery signals (RSI 35-42, vol>1.5) score 5
-    # and have heuristic prob 0.55-0.57 — previously excluded, now included
-    "min_prob":              0.55,    # raised from 0.50 — require higher AI confidence
-    "min_score":             7,       # raised from 6 — requires breakout OR high-prob setup
+    # Oversold-recovery signals (RSI 35-42, vol>1.5) score 5 and have prob 0.50-0.57;
+    # excluding them (score≥7, prob≥0.55) removes valid trades and cuts win rate.
+    "min_prob":              0.50,    # sweep winner: minimum AI confidence
+    "min_score":             5,       # sweep winner: minimum signal score
     "min_expected_r":        1.5,     # minimum EV in R units (gates low R:R setups)
     "min_composite":         7.5,     # live bot: composite_score threshold (ranker 0-10 scale)
 
@@ -98,16 +98,18 @@ def ensure_defaults():
 # Any key listed here gets overwritten unconditionally so users always run the
 # latest optimised parameters without needing to manually reset their database.
 _FORCED_UPDATES: dict = {
-    "min_score":         7,      # v3: raised 5→6→7 (breakout OR prob≥0.70 required)
-    "min_prob":          0.55,   # v3: raised 0.50→0.55
-    "trail_trigger_r":   2.0,    # v3: raised 1.5→2.0 (don't trail prematurely)
-    "trail_dist_r":      1.0,    # v3: widened 0.7→1.0 (room to breathe on pullbacks)
-    "be_trigger_r":      0.5,    # v2: fast BE protection
-    "hold_days":         15,
-    "sl_mult_hi":        0.8,    # v5: tight sweep-winner stops (0.8/0.6/0.5) — do NOT widen
+    # Sweep winner params (stop_sweep_winner.json → PF=2.248, WR=80%, 54 trades)
+    # These match what the backtest was run with — do NOT raise without re-running backtest.
+    "min_score":         5,      # sweep winner: min_score=5 (lowering lets recovery signals through)
+    "min_prob":          0.50,   # sweep winner: min_prob=0.50
+    "trail_trigger_r":   1.5,    # sweep winner: trail at +1.5R (not 2.0 — too late, misses locks)
+    "trail_dist_r":      0.7,    # sweep winner: 0.7R trail width (not 1.0 — gives back too much)
+    "be_trigger_r":      0.5,    # sweep winner: fast BE protection at +0.5R
+    "hold_days":         15,     # sweep winner: 15-day max hold
+    "sl_mult_hi":        0.8,    # sweep winner: tight ATR stops — do NOT widen
     "sl_mult_mid":       0.6,
     "sl_mult_lo":        0.5,
-    "target_hi":         4.8,    # v5: display only — actual target = 2× stop dist at entry
+    "target_hi":         4.8,    # display only — actual target = 2× stop dist at entry
     "target_mid":        2.4,
     "target_lo":         1.0,
 }

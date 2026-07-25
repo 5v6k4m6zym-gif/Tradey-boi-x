@@ -54,9 +54,9 @@ def get_pending_signals(
 
     scanner_signals: pre-filtered actionable list from TieredMonitor.actionable_signals
     """
-    min_prob        = float(cfg.get("min_prob")        or 0.58)
-    min_score       = int(cfg.get("min_score")         or 8)
-    min_composite   = float(cfg.get("min_composite")   or 7.5)   # was 7.0 hardcoded
+    min_prob        = float(cfg.get("min_prob")        or 0.50)   # sweep winner default
+    min_score       = int(cfg.get("min_score")         or 5)     # sweep winner default
+    min_composite   = float(cfg.get("min_composite")   or 7.5)
     handled         = _already_handled()
 
     combined: dict[str, dict] = {}
