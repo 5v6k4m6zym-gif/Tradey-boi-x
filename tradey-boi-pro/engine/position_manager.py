@@ -205,13 +205,25 @@ class PositionManager:
         if not pos:
             return
         try:
-            self._broker.close_position(
+            result = self._broker.close_position(
                 pos["ticker"], pos["exchange"], pos["quantity"],
                 "AUD" if pos["exchange"] == "ASX" else "USD"
             )
+            # If IBKR is live and returns an error dict, treat as a failed order
+            if isinstance(result, dict) and result.get("error"):
+                raise RuntimeError(result["error"])
         except Exception as e:
             log.error(f"Exit order failed for {pos['ticker']}: {e}")
             db.log_error("PositionManager", f"Exit order failed: {e}")
+            # Only abort if the broker is actually connected — a live-connected
+            # failure means the position is still open at the broker and we must
+            # keep monitoring it.  A simulated close (disconnected) falls through.
+            if self._broker.connected:
+                log.warning(
+                    f"{pos['ticker']}: live broker close failed — "
+                    "position kept open, will retry next cycle"
+                )
+                return
 
         db.close_position(position_id, exit_price, reason)
         log.info(f"Position closed: {pos['ticker']} @ ${exit_price:.3f} ({reason})")

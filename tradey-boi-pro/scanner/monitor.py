@@ -275,8 +275,9 @@ class TieredMonitor:
         try:
             raw, df_cache = scan_batch(t2_tickers, return_cache=True)
             with self._lock:
+                cache_snapshot = dict(self._df_cache)
                 self._df_cache.update(df_cache)
-            ranked = rank_signals(raw, {**self._df_cache, **df_cache}, regimes)
+            ranked = rank_signals(raw, {**cache_snapshot, **df_cache}, regimes)
 
             with self._lock:
                 # Merge: update scores for tier-2 tickers in the full list
@@ -325,8 +326,9 @@ class TieredMonitor:
             # Use shorter period for speed; also try 1h intraday for freshest close
             raw, df_cache = scan_batch(t3_tickers, period="30d", return_cache=True)
             with self._lock:
+                cache_snapshot = dict(self._df_cache)
                 self._df_cache.update(df_cache)
-            ranked = rank_signals(raw, {**self._df_cache, **df_cache}, regimes)
+            ranked = rank_signals(raw, {**cache_snapshot, **df_cache}, regimes)
 
             with self._lock:
                 t3_map = {s["ticker"]: s for s in ranked}

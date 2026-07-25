@@ -76,10 +76,14 @@ def sync_ibkr_positions(broker: "IBKRClient") -> list[str]:
     if not ibkr_positions:
         return []
 
-    # Build set of tickers already tracked (normalised to uppercase, no suffix)
+    # Build set of tickers already tracked.
+    # Include both the stored form and the bare form (without .AX) so we match
+    # correctly regardless of whether old positions were stored with or without suffix.
     tracked = set()
     for p in db.open_positions():
-        tracked.add(p["ticker"].upper())
+        t = p["ticker"].upper()
+        tracked.add(t)
+        tracked.add(t.replace(".AX", ""))   # bare form for IBKR comparison
 
     mode     = cfg.get("mode") or "PAPER"
     hold_days = int(cfg.get("hold_days") or 15)
@@ -107,8 +111,9 @@ def sync_ibkr_positions(broker: "IBKRClient") -> list[str]:
         else:
             yf_symbol = raw_ticker
 
-        # Strip ".AX" from the DB ticker (the DB stores bare symbol + exchange separately)
-        db_ticker = raw_ticker.replace(".AX", "") if exchange == "ASX" else raw_ticker
+        # Store the canonical yfinance symbol as the DB ticker so it matches
+        # the scanner and signal_bridge (both use ".AX" suffix for ASX tickers).
+        db_ticker = yf_symbol
 
         log.info(
             f"[SYNC] Found untracked IBKR position: {db_ticker} "
