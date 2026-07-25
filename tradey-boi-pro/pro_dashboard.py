@@ -18,6 +18,53 @@ import plotly.express as px
 from datetime import datetime
 import threading, time as _time_mod
 
+# ── In-place updater ──────────────────────────────────────────────────────────
+_RELEASE_ZIP = (
+    "https://github.com/5v6k4m6zym-gif/Tradey-boi-x"
+    "/releases/latest/download/TradeyBoiPro.zip"
+)
+# Paths that must never be overwritten by an update
+_PROTECTED = {
+    "data/pro.db",
+    "config/adaptive_thresholds.json",
+    "stop_sweep_winner.json",
+    "sweep_winner.json",
+}
+
+def _apply_update() -> tuple[bool, str]:
+    """Download the latest release zip and extract it in-place.
+    Returns (success, message).
+    """
+    import urllib.request, zipfile, io, pathlib
+
+    root = pathlib.Path(__file__).parent
+
+    try:
+        with urllib.request.urlopen(_RELEASE_ZIP, timeout=60) as resp:
+            data = resp.read()
+    except Exception as exc:
+        return False, f"Download failed: {exc}"
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            updated = 0
+            for member in zf.infolist():
+                name = member.filename
+                # Skip directories, __pycache__, .pyc, .venv, and protected data
+                if (name.endswith("/")
+                        or "__pycache__" in name
+                        or name.endswith(".pyc")
+                        or name.startswith(".venv/")
+                        or name in _PROTECTED):
+                    continue
+                dest = root / name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(zf.read(member))
+                updated += 1
+        return True, f"Updated {updated} files — restarting…"
+    except Exception as exc:
+        return False, f"Extraction failed: {exc}"
+
 # ── Background backtest state ─────────────────────────────────────────────────
 # Stored in a separate module (bt_state.py) so Python's import cache (sys.modules)
 # keeps the same dict object alive across every Streamlit rerun.  A module-level
@@ -1334,6 +1381,22 @@ with tab_settings:
             ok = broker.connect(host, port, cid)
             st.success("Reconnected ✅") if ok else st.error("Failed ❌")
             st.rerun()
+
+    st.divider()
+    st.subheader("🔄 Software Update")
+    st.caption(
+        "Downloads the latest version from GitHub and applies it instantly. "
+        "Your database, trade history, and settings are never touched."
+    )
+    if st.button("⬆️ Update Now", type="primary", use_container_width=True):
+        with st.spinner("Downloading update…"):
+            ok, msg = _apply_update()
+        if ok:
+            st.success(f"✅ {msg}")
+            _time_mod.sleep(2)
+            os.execv(sys.executable, sys.argv)   # replace process with fresh copy
+        else:
+            st.error(f"❌ {msg}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 7 — BACKTEST
