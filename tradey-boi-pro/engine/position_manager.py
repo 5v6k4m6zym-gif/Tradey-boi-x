@@ -164,10 +164,16 @@ class PositionManager:
                 log.info(f"{ticker}: Trail stop → {trail_stop:.4f} (peak={peak:.4f})")
 
         # ── Stop hit (with min_hold guard) ────────────────────────────────────
-        if price <= stop and past_min_hold:
-            self._exit(pos_id, stop, "STOP_HIT")
+        # Also check today's session Low so intraday wicks that recovered
+        # between check intervals don't silently bypass the stop.
+        day_low = self._get_day_low(ticker)
+        stop_touched = price <= stop or (day_low is not None and day_low <= stop)
+        if stop_touched and past_min_hold:
+            exit_px = min(price, stop)   # use stop price if we're already past it
+            self._exit(pos_id, exit_px, "STOP_HIT")
             self._peak_cache.pop(pos_id, None)
-            return f"STOPPED {ticker} @ ${stop:.3f}  (price ${price:.3f})"
+            trigger = "wick" if (day_low is not None and day_low <= stop and price > stop) else "price"
+            return f"STOPPED {ticker} @ ${exit_px:.3f}  (trigger={trigger}  price=${price:.3f}  low=${day_low or '?'})"
 
         # ── Target hit ────────────────────────────────────────────────────────
         if price >= target:
@@ -213,6 +219,7 @@ class PositionManager:
     # ── Price fetching ───────────────────────────────────────────────────────
 
     def _get_price(self, ticker: str, exchange: str) -> float | None:
+        """Return latest price from IBKR, then 1m yfinance, then daily yfinance."""
         price = self._broker.get_current_price(
             ticker, exchange,
             "AUD" if exchange == "ASX" else "USD"
@@ -220,15 +227,46 @@ class PositionManager:
         if price:
             return price
 
+        # ── 1-minute bars (works during market hours) ──────────────────────
+        try:
+            df = yf.download(ticker, period="1d", interval="1m",
+                             progress=False, auto_adjust=True)
+            if not df.empty:
+                df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
+                close = df["Close"].iloc[-1]
+                v = float(close.item()) if hasattr(close, "item") else float(close)
+                if v and v > 0:
+                    return v
+        except Exception:
+            pass
+
+        # ── Daily bars fallback (works outside market hours) ───────────────
+        try:
+            df = yf.download(ticker, period="5d", interval="1d",
+                             progress=False, auto_adjust=True)
+            if not df.empty:
+                df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
+                close = df["Close"].iloc[-1]
+                v = float(close.item()) if hasattr(close, "item") else float(close)
+                if v and v > 0:
+                    log.debug(f"{ticker}: using daily close fallback ${v:.4f}")
+                    return v
+        except Exception:
+            pass
+
+        log.warning(f"{ticker}: all price sources failed — stop check skipped")
+        return None
+
+    def _get_day_low(self, ticker: str) -> float | None:
+        """Return today's session low (for intraday stop-wick detection)."""
         try:
             df = yf.download(ticker, period="1d", interval="1m",
                              progress=False, auto_adjust=True)
             if df.empty:
                 return None
             df.columns = [c.title() if isinstance(c, str) else c for c in df.columns]
-            close = df["Close"].iloc[-1]
-            if hasattr(close, "item"):
-                return float(close.item())
-            return float(close)
+            low = df["Low"].min()
+            v = float(low.item()) if hasattr(low, "item") else float(low)
+            return v if v and v > 0 else None
         except Exception:
             return None
