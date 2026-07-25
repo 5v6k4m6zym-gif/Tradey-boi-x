@@ -32,12 +32,24 @@ _PROTECTED = {
 }
 
 def _apply_update() -> tuple[bool, str]:
-    """Download the latest release zip and extract it in-place.
+    """Download the latest release zip, extract it in-place, and remove
+    any old files that are no longer part of the release.
     Returns (success, message).
     """
     import urllib.request, zipfile, io, pathlib
 
     root = pathlib.Path(__file__).parent
+
+    # Directories owned entirely by the release — stale files inside these
+    # are safe to delete.  Anything outside this list is left alone.
+    _OWNED_DIRS = {"engine", "scanner", "broker", "db", "backtest", "config"}
+
+    def _skip(name: str) -> bool:
+        return (name.endswith("/")
+                or "__pycache__" in name
+                or name.endswith(".pyc")
+                or name.startswith(".venv/")
+                or name in _PROTECTED)
 
     try:
         with urllib.request.urlopen(_RELEASE_ZIP, timeout=60) as resp:
@@ -47,21 +59,49 @@ def _apply_update() -> tuple[bool, str]:
 
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            # ── 1. Extract new files ───────────────────────────────────────
+            zip_files: set[str] = set()
             updated = 0
             for member in zf.infolist():
                 name = member.filename
-                # Skip directories, __pycache__, .pyc, .venv, and protected data
-                if (name.endswith("/")
-                        or "__pycache__" in name
-                        or name.endswith(".pyc")
-                        or name.startswith(".venv/")
-                        or name in _PROTECTED):
+                if _skip(name):
                     continue
+                zip_files.add(name)
                 dest = root / name
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(zf.read(member))
                 updated += 1
-        return True, f"Updated {updated} files — restarting…"
+
+            # ── 2. Remove stale files not in the new release ───────────────
+            removed = 0
+            # Root-level .py / .sh / .bat / .txt files
+            for f in root.iterdir():
+                if f.is_file() and f.suffix in (".py", ".sh", ".bat", ".txt", ".md"):
+                    rel = f.name
+                    if rel not in zip_files and rel not in _PROTECTED:
+                        f.unlink()
+                        removed += 1
+
+            # Files inside owned subdirectories
+            for d in _OWNED_DIRS:
+                dpath = root / d
+                if not dpath.exists():
+                    continue
+                for f in dpath.rglob("*"):
+                    if not f.is_file():
+                        continue
+                    if "__pycache__" in f.parts or f.suffix == ".pyc":
+                        continue
+                    rel = f.relative_to(root).as_posix()
+                    if rel not in zip_files and rel not in _PROTECTED:
+                        f.unlink()
+                        removed += 1
+                # Remove any empty subdirectories left behind
+                for sub in sorted(dpath.rglob("*"), reverse=True):
+                    if sub.is_dir() and not any(sub.iterdir()):
+                        sub.rmdir()
+
+        return True, f"Updated {updated} files, removed {removed} old files — restarting…"
     except Exception as exc:
         return False, f"Extraction failed: {exc}"
 
