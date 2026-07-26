@@ -6,9 +6,9 @@
     "signal_date": "2026-06-29",
     "target_pct": 0.05,
     "pred_days": 10,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_LOSS",
+    "exit_price": 58.34,
+    "actual_pct": -0.02474
   },
   {
     "ticker": "CBA.AX",
@@ -17,9 +17,9 @@
     "signal_date": "2026-06-29",
     "target_pct": 0.05,
     "pred_days": 10,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_GAIN",
+    "exit_price": 170.0,
+    "actual_pct": 0.03906
   },
   {
     "ticker": "CBA.AX",
@@ -28,9 +28,9 @@
     "signal_date": "2026-06-29",
     "target_pct": 0.05,
     "pred_days": 10,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_GAIN",
+    "exit_price": 170.0,
+    "actual_pct": 0.03906
   },
   {
     "ticker": "CBA.AX",
@@ -39,9 +39,9 @@
     "signal_date": "2026-06-29",
     "target_pct": 0.05,
     "pred_days": 10,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_GAIN",
+    "exit_price": 170.0,
+    "actual_pct": 0.03906
   },
   {
     "ticker": "NVDA",
@@ -69,9 +69,9 @@
     "signal_date": "2026-06-30",
     "target_pct": 0.03,
     "pred_days": 6,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "HIT_TARGET",
+    "exit_price": 305.4061,
+    "actual_pct": 0.063
   },
   {
     "ticker": "MSFT",
@@ -84,9 +84,9 @@
     "signal_date": "2026-06-30",
     "target_pct": 0.03,
     "pred_days": 6,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_GAIN",
+    "exit_price": 384.36,
+    "actual_pct": 0.05142
   },
   {
     "ticker": "AMD",
@@ -114,9 +114,9 @@
     "signal_date": "2026-07-06",
     "target_pct": 0.03,
     "pred_days": 6,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_GAIN",
+    "exit_price": 169.3,
+    "actual_pct": 0.04632
   },
   {
     "ticker": "AAPL",
@@ -129,9 +129,9 @@
     "signal_date": "2026-07-07",
     "target_pct": 0.03,
     "pred_days": 6,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_GAIN",
+    "exit_price": 327.5,
+    "actual_pct": 0.05157
   },
   {
     "ticker": "AAPL",
@@ -144,9 +144,9 @@
     "signal_date": "2026-07-06",
     "target_pct": 0.03,
     "pred_days": 6,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_GAIN",
+    "exit_price": 314.86,
+    "actual_pct": 0.03109
   },
   {
     "ticker": "CBA.AX",
@@ -159,9 +159,9 @@
     "signal_date": "2026-07-06",
     "target_pct": 0.03,
     "pred_days": 10,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_GAIN",
+    "exit_price": 171.2,
+    "actual_pct": 0.0383
   },
   {
     "ticker": "AAPL",
@@ -174,9 +174,9 @@
     "signal_date": "2026-07-06",
     "target_pct": 0.03,
     "pred_days": 10,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_GAIN",
+    "exit_price": 326.59,
+    "actual_pct": 0.03622
   },
   {
     "ticker": "WFC",
@@ -189,9 +189,9 @@
     "signal_date": "2026-07-03",
     "target_pct": 0.03,
     "pred_days": 10,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_GAIN",
+    "exit_price": 87.51,
+    "actual_pct": 0.02339
   },
   {
     "ticker": "MRK",
@@ -204,8 +204,8 @@
     "signal_date": "2026-07-03",
     "target_pct": 0.03,
     "pred_days": 10,
-    "outcome": null,
-    "exit_price": null,
-    "actual_pct": null
+    "outcome": "EXPIRED_LOSS",
+    "exit_price": 127.5,
+    "actual_pct": -0.0159
   }
 ]
