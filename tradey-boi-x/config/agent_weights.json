@@ -8,7 +8,7 @@
     "momentum": 1.0,
     "smart_money": 1.0
   },
-  "last_updated": "2026-08-09",
+  "last_updated": "2026-08-16",
   "recent_n": 0,
   "agent_stats": {},
   "weight_history": [
@@ -59,6 +59,21 @@
     },
     {
       "date": "2026-08-09",
+      "weights": {
+        "technical": 1.0,
+        "regime": 1.0,
+        "fundamental": 1.0,
+        "sentiment": 1.0,
+        "risk": 1.0,
+        "momentum": 1.0,
+        "smart_money": 1.0
+      },
+      "skipped": true,
+      "reason": "Only 0 resolved ELITE/SB entries with subscores (need \u226515)",
+      "resolved_n": 0
+    },
+    {
+      "date": "2026-08-16",
       "weights": {
         "technical": 1.0,
         "regime": 1.0,
